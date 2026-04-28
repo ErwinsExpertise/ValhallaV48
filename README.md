@@ -32,7 +32,6 @@ Valhalla supports multiple deployment methods. Choose the one that best fits you
 - 🔨 **[Building from Source](docs/Building.md)** - Build for development work
 
 ### Dev Mode
-
 Dev mode is the simplest way to run Valhalla for solo play or testing. It starts all four server types (login, world, channel, and cashshop) in a single process, eliminating the need to manage multiple processes.
 
 **Quick Start:**
