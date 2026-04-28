@@ -23,6 +23,7 @@ function Select-Folder([string]$Description) {
         }
     }
     catch {
+        Write-Warning "Could not open the folder picker automatically: $($_.Exception.Message)"
     }
 
     return $null
@@ -121,4 +122,4 @@ Write-Host 'Done.' -ForegroundColor Green
 Write-Host 'Next steps:' -ForegroundColor Green
 Write-Host '1. Edit config_dev.toml and set your MySQL password.'
 Write-Host '2. Run: .\Valhalla.exe -type dev -config config_dev.toml'
-Write-Host "3. If needed, run with: -nx \"$OutputPath\""
+Write-Host "3. If needed, run: .\Valhalla.exe -type dev -config config_dev.toml -nx \"$OutputPath\""

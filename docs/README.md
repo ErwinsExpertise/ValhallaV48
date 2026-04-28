@@ -34,7 +34,7 @@ Instead, convert the **entire MapleStory folder** that contains the full set of 
 - a single `Data.nx` file, or
 - a folder containing many `.nx` files
 
-## Documentation Map
+## Documentation Index
 
 ### Start Here
 
