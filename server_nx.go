@@ -41,7 +41,7 @@ func resolveNXPath(configPath string) string {
 		)
 	}
 
-	// Keep the legacy path as a final fallback so older local checkouts still work.
+	// Keep the old Hucaru-derived local layout as a final fallback so older checkouts still work.
 	candidates = append(candidates, filepath.Join("..", "v48", "wz", "nx"))
 
 	for _, candidate := range candidates {

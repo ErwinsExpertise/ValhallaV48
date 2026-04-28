@@ -54,7 +54,7 @@ function Resolve-ConverterPath([string]$RequestedPath) {
         }
     }
 
-    throw 'Could not find go-wztonx-converter. Put the .exe in the setup folder or pass -ConverterPath.'
+    throw 'Could not find go-wztonx-converter. Put the .exe in the setup folder, make sure it is on PATH, or pass -ConverterPath.'
 }
 
 if ([string]::IsNullOrWhiteSpace($WzDirectory)) {
@@ -134,4 +134,6 @@ Write-Host 'Done.' -ForegroundColor Green
 Write-Host 'Next steps:' -ForegroundColor Green
 Write-Host '1. Edit config_dev.toml and set your MySQL password.'
 Write-Host '2. Run: .\Valhalla.exe -type dev -config config_dev.toml'
-Write-Host "3. If you used a custom output path, run: .\Valhalla.exe -type dev -config config_dev.toml -nx \"$OutputPath\""
+if ($OutputPath -ne (Join-Path $repoRoot 'nx')) {
+    Write-Host "3. Because you used a custom output path, run: .\Valhalla.exe -type dev -config config_dev.toml -nx \"$OutputPath\""
+}
