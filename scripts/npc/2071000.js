@@ -1,0 +1,1 @@
+npc.sendOk("Hohoho, Goblins are easy to spot around this area... Hmmm, those Goblins concern me a great deal. They used to be pranksters, but they never caused any real harm to these people. Not until now...")

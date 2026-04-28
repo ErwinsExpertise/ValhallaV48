@@ -1,0 +1,142 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: login-server
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: login-server
+  template:
+    metadata:
+      labels:
+        app: login-server
+    spec:
+      containers:
+        - name: valhalla
+          image: {{ .Values.image }}
+          command: ["/bin/sh", "-c"]
+          args: ["/app/Valhalla -type login -config /app/docker/docker_config_login.toml"]
+          ports:
+            - containerPort: 8484
+          volumeMounts:
+            - name: cfg
+              mountPath: /app/docker/docker_config_login.toml
+              subPath: docker_config_login.toml
+      volumes:
+        - name: cfg
+          configMap:
+            name: login-config
+            items:
+              - key: config_login.toml
+                path: docker_config_login.toml
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: world-server
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: world-server
+  template:
+    metadata:
+      labels:
+        app: world-server
+    spec:
+      containers:
+        - name: valhalla
+          image: {{ .Values.image }}
+          command: ["/bin/sh", "-c"]
+          args: ["/app/Valhalla -type world -config /app/docker/docker_config_world.toml"]
+          ports:
+            - containerPort: 8584
+          volumeMounts:
+            - name: cfg
+              mountPath: /app/docker/docker_config_world.toml
+              subPath: docker_config_world.toml
+      volumes:
+        - name: cfg
+          configMap:
+            name: world-config
+            items:
+              - key: config_world.toml
+                path: docker_config_world.toml
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cashshop-server
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cashshop-server
+  template:
+    metadata:
+      labels:
+        app: cashshop-server
+    spec:
+      containers:
+        - name: valhalla
+          image: {{ .Values.image }}
+          command: ["/bin/sh", "-c"]
+          args: ["/app/Valhalla -type cashshop -config /app/docker/docker_config_cashshop.toml"]
+          ports:
+            - containerPort: 8600
+          volumeMounts:
+            - name: cfg
+              mountPath: /app/docker/docker_config_cashshop.toml
+              subPath: docker_config_cashshop.toml
+      volumes:
+        - name: cfg
+          configMap:
+            name: cashshop-config
+            items:
+              - key: config_cashshop.toml
+                path: docker_config_cashshop.toml
+{{- $root := . -}}
+{{ $replicas := int .Values.channel.replicas -}}
+{{- range $i, $_ := until $replicas }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: channel-server-{{ add $i 1 }}
+  namespace: {{ $root.Release.Namespace }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: channel-server-{{ add $i 1 }}
+  template:
+    metadata:
+      labels:
+        app: channel-server-{{ add $i 1 }}
+    spec:
+      containers:
+        - name: valhalla
+          imagePullPolicy: Always
+          image: {{ $root.Values.image }}
+          command: ["/bin/sh", "-c"]
+          args: ["/app/Valhalla -type channel -config /app/docker/docker_config_channel.toml"]
+          volumeMounts:
+            - name: cfg
+              mountPath: /app/docker/docker_config_channel.toml
+              subPath: docker_config_channel.toml
+          ports:
+            - containerPort: {{ sub 8685 $i }}
+      volumes:
+        - name: cfg
+          configMap:
+            name: channel-config-{{ add $i 1 }}
+            items:
+              - key: config_channel.toml
+                path: docker_config_channel.toml
+{{- end }}

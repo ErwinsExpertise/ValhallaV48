@@ -1,0 +1,1328 @@
+package channel
+
+import (
+	"encoding/json"
+	"fmt"
+	"log"
+	"math"
+	"math/rand"
+	"strconv"
+	"time"
+
+	"github.com/Hucaru/Valhalla/common/opcode"
+	"github.com/Hucaru/Valhalla/constant"
+	"github.com/Hucaru/Valhalla/mnet"
+	"github.com/Hucaru/Valhalla/mpacket"
+	"github.com/Hucaru/Valhalla/nx"
+)
+
+type foothold struct {
+	id               int16
+	x1, y1, x2, y2   int16
+	prev, next       int
+	centreX, centreY int16
+}
+
+func createFoothold(id, x1, y1, x2, y2 int16, prev, next int) foothold {
+	return foothold{id: id, x1: x1, y1: y1, x2: x2, y2: y2, prev: prev, next: next, centreX: (x2 + x1) / 2, centreY: (y2 + y1) / 2}
+}
+
+// Slope if y1 == y2
+func (data foothold) slope() bool {
+	return data.y1 != data.y2
+}
+
+// Wall if x1 == x2
+func (data foothold) wall() bool {
+	return data.x1 == data.x2
+}
+
+func withinX(check, x1, x2 int16) bool {
+	if check >= x1 && check <= x2 {
+		return true
+	}
+
+	return false
+}
+
+func crossProduct(x, x1, x2, y, y1, y2 int16) float64 {
+	/*
+		cp = |a||b|sin(theta)
+
+		whend dealing with vectors it can be calculated as:
+
+		cp.x = a.y * b.z - a.z * b.y
+		cp.y = a.z * b.x - a.x * b.z
+		cp.z = a.x * b.y - a.y * b.x
+
+		working in 2d therefore z is zero meaning cp.x & cp.y do not need to be calculated
+
+		since x & y component of cp vector are zero cp.z is the vector magnitude
+
+		|cp| / |a|.|b| = sin(theta)
+
+		if theta lies between 0 and pi crossing pi/2 then it is above the line resulting in a positive value
+		if theta lies between 0 and pi crossing 3pi/2 then it is below the line resulting in a negative value
+	*/
+	return float64(x-x1)*float64(y2-y1) - float64(y-y1)*float64(x2-x1) // 0 is on the line, > 0 is above, < 0 is below
+}
+
+func (data foothold) above(p pos, ignoreX bool) bool {
+	if !withinX(p.x, data.x1, data.x2) && !ignoreX {
+		return false
+	}
+
+	return crossProduct(p.x, data.x1, data.x2, p.y, data.y1, data.y2) >= 0
+}
+
+func (data foothold) findPos(p pos) pos {
+	if !data.slope() {
+		return newPos(p.x, data.y1, data.id)
+	}
+
+	/*
+		Equation derived for two collinear points as follows:
+		P1 + k(P1 - P2) = R
+		x1 + k(x1 - x2) = rx
+		k = (rx - x1) / (x1 - x2)
+
+		y1 + k(y1 - y2) = ry
+
+		ry = y1 + ((rx - x1) / (x1 - x2)) * (y1 - y2)
+
+		pre-calculating y1 - y2 and x1 - x2 might yield perf increases (extremely minor)
+	*/
+
+	newY := data.y1 + int16((float64(p.x-data.x1)/float64(data.x1-data.x2))*float64(data.y1-data.y2))
+
+	return newPos(p.x, newY, data.id)
+}
+
+func (data foothold) distanceFromPosSquare(point pos) (int16, int16, int16) {
+	deltaX := point.x - data.centreX
+	deltaY := point.y - data.centreY
+
+	clampX := data.x1 + 30
+	clampY := data.y1
+
+	if deltaX > 0 {
+		clampX = data.x2 - 30
+		clampY = data.y2
+	}
+
+	return (deltaX * deltaX) + (deltaY * deltaY), clampX, clampY
+}
+
+// Histogram of foothold data, aims to reduce the amount of footholds that are iterated and compared against one another
+// compared to iterating over the slice of all footholds
+type fhHistogram struct {
+	footholds []foothold
+	binSize   int
+	minX      int16
+	bins      [][]*foothold
+}
+
+func createFootholdHistogram(footholds []foothold) fhHistogram {
+	var minX int16
+	var maxX int16
+
+	for _, v := range footholds {
+		if v.x1 == v.x2 { // Ignore walls as it scuffs the offsets for some narrow maps
+			continue
+		}
+
+		if v.x1 < minX {
+			minX = v.x1
+		}
+
+		if v.x2 > maxX {
+			maxX = v.x2
+		}
+	}
+
+	delta := maxX - minX
+	binSize := int(math.Ceil(float64(delta) / float64(len(footholds))))
+	binCount := int(math.Ceil(float64(delta) / float64(binSize)))
+	bins := make([][]*foothold, binCount+1)
+
+	result := fhHistogram{footholds: footholds, binSize: binSize, minX: minX, bins: bins}
+
+	for i, v := range result.footholds {
+		if v.x1 == v.x2 { // Ignore walls
+			continue
+		}
+
+		first := result.calculateBinIndex(v.x1)
+		last := result.calculateBinIndex(v.x2)
+
+		for j := first; j <= last; j++ {
+			result.bins[j] = append(result.bins[j], &result.footholds[i])
+		}
+	}
+
+	return result
+}
+
+// MarshalJSON interface conformality for debug purposes
+func (data fhHistogram) MarshalJSON() ([]byte, error) {
+	bins := make([]int, len(data.bins))
+
+	for i := range bins {
+		bins[i] = len(data.bins[i])
+	}
+
+	return json.Marshal(struct {
+		Bins    []int
+		MinX    int16
+		BinSize int
+	}{
+		bins,
+		data.minX,
+		data.binSize,
+	})
+}
+
+func (data fhHistogram) calculateBinIndex(x int16) int {
+	ind := x - data.minX
+
+	if ind > 0 {
+		ind = int16(math.Ceil(float64(ind) / float64(data.binSize)))
+	} else if ind == 0 {
+		ind = 0
+	} else {
+		ind = -1
+	}
+
+	return int(ind)
+}
+
+func (data fhHistogram) getFinalPosition(point pos) pos {
+	ind := data.calculateBinIndex(point.x)
+
+	if ind < 0 {
+		return data.findNearestPoint(0, point)
+	} else if ind > len(data.bins)-1 {
+		return data.findNearestPoint(len(data.bins)-1, point)
+	}
+
+	return data.retrivePosition(ind, point)
+}
+
+func (data fhHistogram) retrivePosition(ind int, point pos) pos {
+	minimum := point
+	set := false
+
+	for _, v := range data.bins[ind] {
+		if !v.wall() && v.above(point, false) {
+			pos := v.findPos(point)
+
+			if pos.y >= point.y {
+				if !set {
+					set = true
+					minimum = pos
+				} else if pos.y < minimum.y {
+					minimum = pos
+				}
+			}
+		}
+	}
+
+	if !set {
+		minimum = data.findNearestPoint(ind, point)
+	}
+
+	return minimum
+}
+
+func (data fhHistogram) findNearestPoint(ind int, point pos) pos {
+	nearest := point
+
+	var dist int16 = math.MaxInt16
+
+	for _, v := range data.bins[ind] {
+		if !v.wall() && v.above(point, true) {
+			if d, clampX, clampY := v.distanceFromPosSquare(point); d < dist {
+				dist = d
+				nearest.x = clampX
+				nearest.y = clampY
+			}
+		}
+	}
+
+	return nearest
+}
+
+type fieldRectangle struct {
+	Left, Top, Right, Bottom int64
+}
+
+// create from LTRB from:
+// x-coordinate of the upper-left corner,
+// y-coordinate of the upper-left corner,
+// x-coordinate of the lower-right corner,
+// y-coordinate of the lower-right corner
+func createFromLTRB(left, top, right, bottom int64) fieldRectangle {
+	return fieldRectangle{Left: left, Top: top, Right: right, Bottom: bottom}
+}
+
+func (data fieldRectangle) inflate(x, y int64) fieldRectangle {
+	xDelta := x / 2
+	yDelta := y / 2
+
+	return fieldRectangle{Left: data.Left - xDelta,
+		Top:    data.Top + yDelta,
+		Right:  data.Right + xDelta,
+		Bottom: data.Bottom - yDelta,
+	}
+}
+
+func (data fieldRectangle) empty() bool {
+	if data.Left == 0 && data.Top == 0 && data.Right == 0 && data.Bottom == 0 {
+		return true
+	}
+
+	return false
+}
+
+func (data fieldRectangle) width() int64 {
+	return int64(math.Abs(float64(data.Left) - float64(data.Right)))
+}
+
+func (data fieldRectangle) height() int64 {
+	return int64(math.Abs(float64(data.Top) - float64(data.Bottom)))
+}
+
+type field struct {
+	id        int32
+	instances []*fieldInstance
+	Data      nx.Map
+
+	Dispatch chan func()
+
+	vrLimit                        fieldRectangle
+	mobCapacityMin, mobCapacityMax int
+
+	footholds []foothold
+	fhHist    fhHistogram
+}
+
+func (f *field) createInstance(rates *rates, server *Server) int {
+	id := len(f.instances)
+
+	inst := &fieldInstance{
+		id:              id,
+		fieldID:         f.id,
+		dispatch:        f.Dispatch,
+		town:            f.Data.Town,
+		returnMapID:     f.Data.ReturnMap,
+		timeLimit:       f.Data.TimeLimit,
+		properties:      make(map[string]interface{}),
+		mysticDoors:     make(map[int32]*mysticDoorInfo),
+		pendingDoorSync: make(map[int32]bool),
+		fhHist:          f.fhHist,
+		server:          server,
+	}
+
+	for i := 0; i < len(inst.portals); i++ {
+		inst.portals[i] = portal{
+			id:          byte(i),
+			destFieldID: constant.InvalidMap,
+		}
+	}
+	for _, p := range f.Data.Portals {
+		if int(p.ID) >= 0 && int(p.ID) < len(inst.portals) {
+			inst.portals[p.ID] = createPortalFromData(p)
+		}
+	}
+
+	inst.roomPool = createNewRoomPool(inst)
+	inst.dropPool = createNewDropPool(inst, rates)
+	inst.mistPool = createNewMistPool(inst)
+	inst.lifePool = creatNewLifePool(inst, f.Data.NPCs, f.Data.Mobs, f.mobCapacityMin, f.mobCapacityMax)
+	inst.lifePool.setDropPool(&inst.dropPool)
+	inst.reactorPool = createNewReactorPool(inst, f.Data.Reactors, server)
+
+	f.instances = append(f.instances, inst)
+
+	return id
+}
+
+func (f *field) formatFootholds() {
+	f.footholds = make([]foothold, len(f.Data.Footholds))
+
+	for i, v := range f.Data.Footholds {
+		f.footholds[i] = createFoothold(v.ID, v.X1, v.Y1, v.X2, v.Y2, v.Next, v.Prev)
+	}
+
+	f.fhHist = createFootholdHistogram(f.footholds)
+}
+
+func (f *field) calculateFieldLimits() {
+	vrLimit := createFromLTRB(f.Data.VRLeft, f.Data.VRTop, f.Data.VRRight, f.Data.VRBottom)
+
+	var left int64 = math.MaxInt32
+	var top int64 = math.MaxInt32
+	var right int64 = math.MinInt32
+	var bottom int64 = math.MinInt32
+
+	for _, fh := range f.Data.Footholds {
+		if int64(fh.X1) < left {
+			left = int64(fh.X1)
+		}
+
+		if int64(fh.Y1) < top {
+			top = int64(fh.Y1)
+		}
+
+		if int64(fh.X2) < left {
+			left = int64(fh.X2)
+		}
+
+		if int64(fh.Y2) < top {
+			top = int64(fh.Y2)
+		}
+
+		if int64(fh.X1) > right {
+			right = int64(fh.X1)
+		}
+
+		if int64(fh.Y1) > bottom {
+			bottom = int64(fh.Y1)
+		}
+
+		if int64(fh.X2) > right {
+			right = int64(fh.X2)
+		}
+
+		if int64(fh.Y2) > bottom {
+			bottom = int64(fh.Y2)
+		}
+	}
+
+	if !vrLimit.empty() {
+		f.vrLimit = vrLimit
+	} else {
+		f.vrLimit = createFromLTRB(left, top-300, right, bottom+75)
+	}
+
+	left += 30
+	top -= 300
+	right -= 30
+	bottom += 10
+
+	if !vrLimit.empty() {
+		if vrLimit.Left+20 < left {
+			left = vrLimit.Left + 20
+		}
+
+		if vrLimit.Top+65 < top {
+			top = vrLimit.Top + 20
+		}
+
+		if vrLimit.Right-5 > right {
+			right = vrLimit.Right - 5
+		}
+
+		if vrLimit.Bottom > bottom {
+			bottom = vrLimit.Bottom
+		}
+	}
+
+	mbr := createFromLTRB(left+10, top-375, right-10, bottom+60)
+	mbr = mbr.inflate(10, 10)
+
+	// outofBounds := mbr.Inflate(60, 60)
+
+	var mobX, mobY int64
+
+	if mbr.width() > 800 {
+		mobX = mbr.width()
+	} else {
+		mobX = 800
+	}
+
+	if mbr.height()-450 > 600 {
+		mobY = mbr.height() - 450
+	} else {
+		mobY = 600
+	}
+
+	var mobCapacityMin int = int(float64(mobX*mobY) * f.Data.MobRate * 0.0000078125)
+
+	if mobCapacityMin < 1 {
+		mobCapacityMin = 1
+	} else if mobCapacityMin > 40 {
+		mobCapacityMin = 40
+	}
+
+	mobCapacityMax := mobCapacityMin * 2
+
+	f.mobCapacityMin = mobCapacityMin
+	f.mobCapacityMax = mobCapacityMax
+}
+
+func (f field) validInstance(instance int) bool {
+	if len(f.instances) > instance && instance > -1 {
+		return true
+	}
+	return false
+}
+
+func (f *field) deleteInstance(id int) error {
+	if f.validInstance(id) {
+		if len(f.instances[id].players) > 0 {
+			return fmt.Errorf("Cannot delete an instance with players in it")
+		}
+
+		f.instances = append(f.instances[:id], f.instances[id+1:]...)
+
+		return nil
+	}
+	return fmt.Errorf("Invalid instance")
+}
+
+func (f *field) getInstance(id int) (*fieldInstance, error) {
+	if f.validInstance(id) {
+		return f.instances[id], nil
+	}
+
+	return nil, fmt.Errorf("Invalid instance ID")
+}
+
+func (f *field) changePlayerInstance(player *Player, id int) error {
+	if id == player.inst.id {
+		return fmt.Errorf("In specified instance")
+	}
+
+	if f.validInstance(id) {
+		err := f.instances[player.inst.id].removePlayer(player, false)
+
+		if err != nil {
+			return err
+		}
+
+		f.instances[player.inst.id].dropPool.HideDrops(player)
+		f.instances[player.inst.id].mistPool.removeMistsByOwner(player.ID)
+
+		player.inst = f.instances[id]
+		err = f.instances[id].addPlayer(player)
+
+		if err != nil {
+			return err
+		}
+
+		return nil
+	}
+
+	return fmt.Errorf("Invalid instance ID")
+}
+
+type portal struct {
+	id          byte
+	pos         pos
+	name        string
+	script      string
+	destFieldID int32
+	destName    string
+	temporary   bool
+	enabled     bool
+}
+
+func createPortalFromData(p nx.Portal) portal {
+	return portal{id: p.ID,
+		pos:         newPos(p.X, p.Y, 0),
+		name:        p.Pn,
+		script:      p.Script,
+		destFieldID: p.Tm,
+		destName:    p.Tn,
+		temporary:   false,
+		enabled:     true,
+	}
+}
+
+func (p *portal) resetTownPortal() {
+	p.destFieldID = constant.InvalidMap
+	p.destName = ""
+	p.name = "tp"
+	p.script = ""
+	p.temporary = false
+	p.enabled = true
+}
+
+type fieldInstance struct {
+	id          int
+	fieldID     int32
+	returnMapID int32
+	timeLimit   int64
+
+	lifePool    lifePool
+	dropPool    dropPool
+	roomPool    roomPool
+	reactorPool reactorPool
+	mistPool    mistPool
+
+	portals [256]portal
+	players []*Player
+
+	// Mystic doors in this instance (key: player ID)
+	mysticDoors     map[int32]*mysticDoorInfo
+	pendingDoorSync map[int32]bool
+
+	idCounter int32
+	town      bool
+
+	dispatch chan func()
+
+	fieldTimer *time.Ticker
+	runUpdate  bool
+
+	showBoat   bool
+	boatType   byte
+	properties map[string]interface{} // this is used to share state between npc and system scripts
+
+	bgm string
+
+	// Weather effect state
+	weatherID      int32
+	weatherMessage string
+	weatherTimer   time.Time
+
+	fhHist fhHistogram
+
+	server *Server // reference to server for metrics
+}
+
+type mysticDoorInfo struct {
+	ownerID     int32
+	spawnID     int32
+	portalIndex int
+	pos         pos
+	srcPos      pos
+	destMapID   int32
+	townPortal  bool
+	expiresAt   time.Time
+}
+
+func newMysticDoor(ownerID, spawnID int32, portalIndex int, doorPos, srcPos pos, destMapID int32, townPortal bool, expiresAt time.Time) *mysticDoorInfo {
+	return &mysticDoorInfo{
+		ownerID:     ownerID,
+		spawnID:     spawnID,
+		portalIndex: portalIndex,
+		pos:         doorPos,
+		srcPos:      srcPos,
+		destMapID:   destMapID,
+		townPortal:  townPortal,
+		expiresAt:   expiresAt,
+	}
+}
+
+func (inst fieldInstance) String() string {
+	var info string
+	info += "field ID: " + strconv.Itoa(int(inst.fieldID)) + ", "
+	info += "players(" + strconv.Itoa(len(inst.players)) + "): "
+
+	for _, v := range inst.players {
+		info += " " + v.Name + "(" + v.pos.String() + ")"
+	}
+
+	return info
+}
+
+func (inst *fieldInstance) changeBgm(path string) {
+	inst.bgm = path
+
+	for _, plr := range inst.players {
+		plr.Send(packetBgmChange(path))
+	}
+}
+
+func (inst *fieldInstance) startWeatherEffect(itemID int32, msg string) bool {
+	inst.weatherID = itemID
+	inst.weatherMessage = msg
+
+	// Send weather effect to all players in the instance
+	inst.send(packetBlowWeather(itemID, msg))
+
+	// Set up timer to stop weather effect after 30 seconds
+	inst.weatherTimer = time.Now().Add(time.Second * 30)
+
+	return true
+}
+
+func (inst *fieldInstance) stopWeatherEffect(t time.Time) {
+	if inst.weatherID == 0 || inst.weatherTimer.IsZero() {
+		return
+	}
+
+	if t.After(inst.weatherTimer) {
+		inst.weatherID = 0
+		inst.weatherMessage = ""
+		inst.weatherTimer = time.Time{}
+
+		// Send weather stop packet (itemID 0 means stop)
+		inst.send(packetBlowWeather(0, ""))
+	}
+}
+
+func (inst fieldInstance) findController() interface{} {
+	for _, v := range inst.players {
+		return v
+	}
+
+	return nil
+}
+
+func (inst *fieldInstance) addPlayer(plr *Player) error {
+	plr.inst = inst
+
+	for _, other := range inst.players {
+		if other == nil {
+			continue
+		}
+		if other.ID == plr.ID || (other.Conn != nil && plr.Conn != nil && other.Conn == plr.Conn) {
+			return nil
+		}
+	}
+
+	for _, other := range inst.players {
+		other.Send(packetMapPlayerEnter(plr))
+		plr.Send(packetMapPlayerEnter(other))
+
+		if plr.petCashID != 0 && plr.pet != nil && plr.pet.spawned {
+			plr.pet.pos = plr.pos
+			plr.pet.pos.y -= 15
+			other.Send(packetPetSpawn(plr.ID, plr.pet))
+		}
+
+		if other.petCashID != 0 && other.pet != nil && other.pet.spawned {
+			other.pet.pos = other.pos
+			other.pet.pos.y -= 15
+			plr.Send(packetPetSpawn(other.ID, other.pet))
+		}
+	}
+
+	inst.lifePool.addPlayer(plr)
+	inst.dropPool.playerShowDrops(plr)
+	inst.mistPool.playerShowMists(plr)
+	inst.roomPool.playerShowRooms(plr)
+	inst.reactorPool.playerShowReactors(plr)
+
+	if inst.showBoat {
+		displayBoat(plr, inst.showBoat, inst.boatType)
+	}
+
+	// Send weather effect if active
+	if inst.weatherID != 0 {
+		plr.Send(packetBlowWeather(inst.weatherID, inst.weatherMessage))
+	}
+
+	inst.players = append(inst.players, plr)
+
+	// For now pools run on all maps forever after first Player enters.
+	// If this hits perf too much then a set of params for each pool
+	// will need to be determined to allow it to stop updating e.g.
+	// drop pool, no drops and no players
+	// life pool, max number of mobs spawned and no dot attacks in field
+	if !inst.runUpdate {
+		inst.startFieldTimer()
+	}
+
+	if len(inst.bgm) > 0 {
+		plr.Send(packetBgmChange(inst.bgm))
+	}
+
+	inst.showMysticDoorsTo(plr)
+
+	switch inst.fieldID {
+	case constant.MapStationEllinia:
+		fallthrough
+	case constant.MapStationOrbis:
+		fallthrough
+	case constant.MapStationLudi:
+		now := time.Now()
+		plr.Send(packetShowClock(int8(now.Hour()), int8(now.Minute()), int8(now.Second())))
+	}
+
+	if plr.party != nil {
+		plr.party.syncPlayersHP()
+	}
+
+	return nil
+}
+
+// showMysticDoorsTo shows all mystic doors in this instance to a player
+func (inst *fieldInstance) showMysticDoorsTo(plr *Player) {
+	for ownerID, doorInfo := range inst.mysticDoors {
+		if doorInfo.townPortal {
+			plr.Send(packetMapSpawnMysticDoor(doorInfo.spawnID, doorInfo.pos, false))
+			plr.Send(packetMapPortal(doorInfo.destMapID, inst.fieldID, doorInfo.srcPos))
+		} else {
+			plr.Send(packetMapSpawnMysticDoor(doorInfo.spawnID, doorInfo.pos, true))
+			plr.Send(packetMapPortal(inst.fieldID, doorInfo.destMapID, doorInfo.pos))
+		}
+
+		if plr.party != nil {
+			for i, pid := range plr.party.PlayerID {
+				if pid == ownerID {
+					ownerIdx := byte(i)
+					if doorInfo.townPortal {
+						plr.Send(packetMapPortalParty(ownerIdx, doorInfo.destMapID, inst.fieldID, doorInfo.srcPos))
+					} else {
+						plr.Send(packetMapPortalParty(ownerIdx, inst.fieldID, doorInfo.destMapID, doorInfo.pos))
+					}
+					break
+				}
+			}
+		}
+	}
+}
+
+func (inst *fieldInstance) requestDoorPartySync(plr *Player) {
+	if plr == nil {
+		return
+	}
+	inst.pendingDoorSync[plr.ID] = true
+}
+
+// sendPartyDoorBindings sends only the party-door
+func (inst *fieldInstance) sendPartyDoorBindings(viewer *Player) {
+	if viewer == nil || viewer.party == nil {
+		return
+	}
+
+	indexOf := func(ownerID int32) (byte, bool) {
+		for i, pid := range viewer.party.PlayerID {
+			if pid == ownerID {
+				return byte(i), true
+			}
+		}
+		return 0, false
+	}
+
+	for ownerID, door := range inst.mysticDoors {
+		if idx, ok := indexOf(ownerID); ok {
+			if door.townPortal {
+				viewer.Send(packetMapPortalParty(idx, door.destMapID, inst.fieldID, door.srcPos))
+			} else {
+				viewer.Send(packetMapPortalParty(idx, inst.fieldID, door.destMapID, door.pos))
+			}
+		}
+	}
+}
+
+func (inst *fieldInstance) removePlayer(plr *Player, usedPortal bool) error {
+	filtered := inst.players[:0]
+	removed := false
+
+	for _, v := range inst.players {
+		if v == nil {
+			continue
+		}
+		if v.ID == plr.ID || (v.Conn != nil && plr.Conn != nil && v.Conn == plr.Conn) {
+			removed = true
+			continue
+		}
+		filtered = append(filtered, v)
+	}
+
+	if !removed {
+		return fmt.Errorf("Player does not exist in instance")
+	}
+
+	inst.players = filtered
+
+	for _, v := range inst.players {
+		v.Send(packetMapPlayerLeft(plr.ID))
+		plr.Send(packetMapPlayerLeft(v.ID))
+	}
+
+	inst.lifePool.removePlayer(plr, usedPortal)
+	inst.roomPool.removePlayer(plr)
+
+	return nil
+}
+
+func (inst fieldInstance) getPlayerFromID(id int32) (*Player, error) {
+	for i, v := range inst.players {
+		if v.ID == id {
+			return inst.players[i], nil
+		}
+	}
+
+	return nil, fmt.Errorf("Player not in instance")
+}
+
+func (inst fieldInstance) movePlayer(id int32, moveBytes []byte, plr *Player) {
+	inst.sendExcept(packetPlayerMove(id, moveBytes), plr.Conn)
+}
+
+func (inst fieldInstance) movePlayerPet(id int32, moveBytes []byte, plr *Player) {
+	inst.sendExcept(packetPetMove(id, moveBytes), plr.Conn)
+}
+
+func (inst *fieldInstance) nextID() int32 {
+	inst.idCounter++
+	return inst.idCounter
+}
+
+func (inst fieldInstance) send(p mpacket.Packet) {
+	for _, v := range inst.players {
+		v.Send(p)
+	}
+}
+
+func (inst fieldInstance) sendExcept(p mpacket.Packet, exception mnet.Client) {
+	for _, v := range inst.players {
+		if v.Conn == exception {
+			continue
+		}
+
+		v.Send(p)
+	}
+}
+
+func (inst fieldInstance) getRandomSpawnPortal() (portal, error) {
+	portals := []portal{}
+
+	for _, p := range inst.portals {
+		if p.name == "sp" {
+			portals = append(portals, p)
+		}
+	}
+
+	if len(portals) == 0 {
+		return portal{}, fmt.Errorf("No spawn portals in map")
+	}
+
+	return portals[rand.Intn(len(portals))], nil
+}
+
+func (inst fieldInstance) calculateNearestSpawnPortalID(pos pos) (byte, error) {
+	var portal portal
+	found := true
+	err := fmt.Errorf("Portal not found")
+
+	for _, p := range inst.portals {
+		if p.name == "sp" && found {
+			portal = p
+			found = false
+			err = nil
+		} else if p.name == "sp" {
+			delta1 := portal.pos.calcDistanceSquare(pos)
+			delta2 := p.pos.calcDistanceSquare(pos)
+
+			if delta2 < delta1 {
+				portal = p
+			}
+		}
+	}
+
+	return portal.id, err
+}
+
+func (inst fieldInstance) getPortalFromName(name string) (portal, error) {
+	for _, p := range inst.portals {
+		if p.name == name {
+			return p, nil
+		}
+	}
+
+	return portal{}, fmt.Errorf("No portal with that Name")
+}
+
+func (inst fieldInstance) getPortalFromID(id byte, allowInvalid bool) (portal, error) {
+	p := inst.portals[id]
+	// If allowInvalid is true, we return the portal even if it's invalid (i.e., destFieldID is InvalidMap)
+	// This is primarily for warped maps such as boss maps, or boats
+	if allowInvalid && p.destFieldID == constant.InvalidMap {
+		return p, nil
+	} else if p.destFieldID != constant.InvalidMap {
+		return p, nil
+	}
+
+	return portal{}, fmt.Errorf("No portal with that ID")
+}
+
+func (inst *fieldInstance) getNextPortalID() byte {
+	for i := 0; i < len(inst.portals); i++ {
+		if inst.portals[i].name == "" && inst.portals[i].destFieldID == constant.InvalidMap {
+			return byte(i)
+		}
+	}
+
+	return 255
+}
+
+func (inst *fieldInstance) setPortalEnabled(name string, enabled bool) {
+	for _, p := range inst.portals {
+		if p.name == name {
+			p.enabled = enabled
+		}
+	}
+}
+
+func (inst *fieldInstance) getPortalEnabled(name string) bool {
+	for _, p := range inst.portals {
+		if p.name == name {
+			return p.enabled
+		}
+	}
+	return true
+}
+
+func (inst *fieldInstance) createNewPortal(pos pos, name string, destFieldID int32, destName string, temp bool) int {
+	id := inst.getNextPortalID()
+
+	inst.portals[id] = portal{
+		id:          id,
+		name:        name,
+		pos:         pos,
+		destFieldID: destFieldID,
+		destName:    destName,
+		temporary:   temp,
+	}
+
+	return int(id)
+}
+
+// findAvailableTownPortal finds an unused "tp" portal in the instance
+// Returns the portal index and the portal, or -1 and error if none available
+func (inst *fieldInstance) findAvailableTownPortal() (int, *portal, error) {
+	usedIndices := make(map[int]bool)
+	for _, doorInfo := range inst.mysticDoors {
+		usedIndices[doorInfo.portalIndex] = true
+	}
+
+	for i := range inst.portals {
+		if inst.portals[i].name == "tp" && !usedIndices[i] {
+			return i, &inst.portals[i], nil
+		}
+	}
+
+	return -1, &portal{}, fmt.Errorf("No available town portals")
+}
+
+// removePortalAtIndex removes a portal at the specified index
+func (inst *fieldInstance) removePortalAtIndex(index int) {
+	inst.portals[index].destFieldID = constant.InvalidMap
+}
+
+func (inst *fieldInstance) startFieldTimer() {
+	inst.runUpdate = true
+	inst.fieldTimer = time.NewTicker(time.Millisecond * 1000) // Is this correct time?
+
+	go func() {
+		for t := range inst.fieldTimer.C {
+			inst.dispatch <- func() { inst.fieldUpdate(t) }
+		}
+	}()
+}
+
+func (inst *fieldInstance) stopFieldTimer() {
+	inst.runUpdate = false
+	inst.fieldTimer.Stop()
+}
+
+// Responsible for handling the removing of mystic doors, disappearence of loot, ships coming and going
+func (inst *fieldInstance) fieldUpdate(t time.Time) {
+	inst.lifePool.update(t)
+	inst.dropPool.update(t)
+	inst.mistPool.update(t)
+	inst.stopWeatherEffect(t)
+
+	if len(inst.mysticDoors) > 0 {
+		var toExpire []int32
+		for ownerID, door := range inst.mysticDoors {
+			if door != nil && !door.townPortal && !door.expiresAt.IsZero() && t.After(door.expiresAt) {
+				toExpire = append(toExpire, ownerID)
+			}
+		}
+		for _, ownerID := range toExpire {
+			door := inst.mysticDoors[ownerID]
+			if door != nil {
+				removeMysticDoorByIDs(inst.server, ownerID, inst.fieldID, door.destMapID)
+			}
+		}
+	}
+
+	if len(inst.pendingDoorSync) > 0 {
+		for pid := range inst.pendingDoorSync {
+			var viewer *Player
+			for _, p := range inst.players {
+				if p != nil && p.ID == pid {
+					viewer = p
+					break
+				}
+			}
+			if viewer != nil {
+				inst.sendPartyDoorBindings(viewer)
+			}
+			delete(inst.pendingDoorSync, pid)
+		}
+	}
+
+	if inst.lifePool.canPause() && inst.dropPool.canPause() {
+		inst.stopFieldTimer()
+	}
+}
+
+func (inst *fieldInstance) calculateFinalDropPos(from pos) pos {
+	from.y = from.y - 80 // This distance might need to be configurable depending on drop type? e.g. ludi PQ reward/bonus stage
+	return inst.fhHist.getFinalPosition(from)
+}
+
+func (inst *fieldInstance) showBoats(show bool, boatType byte) {
+	inst.showBoat = show
+	inst.boatType = boatType
+
+	for _, v := range inst.players {
+		displayBoat(v, show, boatType)
+	}
+}
+
+func displayBoat(plr *Player, show bool, boatType byte) {
+	switch boatType {
+	case 0: // docked boat in station
+		plr.Send(packetMapBoat(show))
+	case 1: // crog
+		plr.Send(packetMapShowMovingObject(show))
+	default:
+		log.Println("Unknown docked boat type:", boatType)
+	}
+}
+
+func packetMapPlayerEnter(plr *Player) mpacket.Packet {
+	p := mpacket.CreateWithOpcode(opcode.SendChannelCharacterEnterField)
+	p.WriteInt32(plr.ID)
+	p.WriteString(plr.Name)
+
+	if plr.guild != nil {
+		p.WriteString(plr.guild.name)
+		p.WriteInt16(plr.guild.logoBg)
+		p.WriteByte(plr.guild.logoBgColour)
+		p.WriteInt16(plr.guild.logo)
+		p.WriteByte(plr.guild.logoColour)
+	} else {
+		p.WriteString("")
+		p.WriteInt16(0)
+		p.WriteByte(0)
+		p.WriteInt16(0)
+		p.WriteByte(0)
+	}
+
+	p.WriteUint64(plr.remoteSpawnTempStatMask())
+	display := plr.avatarLookBytes()
+	p.WriteBytes(display)
+
+	p.WriteInt32(0) // consume item effect
+	p.WriteInt32(0) // active effect item id
+	p.WriteInt32(plr.chairID)
+
+	p.WriteInt16(plr.pos.x)
+	p.WriteInt16(plr.pos.y)
+	p.WriteByte(plr.stance)
+	p.WriteInt16(plr.pos.foothold)
+	p.WriteByte(0)
+	p.WriteByte(0)
+	p.WriteInt32(0)
+	p.WriteInt32(0)
+	p.WriteInt32(0)
+	plr.encodeRemoteMiniRoomBalloon(&p)
+	p.WriteByte(0)
+	p.WriteByte(0)
+	p.WriteByte(0)
+	p.WriteByte(0)
+	p.WriteByte(0)
+
+	return p
+}
+
+func packetMapPlayerLeft(charID int32) mpacket.Packet {
+	p := mpacket.CreateWithOpcode(opcode.SendChannelCharacterLeaveField)
+	p.WriteInt32(charID)
+
+	return p
+}
+
+func packetMapSpawnMysticDoor(spawnID int32, pos pos, instant bool) mpacket.Packet {
+	p := mpacket.CreateWithOpcode(opcode.SendChannelSpawnDoor)
+	p.WriteBool(instant)
+	p.WriteInt32(spawnID)
+	p.WriteInt16(pos.x)
+	p.WriteInt16(pos.y)
+
+	return p
+}
+
+func packetMapRemoveMysticDoor(spawnID int32, instant bool) mpacket.Packet {
+	p := mpacket.CreateWithOpcode(opcode.SendChannelRemoveDoor)
+	p.WriteBool(instant)
+	p.WriteInt32(spawnID)
+
+	return p
+}
+
+func packetMapBoat(show bool) mpacket.Packet {
+	p := mpacket.CreateWithOpcode(opcode.SendChannelBoat)
+	if show {
+		p.WriteInt16(0x01)
+	} else {
+		p.WriteInt16(0x02)
+	}
+
+	return p
+}
+
+func packetMapShowMovingObject(docked bool) mpacket.Packet {
+	p := mpacket.CreateWithOpcode(opcode.SendChannelMovingObj)
+
+	p.WriteByte(0x0a)
+
+	if docked {
+		p.WriteByte(4)
+	} else {
+		p.WriteByte(5)
+	}
+
+	return p
+}
+
+func packetShowSummonEffect(id byte, x, y int32) mpacket.Packet {
+	p := mpacket.CreateWithOpcode(opcode.SendChannelMapEffect)
+	p.WriteByte(id)
+	p.WriteInt32(x)
+	p.WriteInt32(y)
+	return p
+}
+
+func packetPortalEffectt(portalType byte, path string) mpacket.Packet {
+	p := mpacket.CreateWithOpcode(opcode.SendChannelMapEffect)
+	p.WriteByte(2)
+	p.WriteByte(portalType)
+	p.WriteString(path)
+	return p
+}
+
+func packetShowScreenEffect(path string) mpacket.Packet {
+	return packetEnvironmentChange(3, path)
+}
+
+func packetPlaySound(path string) mpacket.Packet {
+	return packetEnvironmentChange(4, path)
+}
+
+func packetMapShowBossHP(mobID, hp, maxHP int32, colourFg, colourBg byte) mpacket.Packet {
+	p := mpacket.CreateWithOpcode(opcode.SendChannelMapEffect)
+	p.WriteByte(5)
+	p.WriteInt32(mobID)
+	p.WriteInt32(hp)
+	p.WriteInt32(maxHP)
+	p.WriteByte(colourFg)
+	p.WriteByte(colourBg)
+
+	return p
+}
+
+func packetBgmChange(path string) mpacket.Packet {
+	return packetEnvironmentChange(6, path)
+}
+
+func packetEnvironmentChange(setting byte, value string) mpacket.Packet {
+	p := mpacket.CreateWithOpcode(opcode.SendChannelMapEffect)
+	p.WriteByte(setting)
+	p.WriteString(value)
+	return p
+}
+
+func packetBlowWeather(itemID int32, msg string) mpacket.Packet {
+	p := mpacket.CreateWithOpcode(opcode.SendChannelBlowWeather)
+	p.WriteBool(false) // isAdmin flag
+	p.WriteInt32(itemID)
+	p.WriteString(msg)
+	return p
+}
+
+func packetMapPortal(srcMap, dstMap int32, pos pos) mpacket.Packet {
+	p := mpacket.CreateWithOpcode(opcode.SendChannelTownPortal)
+	p.WriteInt32(dstMap)
+	p.WriteInt32(srcMap)
+	p.WriteInt16(pos.x)
+	p.WriteInt16(pos.y)
+
+	return p
+}
+
+// packetMapPortalParty creates a party-specific portal packet (only party members can use)
+func packetMapPortalParty(ownerIdx byte, srcMap, dstMap int32, pos pos) mpacket.Packet {
+	p := mpacket.CreateWithOpcode(opcode.SendChannelPartyInfo)
+	p.WriteByte(0x1D)
+	p.WriteByte(ownerIdx)
+	p.WriteInt32(dstMap)
+	p.WriteInt32(srcMap)
+	p.WriteInt16(pos.x)
+	p.WriteInt16(pos.y)
+	return p
+}
+
+// packetMapRemovePortalParty clears the party-door for a specific owner index
+func packetMapRemovePortalParty(ownerIdx byte) mpacket.Packet {
+	p := mpacket.CreateWithOpcode(opcode.SendChannelPartyInfo)
+	p.WriteByte(0x1D)
+	p.WriteByte(ownerIdx)
+	p.WriteInt32(constant.InvalidMap)
+	p.WriteInt32(constant.InvalidMap)
+	p.WriteInt16(0)
+	p.WriteInt16(0)
+	return p
+}
+
+// packetMapRemovePortal removes a portal (town portal/mystic door)
+func packetMapRemovePortal() mpacket.Packet {
+	p := mpacket.CreateWithOpcode(opcode.SendChannelTownPortal)
+	p.WriteInt32(constant.InvalidMap)
+	p.WriteInt32(constant.InvalidMap)
+
+	return p
+}
+
+func packetMapReactorEnterField(spawnID int32, reactorID int32, state byte, x int16, y int16, facesLeft bool) mpacket.Packet {
+	p := mpacket.CreateWithOpcode(opcode.SendChannelReactorEnterField)
+	p.WriteInt32(spawnID)   // unique object id in field
+	p.WriteInt32(reactorID) // template/reactor data id
+	p.WriteByte(state)      // reactor state
+	p.WriteInt16(x)
+	p.WriteInt16(y)
+	p.WriteBool(facesLeft)
+	return p
+}
+
+func packetMapReactorChangeState(spawnID int32, state byte, x int16, y int16, frameDelay int16, facesLeft bool, cause byte) mpacket.Packet {
+	p := mpacket.CreateWithOpcode(opcode.SendChannelReactorChangeState)
+	p.WriteInt32(spawnID) // unique object id in field
+	p.WriteByte(state)    // new state
+	p.WriteInt16(x)
+	p.WriteInt16(y)
+	p.WriteInt16(frameDelay) // frame delay
+	p.WriteBool(facesLeft)
+	p.WriteByte(cause) // 0 = default
+	return p
+}
+
+func packetMapReactorLeaveField(spawnID int32, state byte, x int16, y int16) mpacket.Packet {
+	p := mpacket.CreateWithOpcode(opcode.SendChannelReactorLeaveField)
+	p.WriteInt32(spawnID) // unique object id in field
+	p.WriteByte(state)    // current state
+	p.WriteInt16(x)
+	p.WriteInt16(y)
+	return p
+}
+
+func packetShowClock(hour, min, sec int8) mpacket.Packet {
+	p := mpacket.CreateWithOpcode(opcode.SendChannelTimer)
+	p.WriteByte(1)
+	p.WriteInt8(hour)
+	p.WriteInt8(min)
+	p.WriteInt8(sec)
+
+	return p
+}

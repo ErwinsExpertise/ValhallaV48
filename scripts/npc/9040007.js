@@ -1,0 +1,1 @@
+npc.sendOk("\"I fought the Rubian and lost. Now I am bound to the gate that blocks your way, my body desecrated. Yet the garments I once wore still hold sacred power. Return them to my body and I can open the gate for you.\r\n\r\nP.S. I know this is rather particular of me, but please return the clothes #bbottom to top#k.\"\r\n\r\n- Sharen III");

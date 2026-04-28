@@ -1,0 +1,61 @@
+var commonTicket = 5251000
+var premiumTicket = 5251003
+var mapId = plr.mapID()
+var indoors = mapId >= 680000100 && mapId <= 680000500
+
+if (indoors) {
+    var stage = plr.weddingStage(true)
+    if (stage < 0) {
+        npc.sendOk("There is no active Cathedral wedding session right now.")
+    } else if (stage === 0) {
+        npc.sendOk("Welcome to the Cathedral waiting hall. Please remain here while the couple greets their guests.")
+    } else if (npc.sendYesNo("The bride and groom are on their way to the altar. Would you like to proceed to the ceremony now?")) {
+        if (plr.enterWeddingAsGuest(true)) {
+            npc.sendOk("Please enjoy the Cathedral wedding.")
+        } else {
+            npc.sendOk("I cannot move you to the ceremony right now.")
+        }
+    } else {
+        npc.sendOk("Please wait until you are ready to head to the altar.")
+    }
+} else {
+    var cathedralOptions = ["How do I prepare a wedding?", "I have an engagement and want to arrange the wedding.", "I am a guest and want to enter the wedding.", "Make additional invitation cards."]
+    var cathedralText = "Welcome to the #bCathedral#k. How can I help you?#b"
+    for (var c = 0; c < cathedralOptions.length; c++) {
+        cathedralText += "\r\n#L" + c + "#" + cathedralOptions[c] + "#l"
+    }
+    npc.sendSelection(cathedralText)
+    var choice = npc.selection()
+
+    if (choice === 0) {
+        npc.sendOk("To marry in the Cathedral, you must first be engaged. Then one partner needs either a #b#t5251000##k or a #b#t5251003##k. After the reservation, both partners receive stacked invitation cards for their guests.")
+    } else if (choice === 1) {
+        var premium = plr.haveItem(premiumTicket, 1)
+        var regular = plr.haveItem(commonTicket, 1)
+        if (!premium && !regular) {
+            npc.sendOk("You need a Cathedral wedding reservation ticket first.")
+        } else if (plr.reserveWedding(true, premium)) {
+            npc.sendOk("Your Cathedral wedding has been reserved. Both partners have received 15 invitation cards. Speak with #b#p9201002##k when you are ready to begin.")
+        } else {
+            npc.sendOk("I could not reserve the wedding. Make sure your partner is here, you are engaged, and both inventories have room for invitation cards.")
+        }
+    } else if (choice === 2) {
+        if (plr.enterWeddingAsGuest(true)) {
+            npc.sendOk("Please proceed inside and enjoy the ceremony.")
+        } else {
+            npc.sendOk("I cannot admit you right now. Make sure there is an active Cathedral wedding and that you have the correct guest ticket.")
+        }
+    } else if (choice === 3) {
+        if (!plr.hasWeddingReservation(true)) {
+            npc.sendOk("Your couple does not currently have a Cathedral reservation.")
+        } else if (!plr.haveItem(5251100, 1)) {
+            npc.sendOk("You need #b#t5251100##k if you want additional invitation cards.")
+        } else if (!plr.canHold(plr.weddingInviteItem(true), 3)) {
+            npc.sendOk("Please free an ETC slot before receiving more invitation cards.")
+        } else {
+            plr.gainItem(5251100, -1)
+            plr.gainItem(plr.weddingInviteItem(true), 3)
+            npc.sendOk("Here are three additional Cathedral invitation cards.")
+        }
+    }
+}

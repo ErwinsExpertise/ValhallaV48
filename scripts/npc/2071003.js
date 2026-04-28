@@ -1,0 +1,1 @@
+npc.sendOk("I am very much worried about my brother. He worries about me too much that I'm afraid he might not be taking care of himself... Being my brother is a tall order, what with taking care of my parents and all...")

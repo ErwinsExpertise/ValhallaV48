@@ -1,0 +1,274 @@
+package login
+
+import (
+	"strconv"
+
+	"github.com/Hucaru/Valhalla/common/opcode"
+	"github.com/Hucaru/Valhalla/internal"
+	"github.com/Hucaru/Valhalla/mpacket"
+)
+
+func packetLoginResponse(result byte, userID int32, gender byte, isAdmin bool, username string, isBanned int) mpacket.Packet {
+	pac := mpacket.CreateWithOpcode(opcode.SendLoginResponse)
+	pac.WriteByte(result)
+	pac.WriteByte(0x00)
+	pac.WriteInt32(0)
+
+	if result <= 0x01 {
+		pac.WriteInt32(userID)
+		pac.WriteByte(gender)
+		pac.WriteBool(isAdmin)
+		pac.WriteByte(0x01)
+		pac.WriteString(username)
+	} else if result == 0x02 {
+		pac.WriteByte(byte(isBanned))
+		pac.WriteInt64(0)
+	}
+
+	pac.WriteInt64(0)
+	pac.WriteInt64(0)
+	pac.WriteInt64(0)
+
+	return pac
+}
+
+func packetLoginBanned(endTime int64, reason byte) mpacket.Packet {
+	pac := mpacket.CreateWithOpcode(opcode.SendLoginResponse)
+	pac.WriteByte(0x02)
+	pac.WriteBytes([]byte{0x00, 0x00, 0x00, 0x00, 0x00})
+	pac.WriteByte(reason)
+	pac.WriteInt64(endTime)
+
+	return pac
+}
+
+func packetLoginTempBanned(endTime int64, reason byte) mpacket.Packet {
+	pac := mpacket.CreateWithOpcode(opcode.SendLoginResponse)
+	pac.WriteByte(0x02)
+	pac.WriteBytes([]byte{0x00, 0x00, 0x00, 0x00, 0x00})
+	pac.WriteByte(reason)
+	pac.WriteInt64(endTime)
+
+	return pac
+}
+
+func packetPinOperation(mode byte) mpacket.Packet {
+	pac := mpacket.CreateWithOpcode(opcode.SendLoginPinOperation)
+	pac.WriteByte(mode)
+
+	return pac
+}
+
+func packetRegisterPin() mpacket.Packet {
+	return packetPinOperation(byte(1))
+}
+
+func packetRequestPin() mpacket.Packet {
+	return packetPinOperation(byte(4))
+}
+
+func packetRequestPinAfterFailure() mpacket.Packet {
+	return packetPinOperation(byte(2))
+}
+
+func packetCancelPin() mpacket.Packet {
+	pac := mpacket.CreateWithOpcode(opcode.SendLoginRestarter)
+	pac.WriteByte(0x01)
+
+	return pac
+}
+
+func packetLoginMigrateClient(ip []byte, port int16, charID int32) mpacket.Packet {
+	pac := mpacket.CreateWithOpcode(opcode.SendLoginCharacterMigrate)
+	pac.WriteByte(0x00)
+	pac.WriteByte(0x00)
+	pac.WriteBytes(ip)
+	pac.WriteInt16(port)
+	pac.WriteInt32(charID)
+	pac.WriteByte(byte(0) | byte(1<<0))
+	pac.WriteInt32(1)
+
+	return pac
+}
+
+func packetLoginDisplayCharacters(characters []player) mpacket.Packet {
+	pac := mpacket.CreateWithOpcode(opcode.SendLoginCharacterData)
+	pac.WriteByte(0) // ?
+
+	if len(characters) < 4 && len(characters) > 0 {
+		pac.WriteByte(byte(len(characters)))
+
+		for _, c := range characters {
+			loginWritePlayerCharacter(&pac, c.id, c)
+		}
+	} else {
+		pac.WriteByte(0)
+	}
+
+	return pac
+}
+
+func packetLoginNameCheck(name string, nameFound int) mpacket.Packet {
+	pac := mpacket.CreateWithOpcode(opcode.SendLoginNameCheckResult)
+	pac.WriteString(name)
+
+	if nameFound > 0 {
+		pac.WriteByte(0x1) // 0 = good name, 1 = bad name
+	} else {
+		pac.WriteByte(0x0)
+	}
+
+	return pac
+}
+
+func packetLoginCreatedCharacter(success bool, char player) mpacket.Packet {
+	pac := mpacket.CreateWithOpcode(opcode.SendLoginNewCharacterGood)
+
+	if success {
+		pac.WriteByte(0x0) // if creation was sucessfull - 0 = good, 1 = bad
+		loginWritePlayerCharacter(&pac, char.id, char)
+	} else {
+		pac.WriteByte(0x1)
+	}
+
+	return pac
+}
+
+func packetLoginDeleteCharacter(charID int32, deleted bool, hacking bool) mpacket.Packet {
+	pac := mpacket.CreateWithOpcode(opcode.SendLoginDeleteCharacter)
+	pac.WriteInt32(charID)
+
+	if deleted {
+		pac.WriteByte(0x0)
+	} else if hacking {
+		pac.WriteByte(0x0A) // Could not be processed due to server load
+	} else {
+		pac.WriteByte(0x12)
+	}
+
+	return pac
+}
+
+func loginWritePlayerCharacter(pac *mpacket.Packet, pos int32, char player) {
+	pac.WriteInt32(pos)
+
+	name := char.name
+
+	if len(name) > 13 {
+		name = name[:13]
+	}
+
+	padSize := 13 - len(name)
+
+	pac.WriteBytes([]byte(name))
+	for i := 0; i < padSize; i++ {
+		pac.WriteByte(0x0)
+	}
+
+	pac.WriteByte(char.gender) //gender
+	pac.WriteByte(char.skin)   // skin
+	pac.WriteInt32(char.face)  // face
+	pac.WriteInt32(char.hair)  // Hair
+
+	pac.WriteInt64(0x0) // Pet cash ID
+
+	pac.WriteByte(char.level)  // level
+	pac.WriteInt16(char.job)   // Job
+	pac.WriteInt16(char.str)   // str
+	pac.WriteInt16(char.dex)   // dex
+	pac.WriteInt16(char.intt)  // int
+	pac.WriteInt16(char.luk)   // luk
+	pac.WriteInt16(char.hp)    // hp
+	pac.WriteInt16(char.maxHP) // max hp
+	pac.WriteInt16(char.mp)    // mp
+	pac.WriteInt16(char.maxMP) // max mp
+	pac.WriteInt16(char.ap)    // ap
+	pac.WriteInt16(char.sp)    // sp
+	pac.WriteInt32(char.exp)   // exp
+	pac.WriteInt16(char.fame)  // fame
+
+	pac.WriteInt32(char.mapID) // map id
+	pac.WriteByte(char.mapPos) // map
+
+	pac.WriteBytes(char.displayBytes())
+
+	pac.WriteInt32(0) // if character is selected and which one
+	pac.WriteByte(1)  // Rankings
+	pac.WriteInt32(1) // world ranking position
+	pac.WriteInt32(2) // increase / decrease amount
+	pac.WriteInt32(3) // class ranking position
+	pac.WriteInt32(4) // increase / decrease amount
+}
+
+/*
+	public static MaplePacket getServerList(int serverIndex, String serverName, Map<Integer, Integer> channelLoad) {
+	    mplew.writeShort(SendPacketOpcode.SERVERLIST.getValue()); // 0x0A
+	    mplew.write(serverIndex);
+	    mplew.writeMapleAsciiString(serverName);
+	    mplew.write(2); // World flag (1: E, 2: N, 3: H)
+	    mplew.writeMapleAsciiString(""); // Event message
+	    mplew.write(0x64); // Rate modifier
+	    mplew.write(0x0); // Event XP
+	    mplew.write(0x64); // Rate modifier
+	    mplew.write(0x0); // Drop rate
+	    mplew.write(0x0);
+	    mplew.write(lastChannel);
+
+	    for (int i = 1; i <= lastChannel; i++) {
+	        mplew.writeMapleAsciiString(serverName + "-" + i);
+	        mplew.writeInt(load);
+	        mplew.write(serverIndex);
+	        mplew.writeShort(i - 1);
+	    }
+
+	    return mplew.getPacket();
+	}
+*/
+func packetLoginWorldListing(worldIndex byte, w internal.World) mpacket.Packet {
+	pac := mpacket.CreateWithOpcode(opcode.SendLoginWorldList)
+	pac.WriteByte(worldIndex) // world id
+	pac.WriteString(w.Name)   // World name -
+	pac.WriteByte(w.Ribbon)   // Ribbon on world - 0 = normal, 1 = event, 2 = new, 3 = hot
+	pac.WriteString(w.Message)
+	pac.WriteByte(0x64)
+	pac.WriteByte(0x0)
+	pac.WriteByte(0x64)
+	pac.WriteByte(0x0)
+	pac.WriteByte(0)                     // ? exp event notification?
+	pac.WriteByte(byte(len(w.Channels))) // number of channels
+
+	for i, v := range w.Channels {
+		pac.WriteString(w.Name + "-" + strconv.Itoa(i+1))
+		if v.MaxPop == 0 {
+			pac.WriteInt32(0)
+		} else {
+			pac.WriteInt32(int32(1200.0 * (float64(v.Pop) / float64(v.MaxPop))))
+		}
+		pac.WriteByte(worldIndex)
+		pac.WriteInt16(int16(i))
+	}
+
+	return pac
+}
+
+func packetLoginEndWorldList() mpacket.Packet {
+	pac := mpacket.CreateWithOpcode(opcode.SendLoginWorldList)
+	pac.WriteByte(0xFF)
+
+	return pac
+}
+
+func packetLoginWorldInfo(warning byte, population byte) mpacket.Packet {
+	p := mpacket.CreateWithOpcode(opcode.SendLoginWorldMeta)
+	p.WriteByte(warning)    // Warning - 0 = no warning, 1 - high amount of concurent users, 2 = max users in world
+	p.WriteByte(population) // Population marker - 0 = No maker, 1 = Highly populated, 2 = over populated
+
+	return p
+}
+
+func packetLoginReturnFromChannel() mpacket.Packet {
+	pac := mpacket.CreateWithOpcode(opcode.SendLoginRestarter)
+	pac.WriteByte(0x01)
+
+	return pac
+}
