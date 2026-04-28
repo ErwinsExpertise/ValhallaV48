@@ -21,13 +21,13 @@ import (
 
 type cashShopServer struct {
 	configFile string
-	config    cashShopConfig
-	dbConfig  dbConfig
-	eRecv     chan *mnet.Event
-	wRecv     chan func()
-	wg        *sync.WaitGroup
-	worldConn mnet.Server
-	gameState cashshop.Server
+	config     cashShopConfig
+	dbConfig   dbConfig
+	eRecv      chan *mnet.Event
+	wRecv      chan func()
+	wg         *sync.WaitGroup
+	worldConn  mnet.Server
+	gameState  cashshop.Server
 
 	ctx           context.Context
 	cancel        context.CancelFunc
@@ -40,7 +40,7 @@ func newCashShopServer(configFile string) *cashShopServer {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &cashShopServer{
-		configFile:   configFile,
+		configFile:    configFile,
 		eRecv:         make(chan *mnet.Event),
 		wRecv:         make(chan func()),
 		config:        config,

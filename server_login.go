@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/Hucaru/Valhalla/constant"
 	"github.com/Hucaru/Valhalla/login"
@@ -19,11 +20,11 @@ import (
 
 type loginServer struct {
 	configFile string
-	config    loginConfig
-	dbConfig  dbConfig
-	eRecv     chan *mnet.Event
-	wg        *sync.WaitGroup
-	gameState login.Server
+	config     loginConfig
+	dbConfig   dbConfig
+	eRecv      chan *mnet.Event
+	wg         *sync.WaitGroup
+	gameState  login.Server
 
 	// graceful shutdown & listeners
 	ctx            context.Context
@@ -51,12 +52,12 @@ func newLoginServer(configFile string) *loginServer {
 
 	return &loginServer{
 		configFile: configFile,
-		eRecv:    make(chan *mnet.Event),
-		config:   config,
-		dbConfig: dbConfig,
-		wg:       &sync.WaitGroup{},
-		ctx:      ctx,
-		cancel:   cancel,
+		eRecv:      make(chan *mnet.Event),
+		config:     config,
+		dbConfig:   dbConfig,
+		wg:         &sync.WaitGroup{},
+		ctx:        ctx,
+		cancel:     cancel,
 	}
 }
 
