@@ -15,7 +15,7 @@ Kubernetes provides:
 - **Kubernetes cluster** - minikube, kind, K3s, or cloud provider (GKE, EKS, AKS)
 - **kubectl** - Configured to connect to your cluster
 - **Helm 3** - Package manager for Kubernetes
-- **Data.nx file** - See [Installation Guide](Installation.md) for conversion
+- **NX data** - See [Installation Guide](Installation.md) for v48 conversion
 - **Container registry** - Or ability to load images directly (minikube, kind)
 
 ## Quick Start
@@ -55,16 +55,16 @@ Use your cloud provider's tools:
 - **EKS**: Use eksctl or AWS console
 - **AKS**: `az aks create --name valhalla`
 
-### Step 2: Prepare Data.nx
+### Step 2: Prepare NX Data
 
-For Kubernetes, you need to make Data.nx available to pods. You have two options:
+For Kubernetes, you need to make your NX data available to pods. You have two options:
 
 #### Option A: Prebake into Docker image
-This is easiest option, simply build your Docker images with the Data.nx file inside it. 
+This is easiest option, simply build your Docker images with the NX data inside it. 
 
 #### Option B: Persistent Volume (Recommended)
 
-Create a PersistentVolume and copy Data.nx to it. Example for local development:
+Create a PersistentVolume and copy your NX data to it. Example for local development:
 
 ```yaml
 # data-pv.yaml
@@ -101,7 +101,7 @@ kubectl apply -f data-pv.yaml
 # For minikube
 minikube ssh
 sudo mkdir -p /data/valhalla
-# Then copy Data.nx to /data/valhalla/ using your preferred method
+# Then copy your NX data to /data/valhalla/ using your preferred method
 
 # For kind - mount when creating cluster
 kind create cluster --config=kind-config.yaml
@@ -456,7 +456,7 @@ kubectl describe pod -n valhalla <pod-name>
 
 **Common issues**:
 - Image pull error: Check image name and pull policy
-- Missing Data.nx: Verify ConfigMap or PV is correctly mounted
+- Missing NX data: Verify ConfigMap or PV is correctly mounted
 - Database connection: Check database service and credentials
 
 ### CrashLoopBackOff

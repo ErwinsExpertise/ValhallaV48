@@ -5,6 +5,10 @@ user = "root"
 password = "password"
 database = "maplestory"
 
+[nx]
+# Optional: path to Data.nx or a folder containing Base.nx, Character.nx, etc.
+path = ""
+
 [login]
 clientListenAddress = "0.0.0.0"
 clientListenPort = "8484"

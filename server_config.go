@@ -17,6 +17,10 @@ type dbConfig struct {
 	Database string	`mapstructure:"database"`
 }
 
+type nxConfig struct {
+	Path string `mapstructure:"path"`
+}
+
 type loginConfig struct {
 	ClientListenAddress string	`mapstructure:"clientListenAddress"`
 	ClientListenPort    string	`mapstructure:"clientListenPort"`
@@ -68,6 +72,7 @@ type cashShopConfig struct {
 
 type fullConfig struct {
 	Database dbConfig		`mapstructure:"database"`
+	NX       nxConfig		`mapstructure:"nx"`
 	Login    loginConfig	`mapstructure:"login"`
 	World    worldConfig	`mapstructure:"world"`
 	Channel  channelConfig	`mapstructure:"channel"`
@@ -125,6 +130,11 @@ func channelConfigFromFile(fname string) (channelConfig, dbConfig) {
 func cashShopConfigFromFile(fname string) (cashShopConfig, dbConfig) {
 	config := LoadConfig(fname)
 	return config.CashShop, config.Database
+}
+
+func nxConfigFromFile(fname string) nxConfig {
+	config := LoadConfig(fname)
+	return config.NX
 }
 
 func bindEnvs(v *viper.Viper, typ reflect.Type, path []string, envPrefix string) {

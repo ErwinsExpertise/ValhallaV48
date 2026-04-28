@@ -7,7 +7,6 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strconv"
 	"sync"
 	"syscall"
@@ -15,13 +14,13 @@ import (
 
 	"github.com/Hucaru/Valhalla/channel"
 	"github.com/Hucaru/Valhalla/constant"
-	"github.com/Hucaru/Valhalla/nx"
 
 	"github.com/Hucaru/Valhalla/mnet"
 	"github.com/Hucaru/Valhalla/mpacket"
 )
 
 type channelServer struct {
+	configFile string
 	config    channelConfig
 	dbConfig  dbConfig
 	eRecv     chan *mnet.Event
@@ -42,6 +41,7 @@ func newChannelServer(configFile string) *channelServer {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &channelServer{
+		configFile:   configFile,
 		eRecv:         make(chan *mnet.Event),
 		wRecv:         make(chan func()),
 		config:        config,
@@ -75,11 +75,7 @@ func (cs *channelServer) run() {
 	go cs.processEvent()
 
 	<-cs.dispatchReady
-
-	start := time.Now()
-	nx.LoadFile(filepath.Join("..", "v48", "wz", "nx"))
-	elapsed := time.Since(start)
-	log.Println("Loaded and parsed Wizet data (NX) in", elapsed)
+	loadNXData(cs.configFile)
 
 	cs.gameState.Initialise(cs.wRecv,
 		cs.dbConfig.User,
