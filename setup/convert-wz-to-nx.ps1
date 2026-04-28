@@ -96,7 +96,19 @@ if ($missing.Count -gt 0) {
     Write-Warning 'The converter may still work if your files are stored differently, but make sure you selected the correct MapleStory folder.'
 }
 
-New-Item -ItemType Directory -Force -Path $OutputPath | Out-Null
+if (Test-Path $OutputPath) {
+    $existingNxFiles = @(Get-ChildItem -Path $OutputPath -Filter '*.nx' -File -ErrorAction SilentlyContinue)
+    if ($existingNxFiles.Count -gt 0) {
+        $confirmation = Read-Host "The output folder already contains NX files. Continue and let the converter reuse or overwrite them? (Y/N)"
+        if ($confirmation -notmatch '^(y|yes)$') {
+            throw 'Conversion cancelled by user.'
+        }
+    }
+}
+else {
+    New-Item -ItemType Directory -Path $OutputPath | Out-Null
+}
+
 $OutputPath = (Resolve-Path $OutputPath).Path
 
 Write-Host ''
@@ -122,4 +134,4 @@ Write-Host 'Done.' -ForegroundColor Green
 Write-Host 'Next steps:' -ForegroundColor Green
 Write-Host '1. Edit config_dev.toml and set your MySQL password.'
 Write-Host '2. Run: .\Valhalla.exe -type dev -config config_dev.toml'
-Write-Host "3. If needed, run: .\Valhalla.exe -type dev -config config_dev.toml -nx \"$OutputPath\""
+Write-Host "3. If you used a custom output path, run: .\Valhalla.exe -type dev -config config_dev.toml -nx \"$OutputPath\""
