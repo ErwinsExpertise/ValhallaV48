@@ -115,6 +115,7 @@ Write-Host ''
 Write-Host 'Converter:' $ConverterPath
 Write-Host 'MapleStory folder:' $WzDirectory
 Write-Host 'Output folder:' $OutputPath
+Write-Host 'The converter will be started from the output folder so the generated NX files land there.'
 Write-Host ''
 Write-Host 'Starting conversion... This can take a while.' -ForegroundColor Cyan
 
