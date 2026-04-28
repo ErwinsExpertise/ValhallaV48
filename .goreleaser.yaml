@@ -74,7 +74,7 @@ changelog:
 release:
   github:
     owner: ErwinsExpertise
-    name: Valhalla
+    name: ValhallaV48
   draft: false
   prerelease: auto
   mode: replace
