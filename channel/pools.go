@@ -290,22 +290,22 @@ func (pool *lifePool) performSkill(mob *monster, skillID, skillLevel byte, skill
 		return
 	// Mob self-buffs
 	case skill.Mob.WeaponAttackUp, skill.Mob.WeaponAttackUpAoe:
-		mob.statBuff |= skill.MobStat.PowerUp
+		mob.applyTimedStat(skill.MobStat.PowerUp, 1, int32(skillID), int16(skillData.Time), pool.instance)
 		return
 	case skill.Mob.MagicAttackUp, skill.Mob.MagicAttackUpAoe:
-		mob.statBuff |= skill.MobStat.MagicUp
+		mob.applyTimedStat(skill.MobStat.MagicUp, 1, int32(skillID), int16(skillData.Time), pool.instance)
 		return
 	case skill.Mob.WeaponDefenceUp, skill.Mob.WeaponDefenceUpAoe:
-		mob.statBuff |= skill.MobStat.PowerGuardUp
+		mob.applyTimedStat(skill.MobStat.PowerGuardUp, 1, int32(skillID), int16(skillData.Time), pool.instance)
 		return
 	case skill.Mob.MagicDefenceUp, skill.Mob.MagicDefenceUpAoe:
-		mob.statBuff |= skill.MobStat.MagicGuardUp
+		mob.applyTimedStat(skill.MobStat.MagicGuardUp, 1, int32(skillID), int16(skillData.Time), pool.instance)
 		return
 	case skill.Mob.WeaponImmunity:
-		mob.statBuff |= skill.MobStat.PhysicalImmune
+		mob.applyTimedStat(skill.MobStat.PhysicalImmune, 1, int32(skillID), int16(skillData.Time), pool.instance)
 		return
 	case skill.Mob.MagicImmunity:
-		mob.statBuff |= skill.MobStat.MagicImmune
+		mob.applyTimedStat(skill.MobStat.MagicImmune, 1, int32(skillID), int16(skillData.Time), pool.instance)
 		return
 	case skill.Mob.Summon:
 		pool.handleMobSummon(mob, skillLevel, skillData)

@@ -136,6 +136,8 @@ type damageStages struct {
 	defenseRatioMax float64
 	finalMax        float64
 	toleranceMax    float64
+	physicalImmune  bool
+	magicImmune     bool
 }
 
 // NewDamageCalculator creates a new damage calculator
@@ -369,6 +371,8 @@ func (calc *DamageCalculator) CalculateHit(
 		preDefenseMax:   maxDmg,
 		skillMultiplier: calc.getSkillDamageMultiplier(),
 		comboMultiplier: calc.getComboFinisherMultiplier(),
+		physicalImmune:  mob != nil && (mob.statBuff&skill.MobStat.PhysicalImmune) > 0,
+		magicImmune:     mob != nil && (mob.statBuff&skill.MobStat.MagicImmune) > 0,
 	}
 	allowedMax := maxDmg
 	if calc.HasPhysicalOrMagicImmunity(mob) {
@@ -437,7 +441,7 @@ func (calc *DamageCalculator) CalculateHit(
 	if !result.IsValid {
 		result.ValidationReason = "client damage exceeds tolerated cap"
 		log.Printf(
-			"Suspicious high damage from player %s (ID: %d, level: %d, job: %d): client=%d, max expected=%.0f (with tolerance), base min=%.0f, base max=%.0f, skill=%d, attackType=%d, weaponID=%d, weaponType=%d, STR=%d, DEX=%d, INT=%d, LUK=%d, WATK=%d, MATK=%d, mobID=%d, mobPD=%d, mobMD=%d, preDefMin=%.0f, preDefMax=%.0f, skillMult=%.2f, comboMult=%.2f, defRatioMin=%.4f, defRatioMax=%.4f, finalMax=%.0f, toleranceMax=%.0f | %s",
+			"Suspicious high damage from player %s (ID: %d, level: %d, job: %d): client=%d, max expected=%.0f (with tolerance), base min=%.0f, base max=%.0f, skill=%d, attackType=%d, weaponID=%d, weaponType=%d, STR=%d, DEX=%d, INT=%d, LUK=%d, WATK=%d, MATK=%d, mobID=%d, mobPD=%d, mobMD=%d, physicalImmune=%t, magicImmune=%t, preDefMin=%.0f, preDefMax=%.0f, skillMult=%.2f, comboMult=%.2f, defRatioMin=%.4f, defRatioMax=%.4f, finalMax=%.0f, toleranceMax=%.0f | %s",
 			calc.player.Name,
 			calc.player.ID,
 			calc.player.level,
@@ -459,6 +463,8 @@ func (calc *DamageCalculator) CalculateHit(
 			mob.id,
 			mob.pdDamage,
 			mob.mdDamage,
+			stage.physicalImmune,
+			stage.magicImmune,
 			stage.preDefenseMin,
 			stage.preDefenseMax,
 			stage.skillMultiplier,

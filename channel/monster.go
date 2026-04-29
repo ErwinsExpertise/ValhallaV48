@@ -398,6 +398,14 @@ func (mob *monster) chooseNextSkill() (byte, byte) {
 		if mob.mp < skillData.MpCon {
 			continue
 		}
+		// HP threshold check. MobSkill.img 'hp' is the max HP percent at which
+		// the mob is allowed to use the skill (e.g. cancels often start below 99%).
+		if skillData.Hp > 0 && mob.maxHP > 0 {
+			hpPercent := (mob.hp * 100) / mob.maxHP
+			if hpPercent > skillData.Hp {
+				continue
+			}
+		}
 		// Cooldown check
 		if last, ok := mob.skillTimes[id]; ok {
 			if last+skillData.Interval > time.Now().Unix() {
@@ -587,6 +595,46 @@ func (m *monster) removeDebuff(statMask int32, inst *fieldInstance) {
 	if inst != nil {
 		inst.send(packetMobStatReset(m.spawnID, statMask))
 	}
+}
+
+func (m *monster) applyTimedStat(statMask int32, value int16, skillID int32, duration int16, inst *fieldInstance) {
+	if statMask == 0 || inst == nil {
+		return
+	}
+	if value == 0 {
+		value = 1
+	}
+	if duration <= 0 {
+		duration = 30
+	}
+	if m.buffs == nil {
+		m.buffs = make(map[int32]*mobBuff)
+	}
+	if m.buffExpireTimers == nil {
+		m.buffExpireTimers = make(map[int32]*time.Timer)
+	}
+
+	expiresAt := time.Now().Add(time.Duration(duration) * time.Second).UnixMilli()
+	m.buffs[statMask] = &mobBuff{
+		skillID:   skillID,
+		value:     value,
+		duration:  duration,
+		expiresAt: expiresAt,
+	}
+	m.statBuff |= statMask
+
+	if timer, ok := m.buffExpireTimers[statMask]; ok && timer != nil {
+		timer.Stop()
+	}
+	if inst.dispatch != nil {
+		m.buffExpireTimers[statMask] = time.AfterFunc(time.Duration(duration)*time.Second, func() {
+			inst.dispatch <- func() {
+				m.removeDebuff(statMask, inst)
+			}
+		})
+	}
+
+	inst.send(packetMobStatSet(m.spawnID, statMask, value, skillID, duration, 0))
 }
 
 func packetMobStatSet(spawnID int32, statMask int32, value int16, skillID int32, duration int16, delay int16) mpacket.Packet {
