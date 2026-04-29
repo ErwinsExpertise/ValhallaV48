@@ -494,6 +494,7 @@ type mobBuff struct {
 	value     int16
 	duration  int16
 	expiresAt int64
+	visible   bool
 }
 
 // applyBuff applies a buff to the mob from a player skill
@@ -558,6 +559,7 @@ func (m *monster) applyBuff(skillID int32, skillLevel byte, statMask int32, inst
 		duration:  duration,
 		expiresAt: expiresAt,
 		ownerID:   0, // will be set by caller that knows the applier (e.g., mist)
+		visible:   true,
 	}
 
 	m.statBuff |= statMask
@@ -583,6 +585,7 @@ func (m *monster) removeDebuff(statMask int32, inst *fieldInstance) {
 		return
 	}
 
+	buff := m.buffs[statMask]
 	delete(m.buffs, statMask)
 
 	m.statBuff &^= statMask
@@ -592,12 +595,12 @@ func (m *monster) removeDebuff(statMask int32, inst *fieldInstance) {
 		delete(m.buffExpireTimers, statMask)
 	}
 
-	if inst != nil {
+	if inst != nil && (buff == nil || buff.visible) {
 		inst.send(packetMobStatReset(m.spawnID, statMask))
 	}
 }
 
-func (m *monster) applyTimedStat(statMask int32, value int16, skillID int32, duration int16, inst *fieldInstance) {
+func (m *monster) applyTimedStat(statMask int32, value int16, skillID int32, duration int16, inst *fieldInstance, sendPacket bool) {
 	if statMask == 0 || inst == nil {
 		return
 	}
@@ -620,6 +623,7 @@ func (m *monster) applyTimedStat(statMask int32, value int16, skillID int32, dur
 		value:     value,
 		duration:  duration,
 		expiresAt: expiresAt,
+		visible:   sendPacket,
 	}
 	m.statBuff |= statMask
 
@@ -634,7 +638,9 @@ func (m *monster) applyTimedStat(statMask int32, value int16, skillID int32, dur
 		})
 	}
 
-	inst.send(packetMobStatSet(m.spawnID, statMask, value, skillID, duration, 0))
+	if sendPacket {
+		inst.send(packetMobStatSet(m.spawnID, statMask, value, skillID, duration, 0))
+	}
 }
 
 func packetMobStatSet(spawnID int32, statMask int32, value int16, skillID int32, duration int16, delay int16) mpacket.Packet {
@@ -643,9 +649,35 @@ func packetMobStatSet(spawnID int32, statMask int32, value int16, skillID int32,
 	p.WriteUint32(uint32(statMask))
 
 	durationUnits := duration * 2
+	encodeOrder := []int32{
+		0x1,
+		0x2,
+		0x4,
+		0x8,
+		0x10,
+		0x20,
+		0x40,
+		0x80,
+		0x100,
+		0x200,
+		0x400,
+		0x800,
+		0x1000,
+		0x2000,
+		0x4000,
+		0x8000,
+		0x40000,
+		0x80000,
+		0x10000,
+		0x20000,
+		0x200000,
+		0x400000,
+		0x1000000,
+		0x2000000,
+	}
 
-	for bit := 0; bit < 32; bit++ {
-		if (statMask & (1 << uint(bit))) != 0 {
+	for _, mask := range encodeOrder {
+		if (statMask & mask) != 0 {
 			p.WriteInt16(value)
 			p.WriteInt32(skillID)
 			p.WriteInt16(durationUnits)
@@ -653,8 +685,7 @@ func packetMobStatSet(spawnID int32, statMask int32, value int16, skillID int32,
 	}
 
 	p.WriteInt16(delay)
-	p.WriteBool(true)
-	p.WriteByte(0)
+	p.WriteByte(1)
 	return p
 }
 
