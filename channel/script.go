@@ -341,6 +341,10 @@ func (ctrl *scriptPlayerWrapper) StartWedding(cathedral bool) bool {
 	return ctrl.server.startWedding(ctrl.plr, cathedral) == nil
 }
 
+func (ctrl *scriptPlayerWrapper) AdvanceWeddingCeremony(cathedral bool) bool {
+	return ctrl.server.advanceWeddingCeremony(ctrl.plr, cathedral) == nil
+}
+
 func (ctrl *scriptPlayerWrapper) EnterWeddingAsGuest(cathedral bool) bool {
 	return ctrl.server.enterWeddingAsGuest(ctrl.plr, cathedral) == nil
 }

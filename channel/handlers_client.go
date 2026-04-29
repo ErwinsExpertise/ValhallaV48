@@ -1744,6 +1744,9 @@ func (server *Server) playerUseScroll(conn mnet.Client, reader mpacket.Reader) {
 		plr.Send(packetInventoryAddItem(*equip, true))
 		// Optional: refresh avatar appearance (won't change looks, but safe)
 		plr.Send(packetInventoryChangeEquip(*plr))
+		if plr.inst != nil {
+			plr.inst.broadcastAvatarChange(plr)
+		}
 		plr.Send(packetUseScroll(plr.ID, true, false, false))
 	} else {
 		curseRoll := rand.Intn(100)

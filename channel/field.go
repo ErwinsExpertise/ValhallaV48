@@ -881,6 +881,70 @@ func (inst fieldInstance) sendExcept(p mpacket.Packet, exception mnet.Client) {
 	}
 }
 
+func (inst *fieldInstance) broadcastAvatarChange(subject *Player) {
+	if inst == nil || subject == nil {
+		return
+	}
+	for _, viewer := range inst.players {
+		if viewer == nil {
+			continue
+		}
+		viewer.Send(packetInventoryChangeEquip(*subject))
+	}
+}
+
+func (inst *fieldInstance) refreshPairRingEffectsFor(plr *Player) {
+	if inst == nil || plr == nil {
+		return
+	}
+	if plr.ringEffectState == nil {
+		plr.ringEffectState = make(map[int32]bool)
+	}
+
+	partners := plr.activePairedRingPartners()
+	for _, other := range inst.players {
+		if other == nil || other.ID == plr.ID {
+			continue
+		}
+		if other.ringEffectState == nil {
+			other.ringEffectState = make(map[int32]bool)
+		}
+
+		kind, tracked := partners[other.ID]
+		prev := plr.ringEffectState[other.ID]
+		next := false
+		if tracked {
+			next = plr.isPairRingEffectActiveWith(other, kind)
+		}
+		if prev == next {
+			continue
+		}
+
+		plr.ringEffectState[other.ID] = next
+		other.ringEffectState[plr.ID] = next
+		inst.broadcastAvatarChange(plr)
+		inst.broadcastAvatarChange(other)
+	}
+
+	for partnerID, wasActive := range plr.ringEffectState {
+		if _, ok := partners[partnerID]; ok {
+			continue
+		}
+		if !wasActive {
+			continue
+		}
+		plr.ringEffectState[partnerID] = false
+		if other, err := inst.getPlayerFromID(partnerID); err == nil && other != nil {
+			if other.ringEffectState == nil {
+				other.ringEffectState = make(map[int32]bool)
+			}
+			other.ringEffectState[plr.ID] = false
+			inst.broadcastAvatarChange(other)
+		}
+		inst.broadcastAvatarChange(plr)
+	}
+}
+
 func (inst fieldInstance) getRandomSpawnPortal() (portal, error) {
 	portals := []portal{}
 
@@ -1129,9 +1193,9 @@ func packetMapPlayerEnter(plr *Player) mpacket.Packet {
 	p.WriteInt32(0)
 	plr.encodeRemoteMiniRoomBalloon(&p)
 	p.WriteByte(0)
+	plr.encodeRemoteRingLooks(&p)
 	p.WriteByte(0)
-	p.WriteByte(0)
-	p.WriteByte(0)
+	p.WriteInt32(0)
 	p.WriteByte(0)
 
 	return p

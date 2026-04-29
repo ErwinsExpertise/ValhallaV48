@@ -8,7 +8,22 @@ if (indoors) {
     if (stage < 0) {
         npc.sendOk("There is no active Cathedral wedding session right now.")
     } else if (stage === 0) {
-        npc.sendOk("Welcome to the Cathedral waiting hall. Please remain here while the couple greets their guests.")
+        if (plr.partnerID() > 0) {
+            var prompt = "Welcome to the Cathedral waiting hall. If you and #b" + plr.partnerName() + "#k are ready, I can move everyone to the altar now.\r\n#b#L0#Move everyone to the altar now.#l\r\n#L1#Keep waiting in the lounge.#l"
+            npc.sendSelection(prompt)
+            var selection = npc.selection()
+            if (selection === 0) {
+                if (plr.advanceWeddingCeremony(true)) {
+                    npc.sendOk("Everyone in the lounge is being escorted to the Cathedral altar now.")
+                } else {
+                    npc.sendOk("I can't move the ceremony yet. Make sure both partners are together in the lounge.")
+                }
+            } else {
+                npc.sendOk("Please take your time greeting your guests. Come back when you're ready to proceed.")
+            }
+        } else {
+            npc.sendOk("Welcome to the Cathedral waiting hall. Please remain here while the couple greets their guests.")
+        }
     } else if (npc.sendYesNo("The bride and groom are on their way to the altar. Would you like to proceed to the ceremony now?")) {
         if (plr.enterWeddingAsGuest(true)) {
             npc.sendOk("Please enjoy the Cathedral wedding.")

@@ -236,7 +236,12 @@ func (g guild) updateAvatar(plr *Player) {
 	}
 
 	plr.inst.sendExcept(packetMapPlayerLeft(plr.ID), plr.Conn)
-	plr.inst.sendExcept(packetMapPlayerEnter(plr), plr.Conn)
+	for _, other := range plr.inst.players {
+		if other == nil || other.Conn == plr.Conn {
+			continue
+		}
+		other.Send(packetMapPlayerEnter(plr))
+	}
 }
 
 func (g *guild) updateEmblem(logoBg, logo int16, logoBgColour, logoColour byte) {

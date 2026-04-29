@@ -85,7 +85,7 @@ func (s *CashShopStorage) load() error {
 
 	rows, qerr := common.DB.Query(`
 		SELECT 
-			itemID, cashID, sn, slotNumber, amount,
+			itemID, cashID, sn, ringID, slotNumber, amount,
 			flag, upgradeSlots, level, str, dex, intt, luk, hp, mp,
 			watk, matk, wdef, mdef, accuracy, avoid, hands, speed, jump,
 			expireTime, creatorName, UNIX_TIMESTAMP(purchaseDate)
@@ -110,11 +110,12 @@ func (s *CashShopStorage) load() error {
 		var expireTime int64
 		var creatorName sql.NullString
 		var cashIDNullable sql.NullInt64
+		var ringIDNullable sql.NullInt32
 		var sn int32
 		var _purchaseTS sql.NullInt64
 
 		if err := rows.Scan(
-			&itemID, &cashIDNullable, &sn, &slotNumber, &amount,
+			&itemID, &cashIDNullable, &sn, &ringIDNullable, &slotNumber, &amount,
 			&flag, &upgradeSlots, &scrollLevel,
 			&str, &dex, &intt, &luk,
 			&hp, &mp, &watk, &matk,
@@ -147,6 +148,9 @@ func (s *CashShopStorage) load() error {
 			it.SetCashID(channel.GenerateCashID())
 		}
 		it.SetCashSN(sn)
+		if ringIDNullable.Valid {
+			it.SetRingID(ringIDNullable.Int32)
+		}
 
 		if slotNumber <= 0 || slotNumber > int16(s.maxSlots) {
 			continue

@@ -53,6 +53,7 @@ type Item struct {
 	cash         bool
 	cashID       int64
 	cashSN       int32
+	ringID       int32
 	invID        byte
 	slotID       int16
 	ID           int32
@@ -128,7 +129,7 @@ func GenerateCashID() int64 {
 }
 
 func loadInventoryFromDb(charID int32, equipSlots, useSlots, setupSlots, etcSlots, cashSlots byte) ([]Item, []Item, []Item, []Item, []Item) {
-	filter := "ID,inventoryID,itemID,slotNumber,amount,flag,upgradeSlots,level,str,dex,intt,luk,hp,mp,watk,matk,wdef,mdef,accuracy,avoid,hands,speed,jump,expireTime,creatorName,cashID,cashSN"
+	filter := "ID,inventoryID,itemID,slotNumber,amount,flag,upgradeSlots,level,str,dex,intt,luk,hp,mp,watk,matk,wdef,mdef,accuracy,avoid,hands,speed,jump,expireTime,creatorName,cashID,cashSN,ringID"
 	row, err := common.DB.Query("SELECT "+filter+" FROM items WHERE characterID=? ORDER BY inventoryID ASC, slotNumber ASC, ID DESC", charID)
 
 	if err != nil {
@@ -179,6 +180,7 @@ func loadInventoryFromDb(charID int32, equipSlots, useSlots, setupSlots, etcSlot
 		item := Item{uuid: uuid.New()}
 		var cashIDNullable sql.NullInt64
 		var cashSNNullable sql.NullInt32
+		var ringIDNullable sql.NullInt32
 
 		err := row.Scan(&item.dbID,
 			&item.invID,
@@ -206,7 +208,8 @@ func loadInventoryFromDb(charID int32, equipSlots, useSlots, setupSlots, etcSlot
 			&item.expireTime,
 			&item.creatorName,
 			&cashIDNullable,
-			&cashSNNullable)
+			&cashSNNullable,
+			&ringIDNullable)
 
 		if err != nil {
 			log.Println(err)
@@ -225,6 +228,9 @@ func loadInventoryFromDb(charID int32, equipSlots, useSlots, setupSlots, etcSlot
 		}
 		if cashSNNullable.Valid {
 			item.cashSN = cashSNNullable.Int32
+		}
+		if ringIDNullable.Valid {
+			item.ringID = ringIDNullable.Int32
 		}
 
 		if nxInfo, err := nx.GetItem(item.ID); err == nil {
@@ -494,6 +500,12 @@ func (v *Item) SetCashSN(sn int32) { v.cashSN = sn }
 // GetCashSN returns the commodity serial number
 func (v Item) GetCashSN() int32 { return v.cashSN }
 
+// SetRingID sets the persistent paired ring record ID for this item instance.
+func (v *Item) SetRingID(ringID int32) { v.ringID = ringID }
+
+// GetRingID returns the persistent paired ring record ID for this item instance.
+func (v Item) GetRingID() int32 { return v.ringID }
+
 func (v Item) GetAmount() int16 { return v.amount }
 
 func (v Item) GetExpireTime() int64 { return v.expireTime }
@@ -516,14 +528,14 @@ func (v *Item) save(charID int32) (bool, error) {
 	if v.dbID == 0 {
 		props := `characterID,inventoryID,itemID,slotNumber,amount,flag,upgradeSlots,level,
 				str,dex,intt,luk,hp,mp,watk,matk,wdef,mdef,accuracy,avoid,hands,speed,jump,
-				expireTime,creatorName,cashID,cashSN`
+				expireTime,creatorName,cashID,cashSN,ringID`
 
-		query := "INSERT into items (" + props + ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+		query := "INSERT into items (" + props + ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
 
 		res, err := common.DB.Exec(query,
 			charID, v.invID, v.ID, v.slotID, v.amount, v.flag, v.upgradeSlots, v.scrollLevel,
 			v.str, v.dex, v.intt, v.luk, v.hp, v.mp, v.watk, v.matk, v.wdef, v.mdef, v.accuracy, v.avoid, v.hands, v.speed, v.jump,
-			v.expireTime, v.creatorName, sql.NullInt64{Int64: v.cashID, Valid: v.cashID != 0}, sql.NullInt32{Int32: v.cashSN, Valid: v.cashSN != 0})
+			v.expireTime, v.creatorName, sql.NullInt64{Int64: v.cashID, Valid: v.cashID != 0}, sql.NullInt32{Int32: v.cashSN, Valid: v.cashSN != 0}, sql.NullInt32{Int32: v.ringID, Valid: v.ringID > 0})
 
 		if err != nil {
 			return false, err
@@ -537,14 +549,14 @@ func (v *Item) save(charID int32) (bool, error) {
 	} else {
 		props := `slotNumber=?,amount=?,flag=?,upgradeSlots=?,level=?,
 			str=?,dex=?,intt=?,luk=?,hp=?,mp=?,watk=?,matk=?,wdef=?,mdef=?,accuracy=?,avoid=?,hands=?,speed=?,jump=?,
-			expireTime=?,cashID=?,cashSN=?`
+			expireTime=?,cashID=?,cashSN=?,ringID=?`
 
 		query := "UPDATE items SET " + props + " WHERE ID=?"
 
 		_, err := common.DB.Exec(query,
 			v.slotID, v.amount, v.flag, v.upgradeSlots, v.scrollLevel,
 			v.str, v.dex, v.intt, v.luk, v.hp, v.mp, v.watk, v.matk, v.wdef, v.mdef, v.accuracy, v.avoid, v.hands, v.speed, v.jump,
-			v.expireTime, sql.NullInt64{Int64: v.cashID, Valid: v.cashID != 0}, sql.NullInt32{Int32: v.cashSN, Valid: v.cashSN != 0}, v.dbID)
+			v.expireTime, sql.NullInt64{Int64: v.cashID, Valid: v.cashID != 0}, sql.NullInt32{Int32: v.cashSN, Valid: v.cashSN != 0}, sql.NullInt32{Int32: v.ringID, Valid: v.ringID > 0}, v.dbID)
 
 		if err != nil {
 			return false, err
@@ -564,13 +576,13 @@ func (v *Item) save(charID int32) (bool, error) {
 func (v Item) SaveToCashShopStorage(tx *sql.Tx, accountID int32, slotNumber int16) error {
 	const ins = `
 		INSERT INTO account_cashshop_storage_items(
-			accountID, itemID, cashID, sn, slotNumber, amount, flag, upgradeSlots, level,
+			accountID, itemID, cashID, sn, ringID, slotNumber, amount, flag, upgradeSlots, level,
 			str, dex, intt, luk, hp, mp, watk, matk, wdef, mdef, accuracy, avoid, hands,
 			speed, jump, expireTime, creatorName
-		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
 	_, err := tx.Exec(
 		ins,
-		accountID, v.ID, v.cashID, v.cashSN, slotNumber, v.amount,
+		accountID, v.ID, v.cashID, v.cashSN, v.ringID, slotNumber, v.amount,
 		v.flag, v.upgradeSlots, v.scrollLevel,
 		v.str, v.dex, v.intt, v.luk,
 		v.hp, v.mp, v.watk, v.matk,
@@ -641,8 +653,11 @@ func (v Item) bytes(shortSlot, storage bool) []byte {
 
 	p.WriteBool(v.cash)
 	if v.cash && !v.pet {
-		// Write the unique cash ID (not the SN) for cash shop tracking
-		p.WriteUint64(uint64(v.cashID))
+		uniqueID := v.cashID
+		if v.ringID > 0 {
+			uniqueID = int64(v.ringID)
+		}
+		p.WriteUint64(uint64(uniqueID))
 	} else if v.cash && v.pet {
 		p.WriteUint64(uint64(v.cashID))
 	}

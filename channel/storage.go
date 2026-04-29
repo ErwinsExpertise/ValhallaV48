@@ -81,7 +81,7 @@ func (s *storage) load(accountID int32) error {
 			id, itemID, inventoryID, slotNumber, amount,
 			flag, upgradeSlots, level, str, dex, intt, luk, hp, mp,
 			watk, matk, wdef, mdef, accuracy, avoid, hands, speed, jump,
-			expireTime, creatorName
+			expireTime, creatorName, ringID
 		FROM account_storage_items
 		WHERE accountID=?
 		ORDER BY slotNumber ASC`, accountID)
@@ -93,16 +93,20 @@ func (s *storage) load(accountID int32) error {
 	for rows.Next() {
 		var it Item
 		var creator sql.NullString
+		var ringID sql.NullInt32
 		if err := rows.Scan(
 			&it.dbID, &it.ID, &it.invID, &it.slotID, &it.amount,
 			&it.flag, &it.upgradeSlots, &it.scrollLevel, &it.str, &it.dex, &it.intt, &it.luk, &it.hp, &it.mp,
 			&it.watk, &it.matk, &it.wdef, &it.mdef, &it.accuracy, &it.avoid, &it.hands, &it.speed, &it.jump,
-			&it.expireTime, &creator,
+			&it.expireTime, &creator, &ringID,
 		); err != nil {
 			continue
 		}
 		if creator.Valid {
 			it.creatorName = creator.String
+		}
+		if ringID.Valid {
+			it.ringID = ringID.Int32
 		}
 
 		if it.slotID <= 0 || int(it.slotID) > len(s.items) {
@@ -152,8 +156,8 @@ func (s *storage) save(accountID int32) (err error) {
 		INSERT INTO account_storage_items(
 			accountID, itemID, inventoryID, slotNumber, amount, flag, upgradeSlots, level,
 			str, dex, intt, luk, hp, mp, watk, matk, wdef, mdef, accuracy, avoid, hands,
-			speed, jump, expireTime, creatorName
-		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+			speed, jump, expireTime, creatorName, ringID
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 	`
 	stmt, perr := tx.Prepare(ins)
 	if perr != nil {
@@ -180,7 +184,7 @@ func (s *storage) save(accountID int32) (err error) {
 		if _, ierr := stmt.Exec(
 			accountID, it.ID, it.invID, slotNumber, it.amount, it.flag, it.upgradeSlots, it.scrollLevel,
 			it.str, it.dex, it.intt, it.luk, it.hp, it.mp, it.watk, it.matk, it.wdef, it.mdef, it.accuracy, it.avoid, it.hands,
-			it.speed, it.jump, it.expireTime, it.creatorName,
+			it.speed, it.jump, it.expireTime, it.creatorName, sql.NullInt32{Int32: it.ringID, Valid: it.ringID > 0},
 		); ierr != nil {
 			err = fmt.Errorf("failed inserting item %d (acct %d, slot %d): %w", it.ID, accountID, slotNumber, ierr)
 			return

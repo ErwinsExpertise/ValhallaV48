@@ -368,6 +368,7 @@ type Player struct {
 	nx             int32
 	maplepoints    int32
 	partnerID      int32
+	marriageID     int32
 	marriageItemID int32
 	divorceUntil   int64
 
@@ -396,7 +397,9 @@ type Player struct {
 
 	rates *rates
 
-	buffs *CharacterBuffs
+	buffs           *CharacterBuffs
+	rings           map[int32]ringRecord
+	ringEffectState map[int32]bool
 
 	quests quests
 
@@ -1156,6 +1159,9 @@ func (d *Player) UpdateMovement(frag movementFrag) {
 	d.pos.y = frag.y
 	d.pos.foothold = frag.foothold
 	d.stance = frag.stance
+	if d.inst != nil {
+		d.inst.refreshPairRingEffectsFor(d)
+	}
 }
 
 // SetPos of Data
@@ -1366,6 +1372,9 @@ func (d *Player) GiveItem(newItem Item) (Item, error) { // TODO: Refactor
 	default:
 		return Item{}, fmt.Errorf("Unknown inventory ID: %d", newItem.invID)
 	}
+	if newItem.ringID > 0 {
+		d.refreshRingRecords()
+	}
 
 	return newItem, nil
 }
@@ -1509,6 +1518,9 @@ func (d *Player) updateItem(new Item) {
 		}
 	}
 	d.updateItemInventory(new.invID, items)
+	if new.ringID > 0 {
+		d.refreshRingRecords()
+	}
 	if new.invID == constant.InventoryEquip && new.slotID < 0 {
 		d.recalculateTotalStats()
 	}
@@ -1728,9 +1740,12 @@ func (d *Player) removeItem(item Item, fromStorage bool) {
 	if !fromStorage {
 		d.Send(packetInventoryRemoveItem(item))
 		if item.invID == constant.InventoryEquip && item.slotID < 0 && d.inst != nil {
-			d.inst.send(packetInventoryChangeEquip(*d))
+			d.inst.broadcastAvatarChange(d)
 			d.recalculateTotalStats()
 		}
+	}
+	if item.ringID > 0 {
+		d.refreshRingRecords()
 	}
 }
 
@@ -1847,7 +1862,7 @@ func (d *Player) moveItem(start, end, amount int16, invID byte) error {
 		d.updateItem(item1)
 
 		d.Send(packetInventoryChangeItemSlot(invID, start, end))
-		d.inst.send(packetInventoryChangeEquip(*d))
+		d.inst.broadcastAvatarChange(d)
 		return nil
 	}
 
@@ -1885,7 +1900,7 @@ func (d *Player) moveItem(start, end, amount int16, invID byte) error {
 	}
 
 	if start < 0 || end < 0 {
-		d.inst.send(packetInventoryChangeEquip(*d))
+		d.inst.broadcastAvatarChange(d)
 		// Recalculate stats when equipment changes
 		d.recalculateTotalStats()
 	}
@@ -2481,6 +2496,7 @@ func LoadPlayerFromID(id int32, conn mnet.Client) Player {
 	if partnerID.Valid {
 		c.partnerID = partnerID.Int32
 	}
+	c.marriageID = -1
 
 	c.marriageItemID = -1
 	if marriageItemID.Valid {
@@ -2530,6 +2546,7 @@ func LoadPlayerFromID(id int32, conn mnet.Client) Player {
 	c.pos.y = nxMap.Portals[c.mapPos].Y
 
 	c.equip, c.use, c.setUp, c.etc, c.cash = loadInventoryFromDb(c.ID, c.equipSlotSize, c.useSlotSize, c.setupSlotSize, c.etcSlotSize, c.cashSlotSize)
+	c.refreshRingRecords()
 
 	// Calculate total stats including equipment bonuses
 	c.recalculateTotalStats()
@@ -3933,6 +3950,9 @@ func packetPlayerEnterGame(plr Player, channelID int32) mpacket.Packet {
 	p.WriteBytes(randomBytes)
 
 	sectionMask := setFieldCharSectionMinimal | setFieldCharSectionMeta | setFieldCharSectionSlotSizes | setFieldCharSectionInventory | setFieldCharSectionSafeZero
+	if len(plr.rings) > 0 || plr.partnerID > 0 {
+		sectionMask |= setFieldCharSectionRings
+	}
 	p.WriteInt16(sectionMask)
 	writeSetFieldCharacterStats(&p, plr)
 	writeSetFieldPostStatByte(&p, plr)
@@ -3944,6 +3964,9 @@ func packetPlayerEnterGame(plr Player, channelID int32) mpacket.Packet {
 	writeSetFieldActiveQuests(&p, plr)
 	writeSetFieldCompletedQuests(&p, plr)
 	writeSetFieldEmptyMiniGames(&p)
+	if sectionMask&setFieldCharSectionRings != 0 {
+		writeSetFieldRings(&p, &plr)
+	}
 	writeSetFieldTeleportRocks(&p)
 
 	return p
@@ -3991,6 +4014,10 @@ func writeSetFieldTeleportRocks(p *mpacket.Packet) {
 	for i := 0; i < constant.TeleportRockVIPSlots; i++ {
 		p.WriteInt32(constant.InvalidMap)
 	}
+}
+
+func writeSetFieldRings(p *mpacket.Packet, plr *Player) {
+	plr.encodeLocalRingRecords(p)
 }
 
 func writeSetFieldMesos(p *mpacket.Packet, mesos int32) {
@@ -4205,14 +4232,8 @@ func packetInventoryChangeEquip(chr Player) mpacket.Packet {
 	p.WriteInt32(chr.ID)
 	p.WriteByte(1)
 	chr.encodeDisplayBytes(&p)
+	chr.encodeRemoteRingLooks(&p)
 	p.WriteInt32(0)
-	p.WriteInt32(0)
-	p.WriteInt32(chr.chairID)
-
-	// 15 x long(0) placeholders
-	for i := 0; i < 15; i++ {
-		p.WriteUint64(0)
-	}
 
 	return p
 }

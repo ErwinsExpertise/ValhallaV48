@@ -267,6 +267,8 @@ func (server *Server) resolveMarriageProposal(target *Player, accepted bool, pro
 
 	_ = source.setPartnerID(target.ID)
 	_ = target.setPartnerID(source.ID)
+	source.marriageID = marriageID
+	target.marriageID = marriageID
 	_ = source.setMarriageItemID(engagementRing)
 	_ = target.setMarriageItemID(engagementRing + 1)
 
@@ -287,15 +289,22 @@ func (server *Server) breakMarriageState(plr *Player, itemID int32) {
 		_ = deleteMarriageRelationship(marriageID)
 		delete(weddingReservations, marriageID)
 	}
+	if ringID := plr.firstRingIDByKind(ringKindWedding); ringID > 0 {
+		_ = deleteRingRecordPair(ringID)
+	}
 	partner, _ := server.players.GetFromID(partnerID)
 	_ = plr.setPartnerID(-1)
 	_ = plr.setMarriageItemID(-1)
+	plr.marriageID = -1
+	plr.refreshRingRecords()
 	_ = plr.setDivorceUntil(time.Now().Add(marriageDivorceCooldown).Unix())
 	_ = plr.removeItemsByID(itemID, 1, false)
 	plr.Send(packetNotifyWeddingPartnerTransfer(0, 0))
 	if partner != nil {
 		_ = partner.setPartnerID(-1)
 		_ = partner.setMarriageItemID(-1)
+		partner.marriageID = -1
+		partner.refreshRingRecords()
 		_ = partner.setDivorceUntil(time.Now().Add(marriageDivorceCooldown).Unix())
 		_ = partner.removeItemsByID(itemID+1, 1, false)
 		partner.Send(packetNotifyWeddingPartnerTransfer(0, 0))
@@ -440,28 +449,73 @@ func (server *Server) startWedding(plr *Player, cathedral bool) error {
 	server.showWeddingCountdown(res, int32(weddingLobbyDuration/time.Second))
 
 	server.scheduleWeddingStage(res, weddingLobbyDuration, func(cur *weddingReservation) {
-		cur.Stage = weddingStageCeremony
-		server.warpWeddingCouple(cur, cur.AltarMapID)
-		server.showWeddingCountdown(cur, int32(weddingBlessingDuration/time.Second))
-		if groom, err := server.players.GetFromID(cur.GroomID); err == nil && groom.inst != nil {
-			groom.inst.send(packetMessageNotice("Wedding Assistant: The couple are heading to the altar."))
+		if cur.Stage != weddingStageLobby {
+			return
 		}
+		server.advanceWeddingToCeremony(cur)
 	})
 	server.scheduleWeddingStage(res, weddingLobbyDuration+weddingBlessingDuration, func(cur *weddingReservation) {
-		cur.Stage = weddingStageBlessingsClosed
-		server.showWeddingCountdown(cur, int32((weddingCeremonyDuration-weddingBlessingDuration)/time.Second))
-		if groom, err := server.players.GetFromID(cur.GroomID); err == nil {
-			groom.Send(packetMessageNotice("Wedding Assistant: The blessing period is now closed."))
+		if cur.Stage != weddingStageCeremony {
+			return
 		}
-		if bride, err := server.players.GetFromID(cur.BrideID); err == nil {
-			bride.Send(packetMessageNotice("Wedding Assistant: The blessing period is now closed."))
-		}
+		server.closeWeddingBlessings(cur)
 	})
 	server.scheduleWeddingStage(res, weddingLobbyDuration+weddingCeremonyDuration, func(cur *weddingReservation) {
 		if cur.Stage < weddingStageMarried {
 			server.endWedding(cur)
 		}
 	})
+	return nil
+}
+
+func (server *Server) advanceWeddingToCeremony(res *weddingReservation) {
+	if res == nil || res.Completed || !res.Started || res.Stage != weddingStageLobby {
+		return
+	}
+	res.Stage = weddingStageCeremony
+	server.warpWeddingParticipants(res, res.AltarMapID)
+	server.showWeddingCountdown(res, int32(weddingBlessingDuration/time.Second))
+	if groom, err := server.players.GetFromID(res.GroomID); err == nil && groom.inst != nil {
+		groom.inst.send(packetMessageNotice("Wedding Assistant: The couple are heading to the altar."))
+	}
+}
+
+func (server *Server) closeWeddingBlessings(res *weddingReservation) {
+	if res == nil || res.Completed || res.Stage != weddingStageCeremony {
+		return
+	}
+	res.Stage = weddingStageBlessingsClosed
+	server.showWeddingCountdown(res, int32((weddingCeremonyDuration-weddingBlessingDuration)/time.Second))
+	if groom, err := server.players.GetFromID(res.GroomID); err == nil {
+		groom.Send(packetMessageNotice("Wedding Assistant: The blessing period is now closed."))
+	}
+	if bride, err := server.players.GetFromID(res.BrideID); err == nil {
+		bride.Send(packetMessageNotice("Wedding Assistant: The blessing period is now closed."))
+	}
+}
+
+func (server *Server) advanceWeddingCeremony(plr *Player, cathedral bool) error {
+	res := server.currentWeddingReservation(plr, cathedral)
+	if res == nil {
+		return fmt.Errorf("your wedding reservation could not be found")
+	}
+	if !res.Started || res.Completed {
+		return fmt.Errorf("your wedding session is not active")
+	}
+	if res.Stage != weddingStageLobby {
+		return fmt.Errorf("the ceremony has already moved beyond the lounge")
+	}
+	if !res.isParticipant(plr.ID) {
+		return fmt.Errorf("only the engaged couple can start the ceremony")
+	}
+	partner, err := server.players.GetFromID(plr.partnerID)
+	if err != nil {
+		return fmt.Errorf("your partner must be online on this channel")
+	}
+	if partner.mapID != plr.mapID || partner.inst == nil || plr.inst == nil || partner.inst.id != plr.inst.id {
+		return fmt.Errorf("your partner must be with you in the lounge")
+	}
+	server.advanceWeddingToCeremony(res)
 	return nil
 }
 
@@ -495,17 +549,40 @@ func (server *Server) completeWedding(plr *Player, cathedral bool) error {
 	if weddingRing <= 0 {
 		return fmt.Errorf("could not determine the wedding ring for this couple")
 	}
+	ownerRingID, partnerRingID, err := createPairedRingRecords(weddingRing, plr, partner)
+	if err != nil {
+		return fmt.Errorf("could not create wedding ring records")
+	}
 	if !plr.removeItemsByID(plr.marriageItemID, 1, false) || !partner.removeItemsByID(partner.marriageItemID, 1, false) {
+		_ = deleteRingRecordPair(ownerRingID)
 		return fmt.Errorf("both partners must carry their engagement ring items")
 	}
-	if err := plr.GainItemByID(weddingRing, 1); err != nil {
+	ownerRingItem, err := CreateItemFromID(weddingRing, 1)
+	if err != nil {
+		_ = deleteRingRecordPair(ownerRingID)
+		return fmt.Errorf("could not create the wedding ring item")
+	}
+	ownerRingItem.ringID = ownerRingID
+	partnerRingItem, err := CreateItemFromID(weddingRing, 1)
+	if err != nil {
+		_ = deleteRingRecordPair(ownerRingID)
+		return fmt.Errorf("could not create the wedding ring item")
+	}
+	partnerRingItem.ringID = partnerRingID
+	ownerGiven, err := plr.GiveItem(ownerRingItem)
+	if err != nil {
+		_ = deleteRingRecordPair(ownerRingID)
 		return fmt.Errorf("please make room in your EQUIP inventory first")
 	}
-	if err := partner.GainItemByID(weddingRing, 1); err != nil {
+	if _, err := partner.GiveItem(partnerRingItem); err != nil {
+		plr.removeItem(ownerGiven, false)
+		_ = deleteRingRecordPair(ownerRingID)
 		return fmt.Errorf("your partner needs room in their EQUIP inventory first")
 	}
 	_ = plr.setMarriageItemID(weddingRing)
 	_ = partner.setMarriageItemID(weddingRing)
+	plr.refreshRingRecords()
+	partner.refreshRingRecords()
 
 	packet := packetMarriageResultRecord(marriageID, plr.ID, partner.ID, weddingRing, plr.Name, partner.Name, true)
 	plr.Send(packet)

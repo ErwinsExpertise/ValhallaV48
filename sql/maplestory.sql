@@ -200,10 +200,33 @@ CREATE TABLE `items` (
   `creatorName` tinytext NOT NULL,
   `cashID` bigint(20) DEFAULT NULL,
   `cashSN` int(11) DEFAULT NULL,
+  `ringID` int(11) DEFAULT NULL,
   PRIMARY KEY (`id`),
   KEY `characterID` (`characterID`),
   UNIQUE KEY `uniq_character_inventory_slot` (`characterID`,`inventoryID`,`slotNumber`),
   CONSTRAINT `items_ibfk_5` FOREIGN KEY (`characterID`) REFERENCES `characters` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+
+DROP TABLE IF EXISTS `marriages`;
+CREATE TABLE `marriages` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `husbandID` int(11) NOT NULL DEFAULT '0',
+  `wifeID` int(11) NOT NULL DEFAULT '0',
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+
+DROP TABLE IF EXISTS `rings`;
+CREATE TABLE `rings` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `itemID` int(11) NOT NULL DEFAULT '0',
+  `ownerCharacterID` int(11) NOT NULL DEFAULT '0',
+  `partnerRingID` int(11) NOT NULL DEFAULT '0',
+  `partnerCharacterID` int(11) NOT NULL DEFAULT '0',
+  `partnerName` varchar(255) NOT NULL,
+  `ringType` tinyint(4) NOT NULL DEFAULT '0',
+  PRIMARY KEY (`id`),
+  KEY `idx_ownerCharacterID` (`ownerCharacterID`),
+  KEY `idx_partnerCharacterID` (`partnerCharacterID`)
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 
 
@@ -317,6 +340,7 @@ CREATE TABLE IF NOT EXISTS account_storage_items (
     jump         SMALLINT(6) NOT NULL DEFAULT 0,
     expireTime   BIGINT(20) NOT NULL DEFAULT 0,
     creatorName  TINYTEXT NULL,
+    ringID       INT(11) DEFAULT NULL,
     PRIMARY KEY (id),
     KEY idx_storage_account (accountID),
     KEY idx_storage_tab_slot (accountID, inventoryID, slotNumber),
@@ -341,6 +365,7 @@ CREATE TABLE IF NOT EXISTS account_cashshop_storage_items (
     itemID       INT(11) NOT NULL,
     cashID       BIGINT(20) DEFAULT NULL,
     sn           INT(11) NOT NULL DEFAULT 0,
+    ringID       INT(11) DEFAULT NULL,
     slotNumber   INT(11) NOT NULL,
     amount       INT(11) NOT NULL DEFAULT 1,
     flag         TINYINT(4) NOT NULL DEFAULT 0,
