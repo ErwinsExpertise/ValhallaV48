@@ -371,7 +371,7 @@ func skillUsesOneAsOption(skillID int32, bit int) bool {
 	s := skill.Skill(skillID)
 	switch bit {
 	case BuffComboAttack:
-		return s == skill.ComboAttack || s == skill.SilverHawk || s == skill.GoldenEagle || s == skill.SummonDragon
+		return s == skill.SilverHawk || s == skill.GoldenEagle || s == skill.SummonDragon
 	case BuffPickPocketMesoUP:
 		return s == skill.Puppet || s == skill.SniperPuppet
 	case BuffMonsterRiding:
@@ -389,6 +389,12 @@ func (cb *CharacterBuffs) buildBuffTriplesWireOrder(skillID int32, level byte, b
 	sl := levels[level-1]
 
 	val := func(bit int) int16 {
+		if bit == BuffComboAttack && skill.Skill(skillID) == skill.ComboAttack {
+			if cb.comboCount > 0 {
+				return int16(cb.comboCount)
+			}
+			return 1
+		}
 		if skillUsesOneAsOption(skillID, bit) {
 			return 1
 		}
@@ -497,6 +503,18 @@ func (cb *CharacterBuffs) buildBuffTriplesWireOrder(skillID int32, level byte, b
 	}
 
 	return out
+}
+
+func (cb *CharacterBuffs) localBuffExtra(skillID int32, bits []int) byte {
+	for _, bit := range bits {
+		if bit == BuffComboAttack {
+			if cb.comboCount == 0 {
+				return 1
+			}
+			return cb.comboCount
+		}
+	}
+	return 0
 }
 
 func buildForeignMaskBytes64(bits []int) []byte {
@@ -904,6 +922,9 @@ func (cb *CharacterBuffs) AddBuffFromCC(charId, skillID int32, expiresAtMs int64
 		return
 	}
 	cb.check(skillID)
+	if skill.Skill(skillID) == skill.ComboAttack && cb.comboCount == 0 {
+		cb.comboCount = 1
+	}
 
 	// Use configured per-skill bit positions -> build 8-byte mask deterministically (LSB-first).
 	bits, ok := skillBuffBits[skillID]
@@ -932,7 +953,7 @@ func (cb *CharacterBuffs) AddBuffFromCC(charId, skillID int32, expiresAtMs int64
 	}
 
 	// Some v48 local temp-stat masks require an extra trailing byte.
-	extra := byte(0)
+	extra := cb.localBuffExtra(skillID, bits)
 
 	// Send to self
 	cb.plr.Send(packetPlayerGiveBuff(maskBytes, values, delay, extra))
@@ -947,13 +968,20 @@ func (cb *CharacterBuffs) AddBuffFromCC(charId, skillID int32, expiresAtMs int64
 
 	cb.activeSkillLevels[skillID] = level
 
-	cb.expireAt[skillID] = expiresAtMs
-	d := time.Until(time.UnixMilli(expiresAtMs))
-	cb.scheduleExpiryLocked(skillID, d)
+	if expiresAtMs > 0 {
+		cb.expireAt[skillID] = expiresAtMs
+		d := time.Until(time.UnixMilli(expiresAtMs))
+		cb.scheduleExpiryLocked(skillID, d)
+	} else {
+		delete(cb.expireAt, skillID)
+	}
 
 	switch skill.Skill(skillID) {
 	case skill.Recovery:
 		cb.startRecoveryTicker(level)
+	case skill.ComboAttack:
+		cb.comboCount = 1
+		cb.plr.Send(packetPlayerShowCombo(cb.comboCount))
 
 	case skill.HyperBody:
 		baseHP, baseMP := cb.plr.maxHP, cb.plr.maxMP
@@ -1002,8 +1030,10 @@ func (cb *CharacterBuffs) buildForeignBuffMaskAndValues(skillID int32, level byt
 	if hasBit(BuffComboAttack) {
 		addedBits = append(addedBits, BuffComboAttack)
 		val := byte(1)
-		if !isSummonSkill() && sl.X != 0 {
-			val = byte(sl.X)
+		if isSummonSkill() {
+			val = 1
+		} else if cb.comboCount > 0 {
+			val = cb.comboCount
 		}
 		out = append(out, val)
 	}
@@ -1218,6 +1248,9 @@ func (cb *CharacterBuffs) expireBuffNow(skillID int32) {
 		cb.plr.Send(packetPlayerStatChange(true, constant.MaxMpID, int32(cb.plr.maxMP)))
 	case skill.SummonDragon, skill.SilverHawk, skill.GoldenEagle, skill.Puppet, skill.SniperPuppet:
 		cb.plr.removeActiveSummonForSkill(skillID, constant.SummonRemoveReasonCancel)
+	case skill.ComboAttack:
+		cb.comboCount = 0
+		cb.plr.Send(packetPlayerShowCombo(0))
 
 	}
 
@@ -1250,6 +1283,103 @@ func (cb *CharacterBuffs) expireBuffNow(skillID int32) {
 
 func (cb *CharacterBuffs) check(skillID int32) {
 	// Placeholder for conflicting buff cleanup if needed.
+}
+
+func (cb *CharacterBuffs) HasSkillBuff(skillID int32) bool {
+	if cb == nil {
+		return false
+	}
+	_, ok := cb.activeSkillLevels[skillID]
+	return ok
+}
+
+func (cb *CharacterBuffs) comboAttackLevel() byte {
+	if cb == nil {
+		return 0
+	}
+	return cb.activeSkillLevels[int32(skill.ComboAttack)]
+}
+
+func (cb *CharacterBuffs) maxComboOrbs() byte {
+	level := cb.comboAttackLevel()
+	if level == 0 {
+		return 0
+	}
+	skillData, err := nx.GetPlayerSkill(int32(skill.ComboAttack))
+	if err != nil || int(level) > len(skillData) {
+		return 0
+	}
+	maxOrbs := byte(skillData[level-1].X + 1)
+	if maxOrbs < 1 {
+		maxOrbs = 1
+	}
+	return maxOrbs
+}
+
+func (cb *CharacterBuffs) syncComboBuffVisual(delay int16) {
+	if cb == nil || cb.plr == nil {
+		return
+	}
+	level := cb.comboAttackLevel()
+	if level == 0 {
+		return
+	}
+	bits := skillBuffBits[int32(skill.ComboAttack)]
+	if len(bits) == 0 {
+		return
+	}
+	maskBytes := buildMaskBytes64(bits)
+	remainMs := int32(0)
+	if expiresAtMs, ok := cb.expireAt[int32(skill.ComboAttack)]; ok && expiresAtMs > 0 {
+		if d := expiresAtMs - time.Now().UnixMilli(); d > 0 {
+			remainMs = int32(d)
+		}
+	}
+	values := cb.buildBuffTriplesWireOrder(int32(skill.ComboAttack), level, bits, remainMs)
+	cb.plr.Send(packetPlayerGiveBuff(maskBytes, values, delay, cb.localBuffExtra(int32(skill.ComboAttack), bits)))
+	if cb.plr.inst != nil {
+		fMask, fVals := cb.buildForeignBuffMaskAndValues(int32(skill.ComboAttack), level, bits)
+		if len(fMask) > 0 {
+			cb.plr.inst.sendExcept(packetPlayerGiveForeignBuff(cb.plr.ID, fMask, fVals, delay), cb.plr.Conn)
+		}
+	}
+}
+
+func (cb *CharacterBuffs) GainComboOrb() {
+	if cb == nil || cb.plr == nil || !cb.HasSkillBuff(int32(skill.ComboAttack)) {
+		return
+	}
+	maxOrbs := cb.maxComboOrbs()
+	if maxOrbs == 0 {
+		return
+	}
+	if cb.comboCount == 0 {
+		cb.comboCount = 1
+	}
+	if cb.comboCount >= maxOrbs {
+		return
+	}
+	cb.comboCount++
+	cb.syncComboBuffVisual(0)
+	cb.plr.Send(packetPlayerShowCombo(cb.comboCount))
+}
+
+func (cb *CharacterBuffs) ConsumeComboOrbs(resetToOne bool) byte {
+	if cb == nil || cb.plr == nil || !cb.HasSkillBuff(int32(skill.ComboAttack)) {
+		return 0
+	}
+	used := cb.comboCount
+	if used == 0 {
+		return 0
+	}
+	if resetToOne {
+		cb.comboCount = 1
+		cb.syncComboBuffVisual(0)
+		cb.plr.Send(packetPlayerShowCombo(cb.comboCount))
+	} else {
+		cb.expireBuffNow(int32(skill.ComboAttack))
+	}
+	return used
 }
 
 func (cb *CharacterBuffs) startRecoveryTicker(level byte) {

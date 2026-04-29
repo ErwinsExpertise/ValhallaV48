@@ -163,6 +163,7 @@ func (server *Server) HandleClientPacket(conn mnet.Client, reader mpacket.Reader
 		server.mobControl(conn, reader)
 	case opcode.RecvChannelDistance:
 		server.mobDistance(conn, reader)
+	case opcode.RecvChannelMobExplode:
 	case opcode.RecvChannelNpcMovement:
 		server.npcMovement(conn, reader)
 	case opcode.RecvChannelBoatMap:
@@ -2728,7 +2729,7 @@ func (server Server) mobDistance(conn mnet.Client, reader mpacket.Reader) {
 		ID := reader.ReadInt32()
 		distance := reader.ReadInt32()
 
-		Unknown what this packet is for
+		This packet is to blow up mobs when player is near
 	*/
 
 }
@@ -2782,8 +2783,24 @@ func (server Server) playerMeleeSkill(conn mnet.Client, reader mpacket.Reader) {
 	if data.isMesoExplosion {
 		server.handleMesoExplosion(plr, inst, data)
 	} else {
+		finisherUsed := byte(0)
+		if plr.buffs != nil {
+			switch skill.Skill(data.skillID) {
+			case skill.SwordPanic, skill.AxePanic, skill.SwordComa, skill.AxeComa:
+				finisherUsed = plr.buffs.ConsumeComboOrbs(true)
+			}
+		}
 		for _, attack := range data.attackInfo {
 			inst.lifePool.mobDamaged(attack.spawnID, plr, attack.damages...)
+		}
+		if plr.buffs != nil && plr.buffs.HasSkillBuff(int32(skill.ComboAttack)) {
+			switch skill.Skill(data.skillID) {
+			case skill.SwordPanic, skill.AxePanic, skill.SwordComa, skill.AxeComa:
+			default:
+				if len(data.attackInfo) > 0 && finisherUsed == 0 {
+					plr.buffs.GainComboOrb()
+				}
+			}
 		}
 	}
 }
@@ -4719,6 +4736,8 @@ func (server *Server) playerSpecialSkill(conn mnet.Client, reader mpacket.Reader
 
 	case skill.DarkSight,
 		skill.MagicGuard,
+		skill.PowerGuard, skill.PagePowerGuard,
+		skill.ComboAttack,
 		skill.Invincible,
 		skill.SoulArrow, skill.CBSoulArrow,
 		skill.ShadowPartner,

@@ -3779,8 +3779,14 @@ func buffMaskNeedsExtraByte(mask []byte) bool {
 	}
 	value := uint64(mask[0]) | uint64(mask[1])<<8 | uint64(mask[2])<<16 | uint64(mask[3])<<24 |
 		uint64(mask[4])<<32 | uint64(mask[5])<<40 | uint64(mask[6])<<48 | uint64(mask[7])<<56
-	const forcedStatExtraMask uint64 = 0x408B40020180
+	const forcedStatExtraMask uint64 = 0x408B40220180
 	return (value & forcedStatExtraMask) != 0
+}
+
+func packetPlayerShowCombo(count byte) mpacket.Packet {
+	p := mpacket.CreateWithOpcode(opcode.SendChannelShowCombo)
+	p.WriteInt32(int32(count))
+	return p
 }
 
 // Self-cancel using 8-byte mask

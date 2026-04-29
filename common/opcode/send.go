@@ -106,6 +106,7 @@ const (
 	SendChannelReactorChangeState      int16 = 0xD2
 	SendChannelReactorEnterField       int16 = 0xD4
 	SendChannelReactorLeaveField       int16 = 0xD5
+	SendChannelShowCombo               int16 = 0xE1
 	SendChannelNpcDialogueBox          int16 = 0xE2
 	SendChannelNpcShop                 int16 = 0xE5
 	SendChannelNpcShopResult           int16 = 0xE6
