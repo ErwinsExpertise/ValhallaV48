@@ -41,6 +41,7 @@ type monster struct {
 	link                   int32
 	flySpeed               int32
 	noRegen                int32
+	fixedDamage            int32
 	skills                 map[byte]byte
 	revives                []int32
 	stance                 byte
@@ -99,6 +100,7 @@ func createMonsterFromData(spawnID int32, life nx.Life, m nx.Mob, dropsItems, dr
 		link:             int32(m.Link),
 		flySpeed:         int32(m.FlySpeed),
 		noRegen:          int32(m.NoRegen),
+		fixedDamage:      int32(m.FixedDamage),
 		revives:          m.Revives,
 		summonType:       constant.MobSummonTypeRegen,
 		boss:             m.Boss > 0,

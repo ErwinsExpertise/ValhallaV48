@@ -2727,7 +2727,7 @@ func (server Server) playerMeleeSkill(conn mnet.Client, reader mpacket.Reader) {
 		return
 	}
 
-	data, valid := getAttackInfo(reader, *plr, attackMelee)
+	data, valid := getAttackInfo(reader, plr, attackMelee)
 
 	if !valid {
 		return
@@ -2783,6 +2783,13 @@ func (server *Server) validateAndApplyCriticals(conn mnet.Client, plr *Player, d
 			if hitIdx >= len(data.attackInfo[targetIdx].damages) {
 				continue
 			}
+			if data.attackInfo[targetIdx].damages[hitIdx] < 0 {
+				data.attackInfo[targetIdx].damages[hitIdx] = 0
+				if server.ac != nil {
+					server.ac.LogDamageViolation(plr.accountID, result.ClientDamage, 0)
+				}
+				continue
+			}
 
 			data.attackInfo[targetIdx].isCritical[hitIdx] = result.IsCrit
 			if result.ValidationSkipped {
@@ -2814,7 +2821,7 @@ func (server Server) playerRangedSkill(conn mnet.Client, reader mpacket.Reader) 
 		return
 	}
 
-	data, valid := getAttackInfo(reader, *plr, attackRanged)
+	data, valid := getAttackInfo(reader, plr, attackRanged)
 
 	if !valid {
 		return
@@ -2867,7 +2874,7 @@ func (server Server) playerMagicSkill(conn mnet.Client, reader mpacket.Reader) {
 		return
 	}
 
-	data, valid := getAttackInfo(reader, *plr, attackMagic)
+	data, valid := getAttackInfo(reader, plr, attackMagic)
 
 	if !valid {
 		return
@@ -2967,10 +2974,10 @@ type attackData struct {
 	playerPos  pos
 }
 
-func getAttackInfo(reader mpacket.Reader, player Player, attackType int) (attackData, bool) {
+func getAttackInfo(reader mpacket.Reader, player *Player, attackType int) (attackData, bool) {
 	data := attackData{}
 
-	if player.hp == 0 {
+	if player == nil || player.hp == 0 {
 		return data, false
 	}
 
@@ -4909,8 +4916,12 @@ func (server *Server) playerSummonAttack(conn mnet.Client, reader mpacket.Reader
 		return
 	}
 
-	data, valid := getAttackInfo(reader, *plr, attackSummon)
+	data, valid := getAttackInfo(reader, plr, attackSummon)
 	if !valid || len(data.attackInfo) == 0 {
+		return
+	}
+	summ := plr.getSummon(data.summonType)
+	if summ == nil || summ.IsPuppet {
 		return
 	}
 
@@ -4922,6 +4933,10 @@ func (server *Server) playerSummonAttack(conn mnet.Client, reader mpacket.Reader
 	if err != nil {
 		return
 	}
+
+	calc := NewDamageCalculator(plr, &data, attackSummon)
+	results := calc.ValidateAttack()
+	server.validateAndApplyCriticals(conn, plr, &data, results)
 
 	mobDamages := make(map[int32][]int32, len(data.attackInfo))
 	for _, at := range data.attackInfo {

@@ -139,6 +139,14 @@ func NewDamageCalculator(plr *Player, data *attackData, attackType int) *DamageC
 		attackAction: constant.AttackAction(data.action),
 		attackOption: constant.AttackOption(data.option),
 	}
+	if attackType == attackSummon && data.summonType > 0 {
+		calc.skillID = data.summonType
+		if calc.skillLevel == 0 {
+			if summ := plr.getSummon(data.summonType); summ != nil {
+				calc.skillLevel = summ.Level
+			}
+		}
+	}
 
 	weaponID := int32(0)
 	for _, item := range plr.equip {
@@ -150,10 +158,10 @@ func NewDamageCalculator(plr *Player, data *attackData, attackType int) *DamageC
 	calc.weaponID = weaponID
 	calc.weaponType = constant.GetWeaponType(weaponID)
 
-	if data.skillID > 0 {
-		if skillData, err := nx.GetPlayerSkill(data.skillID); err == nil && len(skillData) > 0 {
-			if data.skillLevel > 0 && int(data.skillLevel) <= len(skillData) {
-				calc.skill = &skillData[data.skillLevel-1]
+	if calc.skillID > 0 {
+		if skillData, err := nx.GetPlayerSkill(calc.skillID); err == nil && len(skillData) > 0 {
+			if calc.skillLevel > 0 && int(calc.skillLevel) <= len(skillData) {
+				calc.skill = &skillData[calc.skillLevel-1]
 			}
 		}
 	}
@@ -167,6 +175,7 @@ func NewDamageCalculator(plr *Player, data *attackData, attackType int) *DamageC
 
 // ValidateAttack validates all hits in an attack and determines critical hits
 func (calc *DamageCalculator) ValidateAttack() [][]CalcHitResult {
+	calc.EnforceAttackShape()
 	calc.LogSuspiciousAttackShape()
 
 	results := make([][]CalcHitResult, len(calc.data.attackInfo))
@@ -204,6 +213,38 @@ func (calc *DamageCalculator) ValidateAttack() [][]CalcHitResult {
 	return results
 }
 
+func (calc *DamageCalculator) EnforceAttackShape() {
+	if calc == nil || calc.data == nil {
+		return
+	}
+
+	if expectedTargets, ok := calc.GetExpectedTargetCount(); ok && expectedTargets > 0 && len(calc.data.attackInfo) > expectedTargets {
+		calc.data.attackInfo = calc.data.attackInfo[:expectedTargets]
+		calc.data.targets = byte(expectedTargets)
+	}
+
+	expectedHits, ok := calc.GetExpectedHitCount()
+	if !ok || expectedHits <= 0 {
+		return
+	}
+
+	for idx := range calc.data.attackInfo {
+		info := &calc.data.attackInfo[idx]
+		if len(info.damages) > expectedHits {
+			info.damages = info.damages[:expectedHits]
+		}
+		if len(info.isCritical) > expectedHits {
+			info.isCritical = info.isCritical[:expectedHits]
+		}
+		if info.hitCount > byte(expectedHits) {
+			info.hitCount = byte(expectedHits)
+		}
+	}
+	if calc.data.hits > byte(expectedHits) {
+		calc.data.hits = byte(expectedHits)
+	}
+}
+
 func (calc *DamageCalculator) CalculateHit(
 	mob *monster,
 	info *attackInfo,
@@ -216,6 +257,22 @@ func (calc *DamageCalculator) CalculateHit(
 	result := CalcHitResult{
 		ClientDamage: info.damages[hitIdx],
 		IsValid:      false,
+	}
+	if calc.skill != nil && calc.skill.Fixdamage > 0 {
+		fixed := float64(calc.skill.Fixdamage)
+		result.MinDamage = fixed
+		result.MaxDamage = fixed
+		result.ExpectedDmg = fixed
+		applyResultTolerance(&result, 1.0)
+		return result
+	}
+	if mob != nil && mob.fixedDamage > 0 {
+		fixed := float64(mob.fixedDamage)
+		result.MinDamage = fixed
+		result.MaxDamage = fixed
+		result.ExpectedDmg = fixed
+		applyResultTolerance(&result, 1.0)
+		return result
 	}
 
 	if calc.handleSpecialSkillDamage(&result, mob, info, rngBuf, hitIdx) {
@@ -280,27 +337,72 @@ func (calc *DamageCalculator) CalculateHit(
 	if minDmg > maxDmg {
 		minDmg = maxDmg
 	}
-
-	allowedMax := maxDmg
-	if calc.CanCriticallyExceedBaseCap() {
-		allowedMax *= 2
+	if calc.skill != nil && len(info.damages) == 1 && calc.skill.BulletCount > 1 {
+		// Some multi-projectile skills can arrive as one summed client damage value.
+		bulletCount := float64(calc.skill.BulletCount)
+		minDmg *= bulletCount
+		maxDmg *= bulletCount
 	}
+
+	critMultiplier := calc.GetCriticalDamageMultiplier()
+	if critMultiplier > 1.0 {
+		critMin := minDmg * critMultiplier
+		critMax := maxDmg * critMultiplier
+		if result.IsCrit {
+			minDmg = critMin
+			maxDmg = critMax
+		}
+	}
+	allowedMax := maxDmg
 	if calc.HasPhysicalOrMagicImmunity(mob) {
 		if allowedMax < 1 {
 			allowedMax = 1
+		}
+		if maxDmg < 1 {
+			maxDmg = 1
 		}
 		if minDmg > 1 {
 			minDmg = 1
 		}
 	}
 
+	defMin, defMax := calc.CalculateDefenseReductionBounds(mob)
+	if defMax > 0 {
+		minDmg -= defMax
+		maxDmg -= defMin
+	}
+	if minDmg < 1 {
+		minDmg = 1
+	}
+	if maxDmg < 1 {
+		maxDmg = 1
+	}
+	allowedMax = maxDmg
+	if critMultiplier > 1.0 && !result.IsCrit {
+		allowedMax = maxDmg * critMultiplier
+	}
+	if minDmg > maxDmg {
+		minDmg = maxDmg
+	}
+
 	dmgRoll := 0.5
+	defRoll := 0.5
 	if rngBuf != nil {
 		dmgRoll = NormalizeDamageRng(rngBuf.DamageRaw(hitIdx, 3))
+		defRoll = NormalizeDamageRng(rngBuf.DefenseRaw(hitIdx, 3))
 	}
-	expected := minDmg + (allowedMax-minDmg)*dmgRoll
+	expected := minDmg + (maxDmg-minDmg)*dmgRoll
+	if defMax > defMin {
+		expected -= defMin + (defMax-defMin)*defRoll
+	} else if defMax > 0 {
+		expected -= defMax
+	}
+	if expected < 1 && result.ClientDamage > 0 {
+		expected = 1
+	}
 
 	minDmg = math.Floor(minDmg)
+	maxDmg = math.Floor(maxDmg)
 	allowedMax = math.Floor(allowedMax)
 	expected = math.Floor(expected)
 
@@ -350,18 +452,44 @@ func (calc *DamageCalculator) CalculateHit(
 }
 
 func (calc *DamageCalculator) handleSpecialSkillDamage(result *CalcHitResult, mob *monster, info *attackInfo, rngBuf *DamageRngBuffer, hitIdx int) bool {
-	str := float64(calc.player.str)
-	dex := float64(calc.player.dex)
-	luk := float64(calc.player.luk)
-
 	// Summons are keyed off attack type, not skill id.
 	if calc.attackType == attackSummon {
-		attackRate := float64(100)
-		if calc.skill != nil {
-			attackRate = float64(calc.skill.Damage)
+		if calc.skill == nil {
+			result.ValidationSkipped = true
+			result.ValidationReason = "missing summon skill data"
+			result.IsValid = true
+			return true
 		}
-		result.MinDamage = (dex*2.5*0.7 + str) * attackRate / 100.0
-		result.MaxDamage = (dex*2.5 + str) * attackRate / 100.0
+
+		switch {
+		case calc.skill.Mad > 0:
+			baseRange := calc.CalculateSummonMagicDamageRange()
+			if !baseRange.Valid {
+				result.ValidationSkipped = true
+				result.ValidationReason = baseRange.Reason
+				result.IsValid = true
+				return true
+			}
+			result.MinDamage = baseRange.Min
+			result.MaxDamage = baseRange.Max
+		case calc.skill.Pad > 0:
+			baseRange := calc.CalculateSummonPhysicalDamageRange()
+			if !baseRange.Valid {
+				result.ValidationSkipped = true
+				result.ValidationReason = baseRange.Reason
+				result.IsValid = true
+				return true
+			}
+			padRate := float64(calc.skill.Pad) / 100.0
+			result.MinDamage = baseRange.Min * padRate
+			result.MaxDamage = baseRange.Max * padRate
+		default:
+			result.ValidationSkipped = true
+			result.ValidationReason = "unsupported summon damage formula"
+			result.IsValid = true
+			return true
+		}
+
 		result.ExpectedDmg = (result.MinDamage + result.MaxDamage) / 2.0
 		applyResultTolerance(result, 1.0+constant.DamageVarianceTolerance)
 		return true
@@ -471,14 +599,6 @@ func (calc *DamageCalculator) handleSpecialSkillDamage(result *CalcHitResult, mo
 		applyResultTolerance(result, 1.0+constant.DamageVarianceTolerance)
 		return true
 
-	case skill.Drain:
-		basicAttack := float64(calc.watk)
-		result.MinDamage = (8.0*(str+luk) + dex*2.0) / 100.0 * basicAttack
-		result.MaxDamage = (18.5*(str+luk) + dex*2.0) / 100.0 * basicAttack
-		result.ExpectedDmg = (result.MinDamage + result.MaxDamage) / 2.0
-		applyResultTolerance(result, 1.0+constant.DamageVarianceTolerance)
-		return true
-
 	case skill.PoisonMyst:
 		if calc.skillLevel <= 0 {
 			return true
@@ -522,11 +642,8 @@ func (calc *DamageCalculator) CalculateBaseDamageRange(mob *monster, hitIdx int)
 	}
 
 	switch skill.Skill(calc.skillID) {
-	case skill.LuckySeven:
-		maxDmg := (luk * 5.0) * math.Ceil(watk/100.0)
-		return DamageRange{Min: math.Ceil(maxDmg * 0.5), Max: math.Ceil(maxDmg), Valid: true}
 	case skill.DragonRoar, skill.SuperDragonRoar:
-		maxDmg := (str*4.0 + dex) * math.Ceil(watk/100.0)
+		maxDmg := (str*4.0 + dex) * watk / 100.0
 		return DamageRange{Min: math.Ceil(maxDmg * math.Max(calc.masteryMod, 0.6)), Max: math.Ceil(maxDmg), Valid: true}
 	}
 
@@ -598,10 +715,46 @@ func (calc *DamageCalculator) CalculateMagicDamageRange() DamageRange {
 		return DamageRange{Min: math.Ceil(baseMax * 0.5), Max: math.Ceil(baseMax), Valid: true}
 	}
 
-	baseMax := math.Ceil((totalMAD*math.Ceil(totalMAD/1000.0)+totalMAD)/30.0) + math.Ceil(intl/200.0)
+	if calc.skill.Mad <= 0 {
+		return DamageRange{Valid: false, Reason: "missing skill magic multiplier"}
+	}
+
+	// Pre-BB magic uses the spell's NX mad value as the skill multiplier.
+	spellBase := math.Ceil((totalMAD*math.Ceil(totalMAD/1000.0)+totalMAD)/30.0) + math.Ceil(intl/200.0)
+	baseMax := spellBase * float64(calc.skill.Mad)
 	baseMin := math.Ceil(baseMax * calc.masteryMod)
 
 	return DamageRange{Min: baseMin, Max: baseMax, Valid: true}
+}
+
+func (calc *DamageCalculator) CalculateSummonMagicDamageRange() DamageRange {
+	totalMAD := float64(calc.GetTotalMatk())
+	intl := float64(calc.GetTotalInt())
+
+	if totalMAD <= 0 {
+		return DamageRange{Valid: false, Reason: "effective magic attack is zero"}
+	}
+	if calc.skill == nil || calc.skill.Mad <= 0 {
+		return DamageRange{Valid: false, Reason: "missing summon magic multiplier"}
+	}
+
+	maxDmg := math.Ceil((intl * totalMAD * float64(calc.skill.Mad)) / 10000.0)
+	minDmg := math.Ceil(maxDmg * calc.masteryMod)
+	if minDmg < 1 {
+		minDmg = 1
+	}
+	if maxDmg < 1 {
+		maxDmg = 1
+	}
+	return DamageRange{Min: minDmg, Max: maxDmg, Valid: true}
+}
+
+func (calc *DamageCalculator) CalculateSummonPhysicalDamageRange() DamageRange {
+	baseRange := calc.CalculateBaseDamageRange(nil, 0)
+	if !baseRange.Valid {
+		return baseRange
+	}
+	return baseRange
 }
 
 func (calc *DamageCalculator) ApplySkillModifiers(minDmg, maxDmg float64, ampData *ElementAmpData, mob *monster) (float64, float64) {
@@ -654,7 +807,7 @@ func (calc *DamageCalculator) CalculateDefenseReductionBounds(mob *monster) (flo
 }
 
 func (calc *DamageCalculator) CheckCritical(rngBuf *DamageRngBuffer, hitIdx int) bool {
-	if !calc.isRanged || calc.critSkill == nil {
+	if !calc.isRanged || calc.critSkill == nil || rngBuf == nil {
 		return false
 	}
 
@@ -670,6 +823,14 @@ func (calc *DamageCalculator) CheckCritical(rngBuf *DamageRngBuffer, hitIdx int)
 	}
 
 	return roll < prop
+}
+
+func (calc *DamageCalculator) GetCriticalDamageMultiplier() float64 {
+	if calc.critSkill == nil || calc.critSkill.Damage <= 0 {
+		return 1.0
+	}
+
+	return float64(calc.critSkill.Damage) / 100.0
 }
 
 func (calc *DamageCalculator) GetAfterModifier(targetIdx int, baseDmg float64) float64 {
@@ -951,15 +1112,11 @@ func (calc *DamageCalculator) UsesSkillDamageMultiplier() bool {
 	}
 
 	switch skill.Skill(calc.skillID) {
-	case skill.LuckySeven, skill.DragonRoar, skill.SuperDragonRoar, skill.ShadowMeso, skill.ShadowWeb, skill.Heal:
+	case skill.ShadowMeso, skill.ShadowWeb, skill.Heal:
 		return false
 	default:
 		return true
 	}
-}
-
-func (calc *DamageCalculator) CanCriticallyExceedBaseCap() bool {
-	return calc.critSkill != nil
 }
 
 func (calc *DamageCalculator) HasPhysicalOrMagicImmunity(mob *monster) bool {
