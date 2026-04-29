@@ -1448,7 +1448,9 @@ func (server Server) warpPlayer(plr *Player, dstField *field, dstPortal portal, 
 	}
 
 	if hadStarterVisualOverride != isStarterEquipOverrideMap(plr.mapID) {
+		plr.refreshStarterVisualEquipSlots()
 		plr.Send(packetInventoryChangeEquip(*plr))
+		dstInst.broadcastAvatarChange(plr)
 	}
 
 	if plr.event != nil && plr.event.onMapChangeCallback != nil {

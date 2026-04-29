@@ -412,10 +412,15 @@ func (server *Server) handleNewCharacter(conn mnet.Client, reader mpacket.Reader
 	shoes := reader.ReadInt32()
 	weapon := reader.ReadInt32()
 
-	str := reader.ReadByte()
-	dex := reader.ReadByte()
-	intelligence := reader.ReadByte()
-	luk := reader.ReadByte()
+	_ = reader.ReadByte()
+	_ = reader.ReadByte()
+	_ = reader.ReadByte()
+	_ = reader.ReadByte()
+
+	const (
+		baseStat = byte(4)
+		startAP  = int16(9)
+	)
 
 	// Add str, dex, int, luk validation (check to see if client generates a constant sum)
 
@@ -458,8 +463,8 @@ func (server *Server) handleNewCharacter(conn mnet.Client, reader mpacket.Reader
 	}
 
 	if valid {
-		res, err := common.DB.Exec("INSERT INTO characters (name, accountID, worldID, face, hair, skin, gender, str, dex, intt, luk) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-			name, conn.GetAccountID(), conn.GetWorldID(), face, hair+hairColour, skin, conn.GetGender(), str, dex, intelligence, luk)
+		res, err := common.DB.Exec("INSERT INTO characters (name, accountID, worldID, face, hair, skin, gender, str, dex, intt, luk, ap) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			name, conn.GetAccountID(), conn.GetWorldID(), face, hair+hairColour, skin, conn.GetGender(), baseStat, baseStat, baseStat, baseStat, startAP)
 
 		if err != nil {
 			log.Println(err)

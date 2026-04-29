@@ -98,6 +98,31 @@ func starterMapVisualEquipItem(slot byte) Item {
 	}
 }
 
+func starterMapVisualEquipNegativeSlot(slot byte) int16 {
+	return -int16(slot)
+}
+
+func (plr *Player) refreshStarterVisualEquipSlots() {
+	if plr == nil {
+		return
+	}
+	for slot := range starterMapVisualEquipBySlot {
+		negSlot := starterMapVisualEquipNegativeSlot(slot)
+		found := false
+		for _, it := range plr.equip {
+			if it.slotID != negSlot || it.cash {
+				continue
+			}
+			plr.Send(packetInventoryAddItem(it, true))
+			found = true
+			break
+		}
+		if !found {
+			plr.Send(packetInventoryRemoveItem(Item{invID: constant.InventoryEquip, slotID: negSlot}))
+		}
+	}
+}
+
 func writeSetFieldEquippedItems(p *mpacket.Packet, plr Player) {
 	if !isStarterEquipOverrideMap(plr.mapID) {
 		for _, it := range plr.equip {
