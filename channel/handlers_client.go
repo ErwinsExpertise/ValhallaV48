@@ -4615,6 +4615,10 @@ func (server *Server) playerSpecialSkill(conn mnet.Client, reader mpacket.Reader
 	case skill.SuperGMHealDispell:
 		sendPrimarySkillAnimation(plr, skillID, skillLevel)
 
+		plr.buffs.cureAllDebuffs()
+		plr.setHP(plr.maxHP)
+		plr.setMP(plr.maxMP)
+
 		for _, member := range plr.inst.players {
 			if member.ID == plr.ID {
 				continue
@@ -4627,6 +4631,7 @@ func (server *Server) playerSpecialSkill(conn mnet.Client, reader mpacket.Reader
 
 	case skill.Dispel:
 		sendPrimarySkillAnimation(plr, skillID, skillLevel)
+		plr.buffs.cureAllDebuffs()
 
 		if plr.party != nil {
 			affected := getAffectedPartyMembers(plr.party, plr, partyMask)
