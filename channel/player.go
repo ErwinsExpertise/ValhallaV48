@@ -863,6 +863,7 @@ func (d *Player) giveSP(amount int16) {
 
 func (d *Player) setStr(amount int16) {
 	d.str = amount
+	d.recalculateTotalStats()
 	d.Send(packetPlayerStatChange(true, constant.StrID, int32(amount)))
 	d.MarkDirty(DirtyStr, 500*time.Millisecond)
 }
@@ -873,6 +874,7 @@ func (d *Player) giveStr(amount int16) {
 
 func (d *Player) setDex(amount int16) {
 	d.dex = amount
+	d.recalculateTotalStats()
 	d.Send(packetPlayerStatChange(true, constant.DexID, int32(amount)))
 	d.MarkDirty(DirtyDex, 500*time.Millisecond)
 }
@@ -883,6 +885,7 @@ func (d *Player) giveDex(amount int16) {
 
 func (d *Player) setInt(amount int16) {
 	d.intt = amount
+	d.recalculateTotalStats()
 	d.Send(packetPlayerStatChange(true, constant.IntID, int32(amount)))
 	d.MarkDirty(DirtyInt, 500*time.Millisecond)
 }
@@ -893,6 +896,7 @@ func (d *Player) giveInt(amount int16) {
 
 func (d *Player) setLuk(amount int16) {
 	d.luk = amount
+	d.recalculateTotalStats()
 	d.Send(packetPlayerStatChange(true, constant.LukID, int32(amount)))
 	d.MarkDirty(DirtyLuk, 500*time.Millisecond)
 }
@@ -1505,6 +1509,9 @@ func (d *Player) updateItem(new Item) {
 		}
 	}
 	d.updateItemInventory(new.invID, items)
+	if new.invID == constant.InventoryEquip && new.slotID < 0 {
+		d.recalculateTotalStats()
+	}
 }
 
 func (d *Player) updateItemInventory(invID byte, inventory []Item) {

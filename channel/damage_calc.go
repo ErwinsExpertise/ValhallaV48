@@ -1,6 +1,7 @@
 package channel
 
 import (
+	"fmt"
 	"log"
 	"math"
 	"math/rand"
@@ -422,7 +423,7 @@ func (calc *DamageCalculator) CalculateHit(
 	if !result.IsValid {
 		result.ValidationReason = "client damage exceeds tolerated cap"
 		log.Printf(
-			"Suspicious high damage from player %s (ID: %d, level: %d, job: %d): client=%d, max expected=%.0f (with tolerance), base min=%.0f, base max=%.0f, skill=%d, attackType=%d, weaponID=%d, weaponType=%d, STR=%d, DEX=%d, INT=%d, LUK=%d, WATK=%d, MATK=%d, mobID=%d, mobPD=%d, mobMD=%d",
+			"Suspicious high damage from player %s (ID: %d, level: %d, job: %d): client=%d, max expected=%.0f (with tolerance), base min=%.0f, base max=%.0f, skill=%d, attackType=%d, weaponID=%d, weaponType=%d, STR=%d, DEX=%d, INT=%d, LUK=%d, WATK=%d, MATK=%d, mobID=%d, mobPD=%d, mobMD=%d | %s",
 			calc.player.Name,
 			calc.player.ID,
 			calc.player.level,
@@ -444,6 +445,7 @@ func (calc *DamageCalculator) CalculateHit(
 			mob.id,
 			mob.pdDamage,
 			mob.mdDamage,
+			calc.DebugCombatStatLine(),
 		)
 	}
 
@@ -911,9 +913,9 @@ func (calc *DamageCalculator) GetTargetAccuracy(mob *monster) float64 {
 
 	var accuracy int
 	if calc.UsesMagicFormula() {
-		accuracy = int(5 * (calc.player.intt/10 + calc.player.luk/10))
+		accuracy = int(5 * (calc.GetTotalInt()/10 + calc.GetTotalLuk()/10))
 	} else {
-		accuracy = int(calc.player.dex)
+		accuracy = int(calc.GetTotalDex())
 	}
 
 	return float64(accuracy*100) / (float64(levelDiff*10) + 255.0)
@@ -1017,6 +1019,133 @@ func (calc *DamageCalculator) GetTotalWatk() int16 {
 		watk += calc.GetProjectileWatk()
 	}
 	return watk
+}
+
+func (calc *DamageCalculator) LogCombatStatSnapshot() {
+	if calc == nil || calc.player == nil {
+		return
+	}
+
+	type equipStats struct {
+		str, dex, intt, luk, watk, matk, acc int16
+	}
+
+	var equip equipStats
+	for _, item := range calc.player.equip {
+		if item.slotID >= 0 {
+			continue
+		}
+		equip.str += item.str
+		equip.dex += item.dex
+		equip.intt += item.intt
+		equip.luk += item.luk
+		equip.watk += item.watk
+		equip.matk += item.matk
+		equip.acc += item.accuracy
+	}
+
+	buffWatk, buffMatk, buffAcc := int16(0), int16(0), int16(0)
+	if calc.player.buffs != nil {
+		bonus := calc.player.buffs.getStatBonuses()
+		buffWatk = bonus.watk
+		buffMatk = bonus.matk
+		buffAcc = bonus.accuracy
+	}
+
+	weaponEquipWatk := int16(0)
+	for _, item := range calc.player.equip {
+		if item.slotID == -11 {
+			weaponEquipWatk = item.watk
+			break
+		}
+	}
+
+	projectileWatk := calc.GetProjectileWatk()
+	baseStrWatk := calc.player.str / 10
+	log.Printf(
+		"damage-debug player=%s id=%d map=%d lvl=%d job=%d skill=%d attackType=%d baseRecord={str=%d dex=%d int=%d luk=%d ap=%d} currentFields={str=%d dex=%d int=%d luk=%d ap=%d} equipContrib={str=%d dex=%d int=%d luk=%d watk=%d matk=%d acc=%d} buffContrib={watk=%d matk=%d acc=%d} cachedTotals={str=%d dex=%d int=%d luk=%d watk=%d matk=%d acc=%d} finalCalc={str=%d dex=%d int=%d luk=%d watk=%d matk=%d targetAcc=%.4f} weapon={id=%d type=%d equipWatk=%d baseStrWatk=%d buffWatk=%d projectileWatk=%d cachedWatk=%d finalWatk=%d} packetStats={str=%d dex=%d int=%d luk=%d}",
+		calc.player.Name,
+		calc.player.ID,
+		calc.player.mapID,
+		calc.player.level,
+		calc.player.job,
+		calc.skillID,
+		calc.attackType,
+		calc.player.str,
+		calc.player.dex,
+		calc.player.intt,
+		calc.player.luk,
+		calc.player.ap,
+		calc.player.str,
+		calc.player.dex,
+		calc.player.intt,
+		calc.player.luk,
+		calc.player.ap,
+		equip.str,
+		equip.dex,
+		equip.intt,
+		equip.luk,
+		equip.watk,
+		equip.matk,
+		equip.acc,
+		buffWatk,
+		buffMatk,
+		buffAcc,
+		calc.player.totalStr,
+		calc.player.totalDex,
+		calc.player.totalInt,
+		calc.player.totalLuk,
+		calc.player.totalWatk,
+		calc.player.totalMatk,
+		calc.player.totalAccuracy,
+		calc.GetTotalStr(),
+		calc.GetTotalDex(),
+		calc.GetTotalInt(),
+		calc.GetTotalLuk(),
+		calc.GetTotalWatk(),
+		calc.GetTotalMatk(),
+		calc.getTargetAccuracyForLogging(),
+		calc.weaponID,
+		calc.weaponType,
+		weaponEquipWatk,
+		baseStrWatk,
+		buffWatk,
+		projectileWatk,
+		calc.player.totalWatk,
+		calc.GetTotalWatk(),
+		calc.player.str,
+		calc.player.dex,
+		calc.player.intt,
+		calc.player.luk,
+	)
+}
+
+func (calc *DamageCalculator) getTargetAccuracyForLogging() float64 {
+	mobLevel := int32(calc.player.level)
+	if calc.player.inst != nil && len(calc.data.attackInfo) > 0 {
+		if mob, err := calc.player.inst.lifePool.getMobFromID(calc.data.attackInfo[0].spawnID); err == nil {
+			mobLevel = mob.level
+		}
+	}
+	return calc.GetTargetAccuracy(&monster{level: mobLevel})
+}
+
+func (calc *DamageCalculator) DebugCombatStatLine() string {
+	if calc == nil || calc.player == nil {
+		return "damage-debug <nil>"
+	}
+	return fmt.Sprintf("player=%s baseSTR=%d totalSTR=%d totalDEX=%d totalINT=%d totalLUK=%d totalWATK=%d totalMATK=%d weaponID=%d weaponType=%d",
+		calc.player.Name,
+		calc.player.str,
+		calc.GetTotalStr(),
+		calc.GetTotalDex(),
+		calc.GetTotalInt(),
+		calc.GetTotalLuk(),
+		calc.GetTotalWatk(),
+		calc.GetTotalMatk(),
+		calc.weaponID,
+		calc.weaponType,
+	)
 }
 
 func (calc *DamageCalculator) GetTotalMatk() int16 {
