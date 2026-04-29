@@ -331,7 +331,7 @@ func parseActItems(node *gonx.Node, nodes []gonx.Node, text []string) []ActItem 
 	var ret []ActItem
 	for i := uint32(0); i < uint32(node.ChildCount); i++ {
 		dir := nodes[node.ChildID+i]
-		var ai ActItem
+		ai := ActItem{Gender: -1}
 		for j := uint32(0); j < uint32(dir.ChildCount); j++ {
 			f := nodes[dir.ChildID+j]
 			switch text[f.NameID] {

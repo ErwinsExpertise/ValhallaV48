@@ -2,6 +2,7 @@ package channel
 
 import (
 	"database/sql"
+	"encoding/binary"
 	"fmt"
 	"log"
 	"math"
@@ -3248,6 +3249,22 @@ func (server *Server) npcChatStart(conn mnet.Client, reader mpacket.Reader) {
 }
 
 func (server *Server) npcChatContinue(conn mnet.Client, reader mpacket.Reader) {
+	if dialog, ok := server.questDialogs[conn]; ok {
+		lastMsg := reader.ReadByte()
+		action := reader.ReadByte()
+		selection := -1
+		if len(reader.GetRestAsBytes()) > 0 {
+			selection = int(reader.ReadByte())
+		}
+
+		plr, err := server.players.GetFromConn(conn)
+		if err != nil || dialog.handle(plr, action, selection) {
+			delete(server.questDialogs, conn)
+		}
+		_ = lastMsg
+		return
+	}
+
 	if _, ok := server.npcChat[conn]; !ok {
 		return
 	}
@@ -4992,6 +5009,7 @@ func (server *Server) playerQuestOperation(conn mnet.Client, reader mpacket.Read
 
 	act := reader.ReadByte()
 	questID := reader.ReadInt16()
+	rest := reader.GetRestAsBytes()
 
 	switch act {
 	case constant.QuestStarted:
@@ -4999,7 +5017,11 @@ func (server *Server) playerQuestOperation(conn mnet.Client, reader mpacket.Read
 			plr.Send(packetPlayerNoChange())
 		}
 	case constant.QuestCompleted:
-		if !plr.tryCompleteQuest(questID) {
+		rewardSelection := -1
+		if len(rest) >= 4 {
+			rewardSelection = int(int32(binary.LittleEndian.Uint32(rest[len(rest)-4:])))
+		}
+		if !plr.tryCompleteQuestSelection(questID, rewardSelection) {
 			plr.Send(packetPlayerNoChange())
 		}
 	case constant.QuestForfeit:
@@ -5021,6 +5043,42 @@ func (server *Server) playerQuestOperation(conn mnet.Client, reader mpacket.Read
 				log.Printf("[QuestPkt] lostItem remove failed: Item=%d need=%d", questItem, -count)
 			}
 		}
+	case constant.QuestOpeningScript, constant.QuestCompleteScript:
+		templateID := int32(0)
+		if len(rest) >= 4 {
+			templateID = int32(binary.LittleEndian.Uint32(rest[:4]))
+		}
+		dialog := openQuestDialog(plr, templateID)
+		if dialog == nil {
+			plr.Send(packetPlayerNoChange())
+			return
+		}
+		if act == constant.QuestOpeningScript {
+			filtered := dialog.entries[:0]
+			for _, entry := range dialog.entries {
+				if entry.kind == questDialogStart {
+					filtered = append(filtered, entry)
+				}
+			}
+			dialog.entries = filtered
+		} else {
+			filtered := dialog.entries[:0]
+			for _, entry := range dialog.entries {
+				if entry.kind != questDialogStart {
+					filtered = append(filtered, entry)
+				}
+			}
+			dialog.entries = filtered
+		}
+		if len(dialog.entries) == 0 {
+			plr.Send(packetPlayerNoChange())
+			return
+		}
+		if len(dialog.entries) == 1 {
+			dialog.active = &dialog.entries[0]
+		}
+		server.questDialogs[conn] = dialog
+		dialog.start(plr)
 
 	default:
 		log.Println("Unknown quest operation type:", act)

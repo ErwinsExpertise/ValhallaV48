@@ -175,10 +175,12 @@ const (
 	GuildContractSign     byte = 0x1E
 	GuildRejectInvite     byte = 0x37
 
-	QuestLostItem  = 0x00
-	QuestStarted   = 0x01
-	QuestCompleted = 0x02
-	QuestForfeit   = 0x03
+	QuestLostItem       = 0x00
+	QuestStarted        = 0x01
+	QuestCompleted      = 0x02
+	QuestForfeit        = 0x03
+	QuestOpeningScript  = 0x04
+	QuestCompleteScript = 0x05
 
 	QuestActionSuccess                    byte = 4
 	QuestActionUnknownError               byte = 5

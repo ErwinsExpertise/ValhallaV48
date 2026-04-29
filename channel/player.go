@@ -9,6 +9,7 @@ import (
 	"log"
 	mathrand "math/rand"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -2968,88 +2969,197 @@ func (d *Player) meetsQuestBlock(blk nx.CheckBlock) bool {
 	return true
 }
 
-// applyQuestAct grants EXP/Mesos and applies Item +/- from NX Act block.
-// Returns error if inventory is full or other issues occur.
-func (d *Player) applyQuestAct(act nx.ActBlock, npcID int32, questID int16) error {
-	if act.Exp > 0 {
-		d.giveEXP(act.Exp, false, false)
+type questActPlan struct {
+	adds    []Item
+	removes []nx.ActItem
+}
+
+func (d *Player) buildQuestActPlan(act nx.ActBlock, selection int) (questActPlan, error) {
+	plan := questActPlan{}
+	selectable := make([]nx.ActItem, 0, 2)
+	randomRewards := make([]nx.ActItem, 0, 4)
+	totalWeight := int32(0)
+
+	for _, ai := range act.Items {
+		if !questActItemAllowed(ai, int32(d.job), d.gender) {
+			continue
+		}
+
+		if ai.Count < 0 {
+			plan.removes = append(plan.removes, ai)
+			continue
+		}
+		if ai.Count == 0 {
+			continue
+		}
+
+		switch {
+		case ai.Prop < 0:
+			selectable = append(selectable, ai)
+		case ai.Prop > 0:
+			randomRewards = append(randomRewards, ai)
+			totalWeight += ai.Prop
+		default:
+			it, err := CreateItemFromID(ai.ID, int16(ai.Count))
+			if err != nil {
+				return questActPlan{}, err
+			}
+			plan.adds = append(plan.adds, it)
+		}
 	}
+
+	if len(selectable) > 0 {
+		if selection < 0 || selection >= len(selectable) {
+			return questActPlan{}, fmt.Errorf("missing selectable quest reward choice")
+		}
+		selected := selectable[selection]
+		it, err := CreateItemFromID(selected.ID, int16(selected.Count))
+		if err != nil {
+			return questActPlan{}, err
+		}
+		plan.adds = append(plan.adds, it)
+	}
+
+	if totalWeight > 0 {
+		var seed int64
+		_ = binary.Read(rand.Reader, binary.BigEndian, &seed)
+		rng := mathrand.New(mathrand.NewSource(seed))
+		roll := int32(rng.Int31n(totalWeight))
+		cumulative := int32(0)
+
+		for _, ai := range randomRewards {
+			cumulative += ai.Prop
+			if roll >= cumulative {
+				continue
+			}
+
+			it, err := CreateItemFromID(ai.ID, int16(ai.Count))
+			if err != nil {
+				return questActPlan{}, err
+			}
+			plan.adds = append(plan.adds, it)
+			break
+		}
+	}
+
+	return plan, nil
+}
+
+func (d *Player) canReceiveQuestActItems(items []Item) bool {
+	if len(items) == 0 {
+		return true
+	}
+
+	type slotState struct {
+		used      int
+		max       int
+		stackRoom map[int32]int32
+	}
+
+	states := map[byte]*slotState{
+		constant.InventoryEquip: {used: len(d.equip), max: int(d.equipSlotSize), stackRoom: map[int32]int32{}},
+		constant.InventoryUse:   {used: len(d.use), max: int(d.useSlotSize), stackRoom: map[int32]int32{}},
+		constant.InventorySetup: {used: len(d.setUp), max: int(d.setupSlotSize), stackRoom: map[int32]int32{}},
+		constant.InventoryEtc:   {used: len(d.etc), max: int(d.etcSlotSize), stackRoom: map[int32]int32{}},
+		constant.InventoryCash:  {used: len(d.cash), max: int(d.cashSlotSize), stackRoom: map[int32]int32{}},
+	}
+
+	accumulate := func(inv byte, items []Item) {
+		state := states[inv]
+		for _, it := range items {
+			if !it.isStackable() || it.amount <= 0 {
+				continue
+			}
+			slotMax := int32(getItemSlotMax(it.ID))
+			if slotMax <= 0 {
+				slotMax = constant.MaxItemStack
+			}
+			state.stackRoom[it.ID] += slotMax - int32(it.amount)
+		}
+	}
+
+	accumulate(constant.InventoryUse, d.use)
+	accumulate(constant.InventoryEtc, d.etc)
+
+	for _, it := range items {
+		state := states[it.invID]
+		if state == nil {
+			return false
+		}
+
+		if !it.isStackable() || it.amount <= 0 {
+			state.used++
+			if state.used > state.max {
+				return false
+			}
+			continue
+		}
+
+		remaining := int32(it.amount)
+		if room := state.stackRoom[it.ID]; room > 0 {
+			used := room
+			if used > remaining {
+				used = remaining
+			}
+			state.stackRoom[it.ID] -= used
+			remaining -= used
+		}
+
+		if remaining <= 0 {
+			continue
+		}
+
+		slotMax := int32(getItemSlotMax(it.ID))
+		if slotMax <= 0 {
+			slotMax = constant.MaxItemStack
+		}
+		neededSlots := int((remaining + slotMax - 1) / slotMax)
+		state.used += neededSlots
+		if state.used > state.max {
+			return false
+		}
+
+		if leftover := neededSlots*int(slotMax) - int(remaining); leftover > 0 {
+			state.stackRoom[it.ID] += int32(leftover)
+		}
+	}
+
+	return true
+}
+
+func (d *Player) applyQuestAct(act nx.ActBlock, plan questActPlan, npcID int32, questID int16) error {
+	for _, ai := range plan.removes {
+		if !d.removeItemsByID(ai.ID, -ai.Count, false) {
+			d.Send(packetQuestActionResult(constant.QuestActionFailedRetrieveEquippedItem, questID, npcID, nil))
+			return fmt.Errorf("failed to remove required quest items ID=%d count=%d", ai.ID, -ai.Count)
+		}
+		d.Send(packetMessageDropPickUp(false, ai.ID, ai.Count))
+	}
+
+	for _, it := range plan.adds {
+		given, err := d.GiveItem(it)
+		if err != nil {
+			d.Send(packetQuestActionResult(constant.QuestActionInventoryFull, questID, npcID, nil))
+			return err
+		}
+		d.Send(packetMessageDropPickUp(false, given.ID, int32(given.amount)))
+	}
+
 	if act.Money != 0 {
 		if act.Money > 0 {
 			d.giveMesos(act.Money)
 		} else {
 			d.takeMesos(-act.Money)
 		}
+		d.Send(packetMessageMesosChangeChat(act.Money))
+	}
+
+	if act.Exp > 0 {
+		d.giveEXP(act.Exp, false, false)
 	}
 
 	if act.Pop != 0 {
 		d.setFame(d.fame + int16(act.Pop))
-	}
-
-	totalWeight := int32(0)
-	for _, ai := range act.Items {
-		if !questActItemAllowed(ai, int32(d.job), d.gender) {
-			continue
-		}
-
-		if ai.Count > 0 {
-			if ai.Prop > 0 {
-				// Random reward candidate; accumulate weight but grant after rolling.
-				totalWeight += ai.Prop
-				continue
-			}
-
-			// Guaranteed reward (no weight specified).
-			if it, err := CreateItemFromID(ai.ID, int16(ai.Count)); err == nil {
-				if _, giveErr := d.GiveItem(it); giveErr != nil {
-					d.Send(packetQuestActionResult(constant.QuestActionInventoryFull, questID, npcID, nil))
-					return giveErr
-				}
-			}
-			continue
-		}
-
-		if ai.Count < 0 {
-			removed := d.removeItemsByID(ai.ID, -ai.Count, false)
-			if !removed {
-				d.Send(packetQuestActionResult(constant.QuestActionFailedRetrieveEquippedItem, questID, npcID, nil))
-				return fmt.Errorf("failed to remove required quest items ID=%d count=%d", ai.ID, -ai.Count)
-			}
-		}
-	}
-
-	if totalWeight > 0 {
-		var seed int64
-		binary.Read(rand.Reader, binary.BigEndian, &seed)
-		rng := mathrand.New(mathrand.NewSource(seed))
-		roll := int32(rng.Int31n(totalWeight))
-
-		cumulative := int32(0)
-		var selectedItem *nx.ActItem
-		for i := range act.Items {
-			ai := &act.Items[i]
-			if !questActItemAllowed(*ai, int32(d.job), d.gender) {
-				continue
-			}
-			if ai.Count > 0 && ai.Prop > 0 {
-				cumulative += ai.Prop
-				if roll < cumulative {
-					selectedItem = ai
-					break
-				}
-			}
-		}
-
-		// Give the selected item
-		if selectedItem != nil {
-			if it, err := CreateItemFromID(selectedItem.ID, int16(selectedItem.Count)); err == nil {
-				if _, giveErr := d.GiveItem(it); giveErr != nil {
-					d.Send(packetQuestActionResult(constant.QuestActionInventoryFull, questID, npcID, nil))
-					return giveErr
-				}
-			}
-		}
-
 	}
 
 	return nil
@@ -3077,25 +3187,141 @@ func questActItemAllowed(ai nx.ActItem, playerJob int32, gender byte) bool {
 	return ai.Gender < 0 || ai.Gender == 2 || byte(ai.Gender) == gender
 }
 
+func (d *Player) canStartQuest(q nx.Quest) bool {
+	if d.quests.hasInProgress(q.ID) || d.quests.hasCompleted(q.ID) {
+		return false
+	}
+	return d.meetsQuestBlock(q.Start)
+}
+
+func (d *Player) canCompleteQuest(q nx.Quest) bool {
+	if !d.quests.hasInProgress(q.ID) {
+		return false
+	}
+	if !d.meetsQuestBlock(q.Complete) {
+		return false
+	}
+	return d.meetsMobKills(q.ID, q.Complete.Mobs)
+}
+
+func (d *Player) questIDsForNPC(npcID int32) (available, inProgress, completable []int16) {
+	ordered := make([]nx.Quest, 0, len(nx.GetQuests()))
+	for _, q := range nx.GetQuests() {
+		if q.Start.NPC != npcID && q.Complete.NPC != npcID {
+			continue
+		}
+		ordered = append(ordered, q)
+	}
+
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].Order == ordered[j].Order {
+			return ordered[i].ID < ordered[j].ID
+		}
+		return ordered[i].Order < ordered[j].Order
+	})
+
+	for _, q := range ordered {
+		switch {
+		case q.Complete.NPC == npcID && d.canCompleteQuest(q):
+			completable = append(completable, q.ID)
+		case q.Start.NPC == npcID && d.canStartQuest(q):
+			available = append(available, q.ID)
+		case q.Complete.NPC == npcID && d.quests.hasInProgress(q.ID):
+			inProgress = append(inProgress, q.ID)
+		}
+	}
+
+	return available, inProgress, completable
+}
+
+func (d *Player) questDisplayName(questID int16) string {
+	q, err := nx.GetQuest(questID)
+	if err != nil {
+		return strconv.Itoa(int(questID))
+	}
+	if strings.TrimSpace(q.Parent) != "" {
+		return q.Parent
+	}
+	if strings.TrimSpace(q.Name) != "" {
+		return q.Name
+	}
+	return strconv.Itoa(int(questID))
+}
+
+func (d *Player) questSayLines(questID int16, key string) []string {
+	q, err := nx.GetQuest(questID)
+	if err != nil || q.Say == nil {
+		return nil
+	}
+	if len(q.Say[key]) == 0 {
+		return nil
+	}
+	out := make([]string, len(q.Say[key]))
+	copy(out, q.Say[key])
+	return out
+}
+
+func (d *Player) questIncompleteLines(questID int16) []string {
+	keys := []string{"complete.stop.mob", "complete.stop.item", "complete.stop.quest", "complete.stop.0", "complete.stop"}
+	for _, key := range keys {
+		if lines := d.questSayLines(questID, key); len(lines) > 0 {
+			return lines
+		}
+	}
+	return []string{"You have not met the requirements for this quest yet."}
+}
+
+func (d *Player) questSelectableRewards(questID int16) []string {
+	q, err := nx.GetQuest(questID)
+	if err != nil {
+		return nil
+	}
+	choices := make([]string, 0, 2)
+	for _, ai := range q.ActOnComplete.Items {
+		if ai.Prop >= 0 || ai.Count <= 0 || !questActItemAllowed(ai, int32(d.job), d.gender) {
+			continue
+		}
+		name := strconv.Itoa(int(ai.ID))
+		if meta, err := nx.GetItem(ai.ID); err == nil && strings.TrimSpace(meta.Name) != "" {
+			name = meta.Name
+		}
+		choices = append(choices, name)
+	}
+	return choices
+}
+
 // tryStartQuest validates NX Start requirements, starts quest, applies Act(0).
 func (d *Player) tryStartQuest(questID int16) bool {
+	return d.tryStartQuestSelection(questID, -1)
+}
+
+func (d *Player) tryStartQuestSelection(questID int16, selection int) bool {
 	q, err := nx.GetQuest(questID)
 	if err != nil {
 		log.Printf("[Quest] start fail nx lookup: char=%s ID=%d err=%v", d.Name, questID, err)
 		return false
 	}
 
-	if !d.meetsQuestBlock(q.Start) {
+	if !d.canStartQuest(q) {
+		return false
+	}
+
+	plan, err := d.buildQuestActPlan(q.ActOnStart, selection)
+	if err != nil {
+		return false
+	}
+	if !d.canReceiveQuestActItems(plan.adds) {
+		d.Send(packetQuestActionResult(constant.QuestActionInventoryFull, questID, q.Start.NPC, nil))
+		return false
+	}
+
+	if err := d.applyQuestAct(q.ActOnStart, plan, q.Start.NPC, questID); err != nil {
 		return false
 	}
 
 	d.quests.add(questID, "")
 	upsertQuestRecord(d.ID, questID, "")
 	d.Send(packetQuestUpdate(questID, ""))
-
-	if err := d.applyQuestAct(q.ActOnStart, q.Start.NPC, questID); err != nil {
-		return false
-	}
 
 	var nextQuests []int16
 	if q.ActOnStart.NextQuest != 0 {
@@ -3107,21 +3333,33 @@ func (d *Player) tryStartQuest(questID int16) bool {
 }
 
 func (d *Player) tryCompleteQuest(questID int16) bool {
+	return d.tryCompleteQuestSelection(questID, -1)
+}
+
+func (d *Player) tryCompleteQuestSelection(questID int16, selection int) bool {
 	q, err := nx.GetQuest(questID)
 	if err != nil {
 		log.Printf("[Quest] complete fail nx lookup: char=%s ID=%d err=%v", d.Name, questID, err)
 		return false
 	}
 
-	if !d.meetsQuestBlock(q.Complete) {
+	if !d.canCompleteQuest(q) {
 		return false
 	}
 
-	if !d.meetsMobKills(q.ID, q.Complete.Mobs) {
+	plan, err := d.buildQuestActPlan(q.ActOnComplete, selection)
+	if err != nil {
+		return false
+	}
+	if !d.canReceiveQuestActItems(plan.adds) {
+		d.Send(packetQuestActionResult(constant.QuestActionInventoryFull, questID, q.Complete.NPC, nil))
 		return false
 	}
 
-	d.quests.remove(questID)
+	if err := d.applyQuestAct(q.ActOnComplete, plan, q.Complete.NPC, questID); err != nil {
+		return false
+	}
+
 	nowMs := time.Now().UnixMilli()
 	d.quests.complete(questID, nowMs)
 	setQuestCompleted(d.ID, questID, nowMs)
@@ -3129,10 +3367,6 @@ func (d *Player) tryCompleteQuest(questID int16) bool {
 
 	d.Send(packetQuestUpdate(questID, ""))
 	d.Send(packetQuestComplete(questID))
-
-	if err := d.applyQuestAct(q.ActOnComplete, q.Complete.NPC, questID); err != nil {
-		return false
-	}
 
 	var nextQuests []int16
 	if q.ActOnComplete.NextQuest != 0 {

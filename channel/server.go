@@ -41,6 +41,7 @@ type Server struct {
 	fields             map[int32]*field
 	header             string
 	npcChat            map[mnet.Client]*npcChatController
+	questDialogs       map[mnet.Client]*questDialog
 	npcScriptStore     *scriptStore
 	portalScriptStore  *scriptStore
 	reactorScriptStore *scriptStore
@@ -180,6 +181,7 @@ func (server *Server) Initialise(work chan func(), dbuser, dbpassword, dbaddress
 
 func (server *Server) loadScripts() {
 	server.npcChat = make(map[mnet.Client]*npcChatController)
+	server.questDialogs = make(map[mnet.Client]*questDialog)
 	server.npcScriptStore = createScriptStore("scripts/npc", server.dispatch) // make folder a config param
 	start := time.Now()
 	_ = server.npcScriptStore.loadScripts()
