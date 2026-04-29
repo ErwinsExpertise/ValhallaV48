@@ -2668,9 +2668,20 @@ func (server Server) mobDamagePlayer(conn mnet.Client, reader mpacket.Reader, mo
 						reflectPercent := int32(skillData[idx].X)
 						if reflectPercent > 0 {
 							reflectedDamage := (damage * reflectPercent) / 100
+							if reflectedDamage > mob.maxHP/2 {
+								reflectedDamage = mob.maxHP / 2
+							}
+							if mob.boss {
+								reflectedDamage /= 2
+							}
 
 							if reflectedDamage > 0 {
 								inst.lifePool.mobDamaged(spawnID, plr, reflectedDamage)
+								damage -= reflectedDamage
+								if damage < 0 {
+									damage = 0
+								}
+								reducedDamage = damage
 							}
 						}
 					}
@@ -4529,6 +4540,8 @@ func (server *Server) playerSpecialSkill(conn mnet.Client, reader mpacket.Reader
 	partyMask := byte(0)
 	delay := int16(0)
 	targetIDs := make([]int32, 0)
+
+	log.Printf("player %s using skill %d level %d\n", plr.Name, skillID, skillLevel)
 
 	if isPartySkillRequest(skillID) && len(reader.GetRestAsBytes()) > 2 {
 		partyMask = reader.ReadByte()
