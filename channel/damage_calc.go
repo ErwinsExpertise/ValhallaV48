@@ -127,6 +127,17 @@ type DamageCalculator struct {
 	attackOption constant.AttackOption
 }
 
+type damageStages struct {
+	preDefenseMin   float64
+	preDefenseMax   float64
+	skillMultiplier float64
+	comboMultiplier float64
+	defenseRatioMin float64
+	defenseRatioMax float64
+	finalMax        float64
+	toleranceMax    float64
+}
+
 // NewDamageCalculator creates a new damage calculator
 func NewDamageCalculator(plr *Player, data *attackData, attackType int) *DamageCalculator {
 	calc := &DamageCalculator{
@@ -353,6 +364,12 @@ func (calc *DamageCalculator) CalculateHit(
 			maxDmg = critMax
 		}
 	}
+	stage := damageStages{
+		preDefenseMin:   minDmg,
+		preDefenseMax:   maxDmg,
+		skillMultiplier: calc.getSkillDamageMultiplier(),
+		comboMultiplier: calc.getComboFinisherMultiplier(),
+	}
 	allowedMax := maxDmg
 	if calc.HasPhysicalOrMagicImmunity(mob) {
 		if allowedMax < 1 {
@@ -366,10 +383,12 @@ func (calc *DamageCalculator) CalculateHit(
 		}
 	}
 
-	defMin, defMax := calc.CalculateDefenseReductionBounds(mob)
-	if defMax > 0 {
-		minDmg -= defMax
-		maxDmg -= defMin
+	defRatioMin, defRatioMax := calc.CalculateDefenseReductionBounds(mob)
+	stage.defenseRatioMin = defRatioMin
+	stage.defenseRatioMax = defRatioMax
+	if defRatioMax > 0 {
+		minDmg *= math.Max(0, 1.0-defRatioMax)
+		maxDmg *= math.Max(0, 1.0-defRatioMin)
 	}
 	if minDmg < 1 {
 		minDmg = 1
@@ -384,19 +403,13 @@ func (calc *DamageCalculator) CalculateHit(
 	if minDmg > maxDmg {
 		minDmg = maxDmg
 	}
+	stage.finalMax = allowedMax
 
 	dmgRoll := 0.5
-	defRoll := 0.5
 	if rngBuf != nil {
 		dmgRoll = NormalizeDamageRng(rngBuf.DamageRaw(hitIdx, 3))
-		defRoll = NormalizeDamageRng(rngBuf.DefenseRaw(hitIdx, 3))
 	}
 	expected := minDmg + (maxDmg-minDmg)*dmgRoll
-	if defMax > defMin {
-		expected -= defMin + (defMax-defMin)*defRoll
-	} else if defMax > 0 {
-		expected -= defMax
-	}
 	if expected < 1 && result.ClientDamage > 0 {
 		expected = 1
 	}
@@ -412,6 +425,7 @@ func (calc *DamageCalculator) CalculateHit(
 
 	tolerance := constant.DamageVarianceTolerance
 	toleranceMax := math.Ceil(allowedMax * (1.0 + tolerance))
+	stage.toleranceMax = toleranceMax
 	if toleranceMax < 1 && result.ClientDamage > 0 && allowedMax > 0 {
 		toleranceMax = 1
 	}
@@ -423,7 +437,7 @@ func (calc *DamageCalculator) CalculateHit(
 	if !result.IsValid {
 		result.ValidationReason = "client damage exceeds tolerated cap"
 		log.Printf(
-			"Suspicious high damage from player %s (ID: %d, level: %d, job: %d): client=%d, max expected=%.0f (with tolerance), base min=%.0f, base max=%.0f, skill=%d, attackType=%d, weaponID=%d, weaponType=%d, STR=%d, DEX=%d, INT=%d, LUK=%d, WATK=%d, MATK=%d, mobID=%d, mobPD=%d, mobMD=%d | %s",
+			"Suspicious high damage from player %s (ID: %d, level: %d, job: %d): client=%d, max expected=%.0f (with tolerance), base min=%.0f, base max=%.0f, skill=%d, attackType=%d, weaponID=%d, weaponType=%d, STR=%d, DEX=%d, INT=%d, LUK=%d, WATK=%d, MATK=%d, mobID=%d, mobPD=%d, mobMD=%d, preDefMin=%.0f, preDefMax=%.0f, skillMult=%.2f, comboMult=%.2f, defRatioMin=%.4f, defRatioMax=%.4f, finalMax=%.0f, toleranceMax=%.0f | %s",
 			calc.player.Name,
 			calc.player.ID,
 			calc.player.level,
@@ -445,6 +459,14 @@ func (calc *DamageCalculator) CalculateHit(
 			mob.id,
 			mob.pdDamage,
 			mob.mdDamage,
+			stage.preDefenseMin,
+			stage.preDefenseMax,
+			stage.skillMultiplier,
+			stage.comboMultiplier,
+			stage.defenseRatioMin,
+			stage.defenseRatioMax,
+			stage.finalMax,
+			stage.toleranceMax,
 			calc.DebugCombatStatLine(),
 		)
 	}
@@ -779,11 +801,17 @@ func (calc *DamageCalculator) ApplySkillModifiers(minDmg, maxDmg float64, ampDat
 	}
 
 	if calc.UsesSkillDamageMultiplier() {
-		skillMultiplier := float64(calc.skill.Damage) / 100.0
+		skillMultiplier := calc.getSkillDamageMultiplier()
 		if skillMultiplier > 0 {
 			minDmg *= skillMultiplier
 			maxDmg *= skillMultiplier
 		}
+	}
+
+	comboMultiplier := calc.getComboFinisherMultiplier()
+	if comboMultiplier > 1.0 {
+		minDmg *= comboMultiplier
+		maxDmg *= comboMultiplier
 	}
 
 	return minDmg, maxDmg
@@ -801,10 +829,14 @@ func (calc *DamageCalculator) CalculateDefenseReductionBounds(mob *monster) (flo
 	} else {
 		mobDef = float64(mob.pdDamage)
 	}
-
-	redMin := mobDef * 0.5
-	redMax := mobDef * 0.6
-	return redMin, redMax
+	if mobDef <= 0 {
+		return 0, 0
+	}
+	defRatio := mobDef / 10000.0
+	if defRatio > 0.8 {
+		defRatio = 0.8
+	}
+	return defRatio * 0.9, defRatio * 1.1
 }
 
 func (calc *DamageCalculator) CheckCritical(rngBuf *DamageRngBuffer, hitIdx int) bool {
@@ -1011,7 +1043,7 @@ func (calc *DamageCalculator) GetCritSkill() (byte, *nx.PlayerSkill) {
 }
 
 func (calc *DamageCalculator) GetTotalWatk() int16 {
-	watk := calc.player.totalWatk - calc.player.str/10
+	watk := calc.player.totalWatk
 	if watk < 0 {
 		watk = 0
 	}
@@ -1019,6 +1051,26 @@ func (calc *DamageCalculator) GetTotalWatk() int16 {
 		watk += calc.GetProjectileWatk()
 	}
 	return watk
+}
+
+func (calc *DamageCalculator) getSkillDamageMultiplier() float64 {
+	if calc.skill == nil || calc.skill.Damage <= 0 {
+		return 0
+	}
+	return float64(calc.skill.Damage) / 100.0
+}
+
+func (calc *DamageCalculator) getComboFinisherMultiplier() float64 {
+	if calc.player == nil || calc.player.buffs == nil {
+		return 1.0
+	}
+	switch skill.Skill(calc.skillID) {
+	case skill.SwordPanic, skill.AxePanic, skill.SwordComa, skill.AxeComa:
+		if calc.player.buffs.comboCount > 1 {
+			return float64(calc.player.buffs.comboCount)
+		}
+	}
+	return 1.0
 }
 
 func (calc *DamageCalculator) LogCombatStatSnapshot() {
