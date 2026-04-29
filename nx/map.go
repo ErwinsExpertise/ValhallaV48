@@ -319,7 +319,6 @@ func getMapAreas(node *gonx.Node, nodes []gonx.Node, textLookup []string) []Area
 		areaNumber, err := strconv.Atoi(textLookup[areaObj.NameID])
 
 		if err != nil {
-			fmt.Println("Skiping area as ID is not a number")
 			continue
 		}
 

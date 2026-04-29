@@ -445,39 +445,7 @@ func (pool *lifePool) mobDamaged(poolID int32, damager *Player, dmg ...int32) {
 
 				if killer != nil {
 					if dropEntry, ok := dropTable[v.id]; ok {
-						var mesos int32
-						drops := make([]Item, 0, len(dropEntry))
-						for _, entry := range dropEntry {
-							if entry.IsMesos {
-								mesos = randRangeInclusive(pool.rNumber, entry.Min, entry.Max)
-								continue
-							}
-							if entry.QuestID != 0 && !killer.allowsQuestDrop(entry.QuestID) {
-								continue
-							}
-							if !rollDrop(pool.rNumber, entry.Chance, pool.dropPool.rates.drop) {
-								continue
-							}
-							var amount int16 = 1
-							minAmt := entry.Min
-							maxAmt := entry.Max
-							if maxAmt != 1 {
-								val := randRangeInclusive(pool.rNumber, minAmt, maxAmt)
-								if val > math.MaxInt16 {
-									amount = math.MaxInt16
-								} else if val < 1 {
-									amount = 1
-								} else {
-									amount = int16(val)
-								}
-							}
-							newItem, err := CreateItemFromID(entry.ItemID, amount)
-							if err != nil {
-								log.Println("Failed to create drop for mobID:", v.id, "with error:", err)
-								continue
-							}
-							drops = append(drops, newItem)
-						}
+						mesos, drops := buildDropRewards(pool.rNumber, dropEntry, pool.dropPool.rates.drop, killer)
 						pool.dropPool.createDrop(dropSpawnNormal, dropFreeForAll, int32(killer.rates.mesos*float32(mesos)), v.pos, true, false, 0, 0, drops...)
 					}
 				}
@@ -577,6 +545,59 @@ func rollDrop(r *rand.Rand, baseChance int64, rate float32) bool {
 
 	// Roll
 	return r.Int63n(denom) < scaled
+}
+
+func buildDropRewards(r *rand.Rand, entries []dropTableEntry, rate float32, plr *Player) (int32, []Item) {
+	if len(entries) == 0 {
+		return 0, nil
+	}
+
+	mesos := int32(0)
+	items := make([]Item, 0, len(entries))
+	for _, entry := range entries {
+		if entry.QuestID != 0 {
+			if plr == nil || !plr.allowsQuestDrop(entry.QuestID) {
+				continue
+			}
+		}
+		if !rollDrop(r, entry.Chance, rate) {
+			continue
+		}
+
+		if entry.IsMesos {
+			mesos += randRangeInclusive(r, entry.Min, entry.Max)
+			continue
+		}
+
+		amount := int16(1)
+		minAmt := entry.Min
+		maxAmt := entry.Max
+		if minAmt < 1 {
+			minAmt = 1
+		}
+		if maxAmt < minAmt {
+			maxAmt = minAmt
+		}
+		if maxAmt != 1 || minAmt != 1 {
+			val := randRangeInclusive(r, minAmt, maxAmt)
+			if val > math.MaxInt16 {
+				amount = math.MaxInt16
+			} else if val < 1 {
+				amount = 1
+			} else {
+				amount = int16(val)
+			}
+		}
+
+		newItem, err := CreateItemFromID(entry.ItemID, amount)
+		if err != nil {
+			log.Printf("Failed to create drop itemID=%d err=%v", entry.ItemID, err)
+			continue
+		}
+		items = append(items, newItem)
+	}
+
+	return mesos, items
 }
 
 func (pool *lifePool) killMobs(deathType byte) {
@@ -1201,6 +1222,7 @@ type fieldReactor struct {
 
 	info        nx.ReactorInfo
 	reactorTime int32
+	hidden      bool
 }
 
 type reactorPool struct {
@@ -1208,6 +1230,15 @@ type reactorPool struct {
 	reactors map[int32]*fieldReactor
 	nextID   int32
 	server   *Server
+}
+
+const defaultReactorRespawnDelay = 30 * time.Second
+
+func (r *fieldReactor) respawnDelay() time.Duration {
+	if r == nil || r.reactorTime <= 0 {
+		return defaultReactorRespawnDelay
+	}
+	return time.Duration(r.reactorTime) * time.Second
 }
 
 func createNewReactorPool(inst *fieldInstance, data []nx.Reactor, server *Server) reactorPool {
@@ -1275,6 +1306,9 @@ func (pool *reactorPool) nextReactorID() (int32, error) {
 
 func (pool *reactorPool) playerShowReactors(plr *Player) {
 	for _, r := range pool.reactors {
+		if r.hidden {
+			continue
+		}
 		plr.Send(packetMapReactorEnterField(r.spawnID, r.templateID, r.state, r.pos.x, r.pos.y, r.faceLeft))
 	}
 }
@@ -1283,8 +1317,14 @@ func (pool *reactorPool) reset(send bool) {
 	for _, r := range pool.reactors {
 		r.state = 0
 		r.frameDelay = 0
+		wasHidden := r.hidden
+		r.hidden = false
 		if send {
-			pool.instance.send(packetMapReactorChangeState(r.spawnID, r.state, r.pos.x, r.pos.y, r.frameDelay, r.faceLeft, 0))
+			if wasHidden {
+				pool.instance.send(packetMapReactorEnterField(r.spawnID, r.templateID, r.state, r.pos.x, r.pos.y, r.faceLeft))
+			} else {
+				pool.instance.send(packetMapReactorChangeState(r.spawnID, r.state, r.pos.x, r.pos.y, r.frameDelay, r.faceLeft, 0))
+			}
 		}
 	}
 }
@@ -1307,45 +1347,14 @@ func populateReactorTable(reactorJSON string) error {
 	return json.Unmarshal(b, &reactorTable)
 }
 
-type reactorDrops struct {
-	items []int
-	money int
-}
-
-var reactorDropTable map[string]reactorDrops
+var reactorDropTable map[int32][]dropTableEntry
 
 func populateReactorDropTable(reactorJSON string) error {
 	b, err := os.ReadFile(reactorJSON)
 	if err != nil {
 		return err
 	}
-
-	var raw map[string]map[string]map[string]interface{}
-	if err := json.Unmarshal(b, &raw); err != nil {
-		return err
-	}
-
-	reactorDropTable = make(map[string]reactorDrops, len(raw))
-	for rid, slots := range raw {
-		rd := reactorDrops{}
-
-		for _, slot := range slots {
-			if v, ok := slot["item"].(string); ok {
-				if id, _ := strconv.Atoi(v); id != 0 {
-					rd.items = append(rd.items, id)
-				}
-			}
-			if v, ok := slot["money"].(string); ok {
-				if m, _ := strconv.Atoi(v); m != 0 {
-					rd.money = m
-				}
-			}
-		}
-
-		reactorDropTable[rid] = rd
-	}
-
-	return nil
+	return json.Unmarshal(b, &reactorDropTable)
 }
 
 type rect struct{ left, top, right, bottom int16 }
@@ -1382,14 +1391,24 @@ func (pool *reactorPool) changeState(r *fieldReactor, next byte, frameDelay int1
 }
 
 func (pool *reactorPool) leaveAndMaybeRespawn(r *fieldReactor, _ int) {
-	pool.instance.send(packetMapReactorLeaveField(r.spawnID, r.state, r.pos.x, r.pos.y))
-	if r.reactorTime > 0 {
-		time.AfterFunc(time.Duration(r.reactorTime)*time.Second, func() {
-			r.state = 0
-			r.frameDelay = 0
-			pool.instance.send(packetMapReactorEnterField(r.spawnID, r.templateID, r.state, r.pos.x, r.pos.y, r.faceLeft))
-		})
+	if r.hidden {
+		return
 	}
+	r.hidden = true
+	pool.instance.send(packetMapReactorLeaveField(r.spawnID, r.state, r.pos.x, r.pos.y))
+	respawnDelay := r.respawnDelay()
+	time.AfterFunc(respawnDelay, func() {
+		pool.instance.dispatch <- func() {
+			current, ok := pool.reactors[r.spawnID]
+			if !ok || !current.hidden {
+				return
+			}
+			current.state = 0
+			current.frameDelay = 0
+			current.hidden = false
+			pool.instance.send(packetMapReactorEnterField(current.spawnID, current.templateID, current.state, current.pos.x, current.pos.y, current.faceLeft))
+		}
+	})
 }
 
 func (pool *reactorPool) triggerHit(spawnID int32, cause byte, server *Server, plr *Player) {
@@ -1647,19 +1666,11 @@ func (pool *reactorPool) processStateSideEffects(r *fieldReactor, plr *Player) {
 				}
 			}
 		case constant.ReactorDrop:
-			reactorID := strconv.Itoa(int(r.info.ID))
-			reactorDrops := reactorDropTable[reactorID]
-			var items []Item
-			for _, val := range reactorDrops.items {
-				newItem, err := CreateItemFromID(int32(val), 1)
-				if err != nil {
-					log.Println(err)
-					continue
-				}
-				items = append(items, newItem)
+			dropEntries := reactorDropTable[r.info.ID]
+			mesos, items := buildDropRewards(pool.instance.lifePool.rNumber, dropEntries, pool.instance.dropPool.rates.drop, plr)
+			if mesos > 0 || len(items) > 0 {
+				pool.instance.dropPool.createDrop(dropSpawnNormal, dropFreeForAll, mesos, r.pos, true, false, 0, 0, items...)
 			}
-
-			pool.instance.dropPool.createDrop(dropSpawnNormal, dropFreeForAll, int32(reactorDrops.money), r.pos, true, false, 0, 0, items...)
 
 		case constant.ReactorSpawnNPC:
 		case constant.ReactorRunScript:

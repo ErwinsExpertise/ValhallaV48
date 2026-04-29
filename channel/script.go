@@ -5,7 +5,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -1372,18 +1371,10 @@ func (ctrl *reactorScriptController) HitMapReactorByName(mapID int32, name strin
 }
 
 func (ctrl *reactorScriptController) DropItems(args ...int32) {
-	reactorID := strconv.Itoa(int(ctrl.reactor.info.ID))
-	reactorDrops := reactorDropTable[reactorID]
-	var items []Item
-	for _, val := range reactorDrops.items {
-		newItem, err := CreateItemFromID(int32(val), 1)
-		if err != nil {
-			log.Println(err)
-			continue
-		}
-		items = append(items, newItem)
+	mesos, items := buildDropRewards(ctrl.inst.lifePool.rNumber, reactorDropTable[ctrl.reactor.info.ID], ctrl.inst.dropPool.rates.drop, nil)
+	if mesos > 0 || len(items) > 0 {
+		ctrl.inst.dropPool.createDrop(dropSpawnNormal, dropFreeForAll, mesos, ctrl.reactor.pos, true, false, 0, 0, items...)
 	}
-	ctrl.inst.dropPool.createDrop(dropSpawnNormal, dropFreeForAll, int32(reactorDrops.money), ctrl.reactor.pos, true, false, 0, 0, items...)
 }
 
 func runReactorScript(program *goja.Program, server *Server, inst *fieldInstance, reactor *fieldReactor) error {

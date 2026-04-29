@@ -1555,11 +1555,10 @@ func (server Server) playerUseInventoryItem(conn mnet.Client, reader mpacket.Rea
 		return
 	}
 
-	tick := reader.ReadInt32() // leading tick/unknown int
+	_ = reader.ReadInt32() // leading tick/unknown int
 
 	slot := reader.ReadInt16()
 	itemid := reader.ReadInt32()
-	log.Printf("playerUseInventoryItem: decoded={player=%s tick=%d slot=%d itemID=%d}", plr.Name, tick, slot, itemid)
 
 	item, err := plr.takeItem(itemid, slot, 1, constant.InventoryUse)
 	if err != nil {
