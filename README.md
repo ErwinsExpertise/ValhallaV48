@@ -15,14 +15,15 @@ If you just want to get the server running on your own PC, use **dev mode**. It 
    - Use https://msdl.xyz/
 2. **Download the localhost-ready client**
    - https://mega.nz/file/EFV1wA4B#Y7oLs0xrRv9bbR7B8slUF-D1Sq0uHb2EWAxN-IeOlW0
-3. **Install MySQL**
-4. **Import the database**
+3. **Install MySQL 5.7**
+   - https://dev.mysql.com/downloads/windows/installer/5.7.html
+5. **Import the database**
    - Use `/sql/maplestory.sql`
-5. **Convert your v48 WZ files into NX files**
+6. **Convert your v48 WZ files into NX files**
    - Easiest option: run `setup\convert-wz-to-nx.bat`
-6. **Edit `config_dev.toml`**
+7. **Edit `config_dev.toml`**
    - Set your MySQL password
-7. **Start Valhalla in dev mode**
+8. **Start Valhalla in dev mode**
 
 ```powershell
 .\Valhalla.exe -type dev -config config_dev.toml
