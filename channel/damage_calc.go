@@ -175,7 +175,6 @@ func NewDamageCalculator(plr *Player, data *attackData, attackType int) *DamageC
 
 // ValidateAttack validates all hits in an attack and determines critical hits
 func (calc *DamageCalculator) ValidateAttack() [][]CalcHitResult {
-	calc.EnforceAttackShape()
 	calc.LogSuspiciousAttackShape()
 
 	results := make([][]CalcHitResult, len(calc.data.attackInfo))
@@ -278,7 +277,7 @@ func (calc *DamageCalculator) CalculateHit(
 	if calc.handleSpecialSkillDamage(&result, mob, info, rngBuf, hitIdx) {
 		return result
 	}
-	if calc.attackType == attackMagic && mob.invincible {
+	if calc.UsesMagicFormula() && mob.invincible {
 		result.MinDamage = 1
 		result.MaxDamage = 1
 		result.ToleranceMax = 1
@@ -630,7 +629,7 @@ func (calc *DamageCalculator) CalculateBaseDamageRange(mob *monster, hitIdx int)
 		return DamageRange{Min: 0, Max: 1, Valid: true}
 	}
 
-	if calc.attackType == attackMagic && calc.skillID != 0 {
+	if calc.UsesMagicFormula() && calc.skillID != 0 {
 		return calc.CalculateMagicDamageRange()
 	}
 
@@ -680,7 +679,7 @@ func (calc *DamageCalculator) CalculateBaseDamageRange(mob *monster, hitIdx int)
 	maxDmg := math.Ceil(((weaponMultiplier * primaryStat) + secondaryStat) * watk / 100.0)
 	minDmg := math.Ceil(((weaponMultiplier * primaryStat * calc.masteryMod) + secondaryStat) * watk / 100.0)
 
-	if calc.attackType == attackMagic {
+	if calc.UsesMagicFormula() {
 		maxDmg = math.Ceil(((weaponMultiplier * intl) + luk) * watk / 100.0)
 		minDmg = math.Ceil((((weaponMultiplier * intl) * calc.masteryMod) + luk) * watk / 100.0)
 	}
@@ -762,7 +761,7 @@ func (calc *DamageCalculator) ApplySkillModifiers(minDmg, maxDmg float64, ampDat
 		return minDmg, maxDmg
 	}
 
-	if calc.attackType == attackMagic {
+	if calc.UsesMagicFormula() {
 		elemMod := float64(ampData.Magic) / 100.0
 		minDmg *= elemMod
 		maxDmg *= elemMod
@@ -795,7 +794,7 @@ func (calc *DamageCalculator) CalculateDefenseReductionBounds(mob *monster) (flo
 	}
 
 	var mobDef float64
-	if calc.attackType == attackMagic {
+	if calc.UsesMagicFormula() {
 		mobDef = float64(mob.mdDamage)
 	} else {
 		mobDef = float64(mob.pdDamage)
@@ -863,7 +862,7 @@ func (calc *DamageCalculator) GetIsMiss(rngBuf *DamageRngBuffer, targetAccuracy 
 	roll := NormalizeDamageRng(rngBuf.AccuracyRaw(hitIdx, 3))
 
 	var minModifier, maxModifier float64
-	if calc.attackType == attackMagic {
+	if calc.UsesMagicFormula() {
 		minModifier = 0.5
 		maxModifier = 1.2
 	} else {
@@ -911,7 +910,7 @@ func (calc *DamageCalculator) GetTargetAccuracy(mob *monster) float64 {
 	}
 
 	var accuracy int
-	if calc.attackType == attackMagic {
+	if calc.UsesMagicFormula() {
 		accuracy = int(5 * (calc.player.intt/10 + calc.player.luk/10))
 	} else {
 		accuracy = int(calc.player.dex)
@@ -922,7 +921,7 @@ func (calc *DamageCalculator) GetTargetAccuracy(mob *monster) float64 {
 
 func (calc *DamageCalculator) GetMasteryModifier() float64 {
 	var mastery int
-	if calc.attackType == attackMagic {
+	if calc.UsesMagicFormula() {
 		if calc.skill != nil {
 			mastery = int(calc.skill.Mastery)
 		}
@@ -1021,11 +1020,10 @@ func (calc *DamageCalculator) GetTotalWatk() int16 {
 }
 
 func (calc *DamageCalculator) GetTotalMatk() int16 {
-	matk := calc.player.totalMatk - calc.player.intt/10
-	if matk < 0 {
+	if calc.player.totalMatk < 0 {
 		return 0
 	}
-	return matk
+	return calc.player.totalMatk
 }
 
 func (calc *DamageCalculator) GetTotalAccuracy() int16 {
@@ -1119,12 +1117,25 @@ func (calc *DamageCalculator) UsesSkillDamageMultiplier() bool {
 	}
 }
 
+func (calc *DamageCalculator) UsesMagicFormula() bool {
+	if calc.attackType != attackMagic {
+		return false
+	}
+
+	switch skill.Skill(calc.skillID) {
+	case skill.Shout, skill.DragonRoar, skill.SuperDragonRoar:
+		return false
+	default:
+		return true
+	}
+}
+
 func (calc *DamageCalculator) HasPhysicalOrMagicImmunity(mob *monster) bool {
 	if mob == nil {
 		return false
 	}
 
-	if calc.attackType == attackMagic {
+	if calc.UsesMagicFormula() {
 		return (mob.statBuff & skill.MobStat.MagicImmune) > 0
 	}
 

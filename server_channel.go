@@ -245,7 +245,7 @@ func (cs *channelServer) processEvent() {
 					log.Println("Client at", conn, "disconnected")
 					cs.gameState.ClientDisconnected(conn)
 				case mnet.MEClientPacket:
-					cs.gameState.HandleClientPacket(conn, mpacket.NewReader(&e.Packet, time.Now().Unix()))
+					cs.gameState.HandleClientPacket(conn, mpacket.NewReader(&e.Packet, time.Now().UnixMilli()))
 				}
 
 			case mnet.Server:
@@ -255,7 +255,7 @@ func (cs *channelServer) processEvent() {
 					go cs.establishWorldConnection()
 
 				case mnet.MEServerPacket:
-					cs.gameState.HandleServerPacket(conn, mpacket.NewReader(&e.Packet, time.Now().Unix()))
+					cs.gameState.HandleServerPacket(conn, mpacket.NewReader(&e.Packet, time.Now().UnixMilli()))
 				}
 			}
 

@@ -40,6 +40,17 @@ var (
 	)
 )
 
+const attackDamageDebug = false
+
+func logAttackApplied(kind string, skillID int32, attacks []attackInfo) {
+	if !attackDamageDebug {
+		return
+	}
+	for idx, at := range attacks {
+		log.Printf("attack-apply kind=%s targetIndex=%d skill=%d spawn=%d hitCount=%d damages=%v crit=%v", kind, idx, skillID, at.spawnID, len(at.damages), at.damages, at.isCritical)
+	}
+}
+
 func init() {
 	prometheus.MustRegister(packetsTotal, unknownPacketsTotal)
 }
@@ -2726,7 +2737,6 @@ func (server Server) playerMeleeSkill(conn mnet.Client, reader mpacket.Reader) {
 		conn.Send(packetMessageRedText(err.Error()))
 		return
 	}
-
 	data, valid := getAttackInfo(reader, plr, attackMelee)
 
 	if !valid {
@@ -2762,6 +2772,7 @@ func (server Server) playerMeleeSkill(conn mnet.Client, reader mpacket.Reader) {
 	calc := NewDamageCalculator(plr, &data, attackMelee)
 	results := calc.ValidateAttack()
 	server.validateAndApplyCriticals(conn, plr, &data, results)
+	logAttackApplied("melee", data.skillID, data.attackInfo)
 
 	inst.sendExcept(packetSkillMelee(*plr, data), conn)
 
@@ -2792,6 +2803,9 @@ func (server *Server) validateAndApplyCriticals(conn mnet.Client, plr *Player, d
 			}
 
 			data.attackInfo[targetIdx].isCritical[hitIdx] = result.IsCrit
+			if attackDamageDebug {
+				log.Printf("attack-validate skill=%d target=%d hit=%d client=%d valid=%v skipped=%v crit=%v max=%.0f tol=%.0f reason=%s", data.skillID, targetIdx, hitIdx, result.ClientDamage, result.IsValid, result.ValidationSkipped, result.IsCrit, result.MaxDamage, result.ToleranceMax, result.ValidationReason)
+			}
 			if result.ValidationSkipped {
 				continue
 			}
@@ -2820,7 +2834,6 @@ func (server Server) playerRangedSkill(conn mnet.Client, reader mpacket.Reader) 
 		conn.Send(packetMessageRedText(err.Error()))
 		return
 	}
-
 	data, valid := getAttackInfo(reader, plr, attackRanged)
 
 	if !valid {
@@ -2856,6 +2869,7 @@ func (server Server) playerRangedSkill(conn mnet.Client, reader mpacket.Reader) 
 	calc := NewDamageCalculator(plr, &data, attackRanged)
 	results := calc.ValidateAttack()
 	server.validateAndApplyCriticals(conn, plr, &data, results)
+	logAttackApplied("ranged", data.skillID, data.attackInfo)
 
 	// if Player in party extract
 
@@ -2873,7 +2887,6 @@ func (server Server) playerMagicSkill(conn mnet.Client, reader mpacket.Reader) {
 		conn.Send(packetMessageRedText(err.Error()))
 		return
 	}
-
 	data, valid := getAttackInfo(reader, plr, attackMagic)
 
 	if !valid {
@@ -2913,6 +2926,7 @@ func (server Server) playerMagicSkill(conn mnet.Client, reader mpacket.Reader) {
 	calc := NewDamageCalculator(plr, &data, attackMagic)
 	results := calc.ValidateAttack()
 	server.validateAndApplyCriticals(conn, plr, &data, results)
+	logAttackApplied("magic", data.skillID, data.attackInfo)
 
 	inst.sendExcept(packetSkillMagic(*plr, data), conn)
 
@@ -3013,7 +3027,6 @@ func getAttackInfo(reader mpacket.Reader, player *Player, attackType int) (attac
 		data.attackType = reader.ReadByte()
 
 		reader.Skip(5)
-
 		if attackType == attackRanged {
 			projectileSlot := reader.ReadInt16()
 			_ = reader.ReadInt16()
@@ -3116,17 +3129,15 @@ func getAttackInfo(reader mpacket.Reader, player *Player, attackType int) (attac
 			}
 			data.mesoKillDelay = reader.ReadInt16()
 		}
-
 		return data, true
 	}
 
-	// Summon attack parsing (server-specific layout)
+	// Summon attack parsing restored to the last known working server layout.
 	data.summonType = reader.ReadInt32()
 	stance := reader.ReadByte()
 	extra := reader.ReadByte()
 	data.action = stance
 	data.hits = 1
-
 	spawnID := int32(extra)
 
 	rest := reader.GetRestAsBytes()
@@ -4915,7 +4926,6 @@ func (server *Server) playerSummonAttack(conn mnet.Client, reader mpacket.Reader
 	if err != nil {
 		return
 	}
-
 	data, valid := getAttackInfo(reader, plr, attackSummon)
 	if !valid || len(data.attackInfo) == 0 {
 		return
@@ -4937,6 +4947,7 @@ func (server *Server) playerSummonAttack(conn mnet.Client, reader mpacket.Reader
 	calc := NewDamageCalculator(plr, &data, attackSummon)
 	results := calc.ValidateAttack()
 	server.validateAndApplyCriticals(conn, plr, &data, results)
+	logAttackApplied("summon", data.skillID, data.attackInfo)
 
 	mobDamages := make(map[int32][]int32, len(data.attackInfo))
 	for _, at := range data.attackInfo {
