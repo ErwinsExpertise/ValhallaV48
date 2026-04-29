@@ -5,8 +5,8 @@ const (
 	RecvLoginCheckLogin            int16 = 8
 	RecvLoginChannelSelect         int16 = 4
 	RecvLoginWorldSelect           int16 = 5
-	RecvLoginRegisterPin           int16 = 6
-	RecvLoginEULA                  int16 = 9
+	RecvLoginEULA                  int16 = 6
+	RecvLoginRegisterPin           int16 = 9
 	RecvLoginSelectCharacter       int16 = 15
 	RecvLoginNameCheck             int16 = 17
 	RecvLoginNewCharacter          int16 = 21

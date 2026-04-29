@@ -1,7 +1,6 @@
 package login
 
 import (
-	"crypto/sha512"
 	"database/sql"
 	"encoding/hex"
 	"errors"
@@ -68,11 +67,6 @@ func (server *Server) handleLoginRequest(conn mnet.Client, reader mpacket.Reader
 		ip = conn.String()
 	}
 
-	// hash the password
-	hasher := sha512.New()
-	hasher.Write([]byte(password))
-	hashedPassword := hex.EncodeToString(hasher.Sum(nil))
-
 	var accountID int32
 	var user string
 	var databasePassword string
@@ -83,9 +77,10 @@ func (server *Server) handleLoginRequest(conn mnet.Client, reader mpacket.Reader
 	var lastHwid sql.NullString
 	var adminLevel int
 	var eula byte
+	var passwordSalt sql.NullString
 
-	err := common.DB.QueryRow("SELECT accountID, username, password, gender, isLogedIn, isBanned, isLocked, hwid, adminLevel, eula FROM accounts WHERE username=?", username).
-		Scan(&accountID, &user, &databasePassword, &gender, &isLogedIn, &isBanned, &isLocked, &lastHwid, &adminLevel, &eula)
+	err := common.DB.QueryRow("SELECT accountID, username, password, passwordSalt, gender, isLogedIn, isBanned, isLocked, hwid, adminLevel, eula FROM accounts WHERE username=?", username).
+		Scan(&accountID, &user, &databasePassword, &passwordSalt, &gender, &isLogedIn, &isBanned, &isLocked, &lastHwid, &adminLevel, &eula)
 
 	result := constant.LoginResultSuccess
 
@@ -109,32 +104,44 @@ func (server *Server) handleLoginRequest(conn mnet.Client, reader mpacket.Reader
 	if err != nil {
 		log.Println(err)
 		if server.autoRegister {
-			res, insertErr := common.DB.Exec("INSERT INTO accounts (username, password, pin, isLogedIn, adminLevel, isBanned, gender, dob, eula, nx, maplepoints, hwid) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-				username, hashedPassword, constant.AutoRegisterDefaultPIN, constant.AutoRegisterDefaultIsLoggedIn,
-				constant.AutoRegisterDefaultAdminLevel, constant.AutoRegisterDefaultIsBanned, constant.AutoRegisterDefaultGender,
-				constant.AutoRegisterDefaultDOB, constant.AutoRegisterDefaultEULA, constant.AutoRegisterDefaultNX,
-				constant.AutoRegisterDefaultMaplePoints, hwid)
-
+			hashedPassword, passwordSaltValue, insertErr := makeStoredCredential(password)
 			if insertErr != nil {
-				log.Println("Failed to create new account", err)
-				result = constant.LoginResultNotRegistered
-			} else if id, err := res.LastInsertId(); err == nil {
-				accountID = int32(id)
-				gender = constant.AutoRegisterDefaultGender
-				adminLevel = constant.AutoRegisterDefaultAdminLevel
-				eula = constant.AutoRegisterDefaultEULA
-				log.Println("Auto-registered new account:", username, "with ID:", accountID)
-				result = constant.LoginResultSuccess
-			} else {
-				log.Println("Failed to get new account ID:", err)
+				log.Println("Failed to hash new account password", insertErr)
 				result = constant.LoginResultSystemError
+			} else {
+				hashedPin, pinSaltValue, pinErr := makeStoredCredential(constant.AutoRegisterDefaultPIN)
+				if pinErr != nil {
+					log.Println("Failed to hash new account pin", pinErr)
+					result = constant.LoginResultSystemError
+				} else {
+					res, insertErr := common.DB.Exec("INSERT INTO accounts (username, password, passwordSalt, pin, pinSalt, isLogedIn, adminLevel, isBanned, gender, dob, eula, nx, maplepoints, hwid) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+						username, hashedPassword, passwordSaltValue, hashedPin, pinSaltValue, constant.AutoRegisterDefaultIsLoggedIn,
+						constant.AutoRegisterDefaultAdminLevel, constant.AutoRegisterDefaultIsBanned, constant.AutoRegisterDefaultGender,
+						constant.AutoRegisterDefaultDOB, constant.AutoRegisterDefaultEULA, constant.AutoRegisterDefaultNX,
+						constant.AutoRegisterDefaultMaplePoints, hwid)
+
+					if insertErr != nil {
+						log.Println("Failed to create new account", err)
+						result = constant.LoginResultNotRegistered
+					} else if id, err := res.LastInsertId(); err == nil {
+						accountID = int32(id)
+						gender = constant.AutoRegisterDefaultGender
+						adminLevel = constant.AutoRegisterDefaultAdminLevel
+						eula = constant.AutoRegisterDefaultEULA
+						log.Println("Auto-registered new account:", username, "with ID:", accountID)
+						result = constant.LoginResultSuccess
+					} else {
+						log.Println("Failed to get new account ID:", err)
+						result = constant.LoginResultSystemError
+					}
+				}
 			}
 		} else {
 			result = constant.LoginResultNotRegistered
 		}
 	} else if isLocked > 0 {
 		result = constant.LoginResultDeletedOrBlocked
-	} else if hashedPassword != databasePassword {
+	} else if !verifyStoredCredential(password, databasePassword, passwordSalt) {
 		if server.ac != nil {
 			ipKey := fmt.Sprintf("ip:%s", ip)
 			userKey := fmt.Sprintf("user:%s", username)
@@ -163,51 +170,87 @@ func (server *Server) handleLoginRequest(conn mnet.Client, reader mpacket.Reader
 	// wrong gateway korean text = 14, still processing request korean text = 15, verify email = 16, gateway english text = 17,
 	// verify email = 21, eula = 23
 
-	if result <= constant.LoginResultSuccess {
+	if result <= constant.LoginResultSuccess || result == constant.LoginResultEULA {
 		conn.SetGender(gender)
 		conn.SetAdminLevel(adminLevel)
 		conn.SetAccountID(accountID)
 		conn.SetHWID(hwid)
 
-		// Update HWID and clear failed attempts on successful login
-		if hwid != "" {
-			common.DB.Exec("UPDATE accounts SET hwid = ? WHERE accountID = ?", hwid, accountID)
-		}
-		if server.ac != nil {
-			ip := ""
-			if host, _, err := net.SplitHostPort(conn.String()); err == nil {
-				ip = host
-			} else {
-				ip = conn.String()
+		if result <= constant.LoginResultSuccess {
+			// Update HWID and clear failed attempts on successful login
+			if hwid != "" {
+				common.DB.Exec("UPDATE accounts SET hwid = ? WHERE accountID = ?", hwid, accountID)
 			}
-			server.ac.ClearAuth(
-				fmt.Sprintf("user:%s", username),
-				fmt.Sprintf("ip:%s", ip),
-				fmt.Sprintf("hwid:%s", hwid),
-			)
+			if server.ac != nil {
+				ip := ""
+				if host, _, err := net.SplitHostPort(conn.String()); err == nil {
+					ip = host
+				} else {
+					ip = conn.String()
+				}
+				server.ac.ClearAuth(
+					fmt.Sprintf("user:%s", username),
+					fmt.Sprintf("ip:%s", ip),
+					fmt.Sprintf("hwid:%s", hwid),
+				)
+			}
 		}
-	} else if result == constant.LoginResultEULA {
-		conn.SetAccountID(accountID)
 	}
 
 	conn.Send(packetLoginResponse(result, accountID, gender, adminLevel > 0, username, isBanned))
 }
 
 func (server *Server) handleEULA(conn mnet.Client, reader mpacket.Reader) {
-	accept := reader.ReadBool()
-
-	if accept {
-		_, err := common.DB.Exec("UPDATE accounts SET eula=? WHERE accountID=?", 1, conn.GetAccountID())
-
-		if err != nil {
-			log.Println("Could not set EULA signed", err)
-		}
-
-		conn.Send(packetLoginReturnFromChannel())
+	accept := false
+	if len(reader.GetRestAsBytes()) > 0 {
+		accept = reader.ReadByte() != 0
 	}
+	if !accept {
+		return
+	}
+
+	accountID := conn.GetAccountID()
+	if accountID <= 0 {
+		log.Println("Could not set EULA signed: invalid accountID", accountID)
+		return
+	}
+
+	res, err := common.DB.Exec("UPDATE accounts SET eula=? WHERE accountID=?", 1, accountID)
+
+	if err != nil {
+		log.Println("Could not set EULA signed", err)
+		return
+	}
+
+	if rows, rowsErr := res.RowsAffected(); rowsErr != nil {
+		log.Println("Could not confirm EULA update", rowsErr)
+	} else if rows == 0 {
+		log.Println("Could not set EULA signed: no rows updated for accountID", accountID)
+		return
+	}
+
+	var username string
+	var gender byte
+	var adminLevel int
+	var isBanned int
+	err = common.DB.QueryRow("SELECT username, gender, adminLevel, isBanned FROM accounts WHERE accountID=?", accountID).
+		Scan(&username, &gender, &adminLevel, &isBanned)
+	if err != nil {
+		log.Println("Could not load account after EULA acceptance", err)
+		return
+	}
+
+	conn.SetGender(gender)
+	conn.SetAdminLevel(adminLevel)
+	conn.Send(packetLoginResponse(constant.LoginResultSuccess, accountID, gender, adminLevel > 0, username, isBanned))
 }
 
 func (server *Server) handlePinRegistration(conn mnet.Client, reader mpacket.Reader) {
+	if !server.withPin {
+		conn.Send(packetCancelPin())
+		return
+	}
+
 	b1 := reader.ReadByte()
 
 	if b1 == 0 { // Client canceled pin change request
@@ -218,8 +261,13 @@ func (server *Server) handlePinRegistration(conn mnet.Client, reader mpacket.Rea
 
 	accountID := conn.GetAccountID()
 	pin := string(reader.GetRestAsBytes())
+	hashedPin, pinSaltValue, err := makeStoredCredential(pin)
+	if err != nil {
+		log.Println("handlePinRegistration failed to hash pin for accountID:", accountID, err)
+		return
+	}
 
-	_, err := common.DB.Exec("UPDATE accounts SET pin=? WHERE accountID=?", pin, accountID)
+	_, err = common.DB.Exec("UPDATE accounts SET pin=?, pinSalt=? WHERE accountID=?", hashedPin, pinSaltValue, accountID)
 	if err != nil {
 		log.Println("handlePinRegistration database pin update issue for accountID:", accountID, err)
 	}
@@ -234,10 +282,11 @@ func (server *Server) handleGoodLogin(conn mnet.Client, reader mpacket.Reader) {
 
 	if server.withPin {
 		var pinDB string
+		var pinSalt sql.NullString
 		var authDone bool
 
-		err := common.DB.QueryRow("SELECT pin FROM accounts WHERE accountID=?", accountID).
-			Scan(&pinDB)
+		err := common.DB.QueryRow("SELECT pin, pinSalt FROM accounts WHERE accountID=?", accountID).
+			Scan(&pinDB, &pinSalt)
 
 		if err != nil {
 			log.Println("handleCheckLogin database retrieval issue for accountID:", accountID, err)
@@ -257,7 +306,7 @@ func (server *Server) handleGoodLogin(conn mnet.Client, reader mpacket.Reader) {
 			reader.Skip(6) // space padding?
 			pin := string(reader.GetRestAsBytes())
 
-			if pin != pinDB {
+			if !verifyStoredCredential(pin, pinDB, pinSalt) {
 				conn.Send(packetRequestPinAfterFailure())
 
 			} else if b1 == 2 { // Changing pin request
