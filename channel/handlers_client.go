@@ -4541,8 +4541,6 @@ func (server *Server) playerSpecialSkill(conn mnet.Client, reader mpacket.Reader
 	delay := int16(0)
 	targetIDs := make([]int32, 0)
 
-	log.Printf("player %s using skill %d level %d\n", plr.Name, skillID, skillLevel)
-
 	if isPartySkillRequest(skillID) && len(reader.GetRestAsBytes()) > 2 {
 		partyMask = reader.ReadByte()
 		if skill.Skill(skillID) == skill.Dispel && len(reader.GetRestAsBytes()) >= 2 {
