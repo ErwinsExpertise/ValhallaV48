@@ -7,7 +7,6 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -15,17 +14,17 @@ import (
 	"github.com/Hucaru/Valhalla/constant"
 	"github.com/Hucaru/Valhalla/login"
 	"github.com/Hucaru/Valhalla/mpacket"
-	"github.com/Hucaru/Valhalla/nx"
 
 	"github.com/Hucaru/Valhalla/mnet"
 )
 
 type loginServer struct {
-	config    loginConfig
-	dbConfig  dbConfig
-	eRecv     chan *mnet.Event
-	wg        *sync.WaitGroup
-	gameState login.Server
+	configFile string
+	config     loginConfig
+	dbConfig   dbConfig
+	eRecv      chan *mnet.Event
+	wg         *sync.WaitGroup
+	gameState  login.Server
 
 	// graceful shutdown & listeners
 	ctx            context.Context
@@ -52,12 +51,13 @@ func newLoginServer(configFile string) *loginServer {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &loginServer{
-		eRecv:    make(chan *mnet.Event),
-		config:   config,
-		dbConfig: dbConfig,
-		wg:       &sync.WaitGroup{},
-		ctx:      ctx,
-		cancel:   cancel,
+		configFile: configFile,
+		eRecv:      make(chan *mnet.Event),
+		config:     config,
+		dbConfig:   dbConfig,
+		wg:         &sync.WaitGroup{},
+		ctx:        ctx,
+		cancel:     cancel,
 	}
 }
 
@@ -65,11 +65,7 @@ func (ls *loginServer) run() {
 	log.Println("Login Server")
 	log.Printf("Listening on %q:%q", ls.config.ClientListenAddress, ls.config.ClientListenPort)
 
-	start := time.Now()
-	nx.LoadFile(filepath.Join("..", "v48", "wz", "nx"))
-	elapsed := time.Since(start)
-
-	log.Println("Loaded and parsed Wizet data (NX) in", elapsed)
+	loadNXData(ls.configFile)
 
 	ls.gameState.Initialise(ls.dbConfig.User, ls.dbConfig.Password, ls.dbConfig.Address, ls.dbConfig.Port, ls.dbConfig.Database, ls.config.WithPin, ls.config.AutoRegister)
 

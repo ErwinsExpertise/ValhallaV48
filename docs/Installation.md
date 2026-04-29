@@ -1,115 +1,188 @@
 # Installation Guide
 
-This guide will walk you through setting up Valhalla, a MapleStory v28 private server emulator.
+This is the easiest setup guide for **Valhalla v48**.
 
-## Prerequisites
+If you are on Windows and just want the server running, this is the guide you want.
 
-Before you begin, you'll need:
-- **Data.nx file** - Required for all server components, especially channels
-- A MapleStory v28 client
-- A MySQL/MariaDB database
+## What You Need
 
-## Quick Navigation
+- A MapleStory **v48** install
+  - You can use https://msdl.xyz/
+- The localhost-ready client from the main README
+- MySQL
+- This Valhalla folder
+- The WZ to NX converter
+  - https://github.com/ErwinsExpertise/go-wztonx-converter/releases/tag/v0.1.1
 
-Choose your installation method:
-- [Local Setup](Local.md) - Run directly on your machine
-- [Docker Setup](Docker.md) - Run using Docker Compose
-- [Kubernetes Setup](Kubernetes.md) - Deploy to a Kubernetes cluster
+## Recommended Setup Path
 
-For development work, see [Building from Source](Building.md).
+Use **dev mode** unless you have a specific reason not to.
 
-For configuration options, see [Configuration Guide](Configuration.md).
+Dev mode starts login, world, channel, and cash shop together with one command.
 
-## Converting Data.wz to Data.nx
+## Step 1: Get MapleStory v48
 
-All deployment methods require a `Data.nx` file. This file is generated from MapleStory's `Data.wz` file.
+Install or extract MapleStory v48.
 
-### Step 1: Locate Data.wz
+After that, you should have a folder that contains many WZ files like:
 
-After installing MapleStory v28:
-1. Navigate to your MapleStory installation directory
-2. Find the `Data.wz` file (typically in the root installation folder)
+- `Base.wz`
+- `Character.wz`
+- `Effect.wz`
+- `Etc.wz`
+- `Item.wz`
+- `Map.wz`
+- `Mob.wz`
+- `Npc.wz`
+- `Quest.wz`
+- `Reactor.wz`
+- `Skill.wz`
+- `Sound.wz`
+- `String.wz`
+- `TamingMob.wz`
+- `UI.wz`
 
-### Step 2: Convert to NX Format
+> v48 does **not** use only one `Data.wz` file for this setup flow. Convert the whole folder.
 
-Use the [go-wztonx-converter](https://github.com/ErwinsExpertise/go-wztonx-converter) tool to convert the WZ file to NX format.
+## Step 2: Get the Localhost Client
 
-#### Download the Converter
+Use the localhost-ready client from the main README:
 
-Download the pre-built binary for your platform from the [releases page](https://github.com/ErwinsExpertise/go-wztonx-converter/releases).
+- https://mega.nz/file/EFV1wA4B#Y7oLs0xrRv9bbR7B8slUF-D1Sq0uHb2EWAxN-IeOlW0
 
-Available for:
-- Windows (amd64)
-- Linux (amd64)
-- macOS (amd64/arm64)
+This is the client you should launch after the server is running.
 
-#### Run the Conversion
+## Step 3: Install MySQL and Import the Database
 
-```bash
-# Windows
-wztonx-converter.exe -server Data.wz
+1. Install MySQL
+2. Create a database named `maplestory`
+3. Import:
 
-# Linux/macOS
-./wztonx-converter -server Data.wz
+```text
+sql/maplestory.sql
 ```
 
-This will generate a `Data.nx` file in the same directory.
+### Simple import example
 
-### Step 3: Place Data.nx File
+If you already have the MySQL command line available:
 
-Copy the generated `Data.nx` file to your Valhalla installation directory:
+```powershell
+mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS maplestory;"
+mysql -u root -p maplestory < sql\maplestory.sql
+```
 
-- **Local setup**: Place in the root of your Valhalla directory
-- **Docker setup**: Place in the root directory (it will be mounted into containers)
-- **Kubernetes setup**: You'll need to create a ConfigMap or PersistentVolume (see [Kubernetes.md](Kubernetes.md))
+If you prefer a GUI, you can also import `sql/maplestory.sql` with MySQL Workbench.
 
-## Setting Up the Client
+## Step 4: Convert the WZ Files to NX
 
-### Download Client
+### Easiest way
 
-A pre-patched MapleStory v28 client is available for localhost connections:
+1. Download `go-wztonx-converter.exe`
+2. Put it in the `setup` folder of this repo
+3. Double-click:
 
-[Download v28 Client (no AES, patched, windowed mode, no IE check)](https://github.com/user-attachments/files/19866472/v28_noaes_patched_res_noie_mp.zip)
+```text
+setup\convert-wz-to-nx.bat
+```
 
-This client includes:
-- No encryption (noaes)
-- Pre-patched for localhost
-- Window mode support
-- IE check removed
+4. Choose your MapleStory v48 folder
+5. Let it finish
 
-### Alternative: Custom Client Hook
+By default, the converted output is placed in:
 
-For more control, you can use a DLL hook to modify the client:
+```text
+nx\
+```
 
-[MapleStory Client Hook](https://github.com/Hucaru/maplestory-client-hook)
+inside this repository.
 
-This allows you to:
-- Force localhost connections
-- Enable windowed mode
-- Bypass various client checks
+### Manual converter command
 
-## Database Setup
+If you want to run the converter yourself, point it at the **full v48 folder**:
 
-All installation methods require a MySQL database.
+```powershell
+.\go-wztonx-converter.exe --server "C:\path\to\MapleStoryV48"
+```
 
-### Create Database
+## Step 5: Edit `config_dev.toml`
 
-The server expects a database named `maplestory` (configurable).
+Open `config_dev.toml` and check these values:
 
-1. Download the SQL schema:
-   ```bash
-   # In your Valhalla SQL directory
-   mysql -u root -p < maplestory.sql
-   ```
+### Database section
 
-2. Or use the docker-compose setup which automatically initializes the database.
+```toml
+[database]
+address = "127.0.0.1"
+port = "3306"
+user = "root"
+password = "your_mysql_password"
+database = "maplestory"
+```
 
-## Next Steps
+### Optional NX section
 
-Choose your installation method:
+If you used the helper script and left the output in the default `nx` folder, you usually do not need to change anything.
 
-- **[Local Setup](Local.md)** - Best for quick testing and development
-- **[Docker Setup](Docker.md)** - Recommended for most users, easiest to set up
-- **[Kubernetes Setup](Kubernetes.md)** - For production deployments
+If your NX files are stored somewhere else, set:
 
-After installation, configure your servers using the [Configuration Guide](Configuration.md).
+```toml
+[nx]
+path = "C:/path/to/your/nx"
+```
+
+## Step 6: Start Valhalla in Dev Mode
+
+```powershell
+.\Valhalla.exe -type dev -config config_dev.toml
+```
+
+If your NX files are in a custom location, you can also do this:
+
+```powershell
+.\Valhalla.exe -type dev -config config_dev.toml -nx "C:\path\to\your\nx"
+```
+
+## Step 7: Launch the Client
+
+When the server is up, launch the localhost-ready client and connect to:
+
+```text
+127.0.0.1
+```
+
+The login server listens on port `8484`.
+
+## First Login
+
+The sample dev config has `autoRegister = true`.
+
+That means you can type a username and password and the account will be created automatically.
+
+## If Something Goes Wrong
+
+### Database errors
+
+- Make sure MySQL is running
+- Make sure the password in `config_dev.toml` matches MySQL
+- Make sure the `maplestory` database exists
+- Make sure `sql/maplestory.sql` was imported
+
+### NX/WZ errors
+
+- Make sure you converted the **entire v48 WZ folder**
+- Make sure the converter finished successfully
+- Make sure your NX output exists as either:
+  - `Data.nx`, or
+  - a folder containing `.nx` files
+- If needed, use the `-nx` flag or `[nx].path`
+
+### Client cannot connect
+
+- Make sure Valhalla is running in dev mode
+- Make sure the localhost-ready client is the one you launched
+- Make sure nothing else is already using port `8484`
+
+## Next
+
+- [Local / Dev Mode Guide](Local.md)
+- [Configuration Guide](Configuration.md)

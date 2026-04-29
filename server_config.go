@@ -10,68 +10,73 @@ import (
 )
 
 type dbConfig struct {
-	Address  string	`mapstructure:"address"`
-	Port     string	`mapstructure:"port"`
-	User     string	`mapstructure:"user"`
-	Password string	`mapstructure:"password"`
-	Database string	`mapstructure:"database"`
+	Address  string `mapstructure:"address"`
+	Port     string `mapstructure:"port"`
+	User     string `mapstructure:"user"`
+	Password string `mapstructure:"password"`
+	Database string `mapstructure:"database"`
+}
+
+type nxConfig struct {
+	Path string `mapstructure:"path"`
 }
 
 type loginConfig struct {
-	ClientListenAddress string	`mapstructure:"clientListenAddress"`
-	ClientListenPort    string	`mapstructure:"clientListenPort"`
-	ServerListenAddress string	`mapstructure:"serverListenAddress"`
-	ServerListenPort    string	`mapstructure:"serverListenPort"`
-	WithPin             bool	`mapstructure:"withPin"`
-	AutoRegister        bool	`mapstructure:"autoRegister"`
-	PacketQueueSize     int		`mapstructure:"packetQueueSize"`
-	Latency             int		`mapstructure:"latency"`
-	Jitter              int		`mapstructure:"jitter"`
+	ClientListenAddress string `mapstructure:"clientListenAddress"`
+	ClientListenPort    string `mapstructure:"clientListenPort"`
+	ServerListenAddress string `mapstructure:"serverListenAddress"`
+	ServerListenPort    string `mapstructure:"serverListenPort"`
+	WithPin             bool   `mapstructure:"withPin"`
+	AutoRegister        bool   `mapstructure:"autoRegister"`
+	PacketQueueSize     int    `mapstructure:"packetQueueSize"`
+	Latency             int    `mapstructure:"latency"`
+	Jitter              int    `mapstructure:"jitter"`
 }
 
 type worldConfig struct {
-	Message         string		`mapstructure:"message"`
-	Ribbon          byte		`mapstructure:"ribbon"`
-	ExpRate         float32		`mapstructure:"expRate"`
-	DropRate        float32		`mapstructure:"dropRate"`
-	MesosRate       float32		`mapstructure:"mesosRate"`
-	AutoBan         bool		`mapstructure:"autoBan"`
-	LoginAddress    string		`mapstructure:"loginAddress"`
-	LoginPort       string		`mapstructure:"loginPort"`
-	ListenAddress   string		`mapstructure:"listenAddress"`
-	ListenPort      string		`mapstructure:"listenPort"`
-	PacketQueueSize int			`mapstructure:"packetQueueSize"`
+	Message         string  `mapstructure:"message"`
+	Ribbon          byte    `mapstructure:"ribbon"`
+	ExpRate         float32 `mapstructure:"expRate"`
+	DropRate        float32 `mapstructure:"dropRate"`
+	MesosRate       float32 `mapstructure:"mesosRate"`
+	AutoBan         bool    `mapstructure:"autoBan"`
+	LoginAddress    string  `mapstructure:"loginAddress"`
+	LoginPort       string  `mapstructure:"loginPort"`
+	ListenAddress   string  `mapstructure:"listenAddress"`
+	ListenPort      string  `mapstructure:"listenPort"`
+	PacketQueueSize int     `mapstructure:"packetQueueSize"`
 }
 
 type channelConfig struct {
-	WorldAddress            string	`mapstructure:"worldAddress"`
-	WorldPort               string	`mapstructure:"worldPort"`
-	ListenAddress           string	`mapstructure:"listenAddress"`
-	ClientConnectionAddress string	`mapstructure:"clientConnectionAddress"`
-	ListenPort              string	`mapstructure:"listenPort"`
-	PacketQueueSize         int		`mapstructure:"packetQueueSize"`
-	MaxPop                  int16	`mapstructure:"maxPop"`
-	Latency                 int		`mapstructure:"latency"`
-	Jitter                  int		`mapstructure:"jitter"`
+	WorldAddress            string `mapstructure:"worldAddress"`
+	WorldPort               string `mapstructure:"worldPort"`
+	ListenAddress           string `mapstructure:"listenAddress"`
+	ClientConnectionAddress string `mapstructure:"clientConnectionAddress"`
+	ListenPort              string `mapstructure:"listenPort"`
+	PacketQueueSize         int    `mapstructure:"packetQueueSize"`
+	MaxPop                  int16  `mapstructure:"maxPop"`
+	Latency                 int    `mapstructure:"latency"`
+	Jitter                  int    `mapstructure:"jitter"`
 }
 
 type cashShopConfig struct {
-	WorldAddress            string	`mapstructure:"worldAddress"`
-	WorldPort               string	`mapstructure:"worldPort"`
-	ListenAddress           string	`mapstructure:"listenAddress"`
-	ClientConnectionAddress string	`mapstructure:"clientConnectionAddress"`
-	ListenPort              string	`mapstructure:"listenPort"`
-	PacketQueueSize         int		`mapstructure:"packetQueueSize"`
-	Latency                 int		`mapstructure:"latency"`
-	Jitter                  int		`mapstructure:"jitter"`
+	WorldAddress            string `mapstructure:"worldAddress"`
+	WorldPort               string `mapstructure:"worldPort"`
+	ListenAddress           string `mapstructure:"listenAddress"`
+	ClientConnectionAddress string `mapstructure:"clientConnectionAddress"`
+	ListenPort              string `mapstructure:"listenPort"`
+	PacketQueueSize         int    `mapstructure:"packetQueueSize"`
+	Latency                 int    `mapstructure:"latency"`
+	Jitter                  int    `mapstructure:"jitter"`
 }
 
 type fullConfig struct {
-	Database dbConfig		`mapstructure:"database"`
-	Login    loginConfig	`mapstructure:"login"`
-	World    worldConfig	`mapstructure:"world"`
-	Channel  channelConfig	`mapstructure:"channel"`
-	CashShop cashShopConfig	`mapstructure:"cashshop"`
+	Database dbConfig       `mapstructure:"database"`
+	NX       nxConfig       `mapstructure:"nx"`
+	Login    loginConfig    `mapstructure:"login"`
+	World    worldConfig    `mapstructure:"world"`
+	Channel  channelConfig  `mapstructure:"channel"`
+	CashShop cashShopConfig `mapstructure:"cashshop"`
 }
 
 // Load from TOML if exists, then load/overwrite with ENV
@@ -125,6 +130,11 @@ func channelConfigFromFile(fname string) (channelConfig, dbConfig) {
 func cashShopConfigFromFile(fname string) (cashShopConfig, dbConfig) {
 	config := LoadConfig(fname)
 	return config.CashShop, config.Database
+}
+
+func nxConfigFromFile(fname string) nxConfig {
+	config := LoadConfig(fname)
+	return config.NX
 }
 
 func bindEnvs(v *viper.Viper, typ reflect.Type, path []string, envPrefix string) {

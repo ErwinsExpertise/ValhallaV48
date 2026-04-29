@@ -2,71 +2,139 @@
 
 [![Actions Status](https://github.com/Hucaru/Valhalla/workflows/Go/badge.svg)](https://github.com/Hucaru/Valhalla/actions)
 [Visit our Discord channel](https://discord.gg/KHky9Qy9jF)
+
 ## What is this?
 
-This project exists to preserve and archive an early version of the game (v48 of global).
+Valhalla is a MapleStory **v48** server project.
+
+If you just want to get the server running on your own PC, use **dev mode**. It is the easiest setup because login, world, channel, and cash shop all start together in one window.
+
+## Super Quick Start (Windows)
+
+1. **Get a MapleStory v48 install**
+   - Use https://msdl.xyz/
+2. **Download the localhost-ready client**
+   - https://mega.nz/file/EFV1wA4B#Y7oLs0xrRv9bbR7B8slUF-D1Sq0uHb2EWAxN-IeOlW0
+3. **Install MySQL**
+4. **Import the database**
+   - Use `/sql/maplestory.sql`
+5. **Convert your v48 WZ files into NX files**
+   - Easiest option: run `setup\convert-wz-to-nx.bat`
+6. **Edit `config_dev.toml`**
+   - Set your MySQL password
+7. **Start Valhalla in dev mode**
+
+```powershell
+.\Valhalla.exe -type dev -config config_dev.toml
+```
+
+After that, launch the client and connect to `127.0.0.1`.
+
+## The Important Part: v48 Uses Multiple WZ Files
+
+Do **not** follow old instructions that only mention `Data.wz`.
+
+For v48, you should convert the **entire MapleStory folder that contains all the WZ files** such as:
+
+- `Base.wz`
+- `Character.wz`
+- `Effect.wz`
+- `Etc.wz`
+- `Item.wz`
+- `Map.wz`
+- `Mob.wz`
+- `Npc.wz`
+- `Quest.wz`
+- `Reactor.wz`
+- `Skill.wz`
+- `Sound.wz`
+- `String.wz`
+- `TamingMob.wz`
+- `UI.wz`
+
+Valhalla can load either:
+
+- a single `Data.nx` file, or
+- a folder full of `.nx` files
+
+The included helper script creates an easy `nx` folder in this repository.
+
+## Dev Mode
+
+This is the recommended way to run Valhalla for almost everyone.
+
+```powershell
+.\Valhalla.exe -type dev -config config_dev.toml
+```
+
+Why dev mode is recommended:
+
+- ✅ easiest setup
+- ✅ one command
+- ✅ one window
+- ✅ auto-register enabled in the sample config
+- ✅ good for solo play, testing, and learning
+
+## Easy WZ Conversion
+
+1. Download the converter from:
+   - https://github.com/ErwinsExpertise/go-wztonx-converter/releases/tag/v0.1.1
+2. Place the converter `.exe` inside the `setup` folder, or anywhere on your `PATH`
+3. Double-click:
+   - `setup\convert-wz-to-nx.bat`
+4. Pick your MapleStory v48 folder when prompted
+5. Wait for conversion to finish
+
+By default, the converted NX files will be placed in:
+
+```text
+<repo>\nx
+```
+
+## If Your NX Files Are Somewhere Else
+
+You can point Valhalla at them in either of these ways:
+
+### Option 1: config file
+
+Add this to your config file:
+
+```toml
+[nx]
+path = "C:/path/to/your/nx"
+```
+
+### Option 2: command line flag
+
+```powershell
+.\Valhalla.exe -type dev -config config_dev.toml -nx "C:\path\to\your\nx"
+```
+
+## Recommended Reading Order
+
+- **[docs/Installation.md](docs/Installation.md)** - easiest full setup guide
+- **[docs/Local.md](docs/Local.md)** - running on your own machine
+- **[docs/Configuration.md](docs/Configuration.md)** - config file help
+- **[docs/README.md](docs/README.md)** - docs index
+
+## Other Ways to Run It
+
+These are more advanced and not recommended for most first-time users:
+
+- [docs/Docker.md](docs/Docker.md)
+- [docs/Kubernetes.md](docs/Kubernetes.md)
+- [docs/Building.md](docs/Building.md)
 
 ## Acknowledgements
 
 - Hucaru for the original v28 project
-  - [Valhalla](https://github.com/Hucaru/Valhalla) 
+  - [Valhalla](https://github.com/Hucaru/Valhalla)
 - Sunnyboy for providing a [list](http://forum.ragezone.com/f921/library-idbs-versions-named-addresses-987815/) of idbs for which this project would not have started
 - The following projects were used to help reverse packet structures that were not clearly shown in the idb
     - [Vana](https://github.com/retep998/Vana)
     - [WvsGlobal](https://github.com/diamondo25/WvsGlobal)
     - [OpenMG](https://github.com/sewil/OpenMG)
 - [NX](https://nxformat.github.io/) file format (see acknowledgements at link)
-
-## Getting Started
-
-Valhalla supports multiple deployment methods. Choose the one that best fits your needs:
-
-📚 **[Installation Guide](docs/Installation.md)** - Start here! Covers Data.wz conversion and client setup
-
-### Quick Links by Deployment Method
-
-- 🚀 **[Dev Mode](#dev-mode)** - Run all servers in one process (easiest for solo play and testing)
-- 🖥️ **[Local Setup](docs/Local.md)** - Run directly on your machine (best for quick testing)
-- 🐳 **[Docker Setup](docs/Docker.md)** - Run using Docker Compose (recommended for most users)
-- ☸️ **[Kubernetes Setup](docs/Kubernetes.md)** - Deploy to a Kubernetes cluster (for production)
-- 🔨 **[Building from Source](docs/Building.md)** - Build for development work
-
-### Dev Mode
-Dev mode is the simplest way to run Valhalla for solo play or testing. It starts all four server types (login, world, channel, and cashshop) in a single process, eliminating the need to manage multiple processes.
-
-**Quick Start:**
-
-```bash
-# Using the provided dev config
-./Valhalla -type dev -config config_dev.toml
-
-# Or build from source
-go build
-./Valhalla -type dev -config config_dev.toml
-```
-
-The dev mode:
-- ✅ Runs all servers (login, world, channel, cashshop) in one process
-- ✅ Uses localhost networking for inter-server communication
-- ✅ Has auto-register enabled by default for easy testing
-- ✅ Configured with 2x EXP/Drop/Mesos rates for faster testing
-- ✅ Ideal for solo play and development
-
-**Note:** Dev mode still requires a MySQL database. For production deployments, use separate processes for better reliability and scalability.
-
-### Configuration
-
-⚙️ **[Configuration Guide](docs/Configuration.md)** - Complete reference for all configuration options
-
-All server types support both TOML configuration files and environment variables. See the Configuration Guide for details on:
-- Command line flags (`-type`, `-config`, `-metrics-port`)
-  - Server types: `login`, `world`, `channel`, `cashshop`, or `dev` (all-in-one)
-- Database settings
-- Server-specific options (login, world, channel, cashshop)
-- Network configuration
-- Performance tuning
-
-For dev mode, use `config_dev.toml` which includes all necessary server configurations in a single file.
 
 ## Advanced Topics
 

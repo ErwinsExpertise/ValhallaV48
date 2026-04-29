@@ -9,6 +9,10 @@ user = "root"
 password = "maplestory"
 database = "maplestory"
 
+[nx]
+# Optional: path to Data.nx or a folder containing Base.nx, Character.nx, etc.
+path = ""
+
 [login]
 clientListenAddress = "0.0.0.0"
 clientListenPort = "8484"
@@ -48,7 +52,7 @@ jitter = 0
 worldAddress = "127.0.0.1"
 worldPort = "8584"
 listenAddress = "0.0.0.0"
-listenPort = "8786"
+listenPort = "8600"
 clientConnectionAddress = "127.0.0.1"
 packetQueueSize = 512
 latency = 0

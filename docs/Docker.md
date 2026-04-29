@@ -14,7 +14,7 @@ Docker provides several advantages:
 
 - **Docker** - [Install Docker Desktop](https://www.docker.com/products/docker-desktop)
 - **Docker Compose** - Included with Docker Desktop
-- **Data.nx file** - See [Installation Guide](Installation.md) for conversion instructions
+- **NX data** - See [Installation Guide](Installation.md) for v48 conversion instructions
 
 ## Quick Start
 
@@ -27,9 +27,9 @@ cd Valhalla
 
 Or download the source code from the [releases page](https://github.com/Hucaru/Valhalla/releases).
 
-### Step 2: Prepare Data.nx
+### Step 2: Prepare NX Data
 
-1. Convert your Data.wz file to Data.nx format (see [Installation Guide](Installation.md))
+1. Convert your full MapleStory **v48** WZ folder (see [Installation Guide](Installation.md))
 2. Place the `Data.nx` file in the root Valhalla directory
 
 ### Step 3: Start the Services
@@ -61,7 +61,7 @@ Look for messages indicating successful startup. Press `Ctrl+C` to exit logs.
 
 ### Step 5: Connect with Client
 
-Launch your MapleStory v28 client (see [Installation Guide](Installation.md)). The client should connect to `127.0.0.1:8484`.
+Launch your MapleStory v48 localhost client (see [Installation Guide](Installation.md)). The client should connect to `127.0.0.1:8484`.
 
 ## Docker Compose Services
 
@@ -355,7 +355,7 @@ docker-compose logs login_server
 ```
 
 **Common causes**:
-- Missing Data.nx file
+- Missing NX data file
 - Database not ready yet
 - Port already in use
 
