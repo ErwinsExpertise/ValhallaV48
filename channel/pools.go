@@ -47,6 +47,7 @@ type lifePool struct {
 	mobs map[int32]*monster
 
 	spawnableMobs []monster
+	disabledMobs  map[int32]bool
 
 	mobID, npcID         int32
 	lastMobSpawnTime     time.Time
@@ -103,6 +104,7 @@ func creatNewLifePool(inst *fieldInstance, npcData, mobData []nx.Life, mobCapMin
 
 	pool.mobs = make(map[int32]*monster)
 	pool.spawnableMobs = make([]monster, len(mobData))
+	pool.disabledMobs = make(map[int32]bool)
 
 	for i, v := range mobData {
 		m, err := nx.GetMob(v.ID)
@@ -139,6 +141,36 @@ func (pool *lifePool) setDropPool(drop *dropPool) {
 
 func (pool lifePool) mobCount() int {
 	return len(pool.mobs)
+}
+
+func (pool *lifePool) mobCountByTemplate(mobID int32) int {
+	count := 0
+	for _, mob := range pool.mobs {
+		if mob != nil && mob.id == mobID {
+			count++
+		}
+	}
+	return count
+}
+
+func (pool *lifePool) setMobSpawnEnabled(mobID int32, enabled bool) {
+	if enabled {
+		delete(pool.disabledMobs, mobID)
+		return
+	}
+	pool.disabledMobs[mobID] = true
+}
+
+func (pool *lifePool) removeMobsByTemplate(mobID int32) {
+	keys := make([]int32, 0)
+	for spawnID, mob := range pool.mobs {
+		if mob != nil && mob.id == mobID {
+			keys = append(keys, spawnID)
+		}
+	}
+	for _, spawnID := range keys {
+		pool.removeMob(spawnID, 0)
+	}
 }
 
 func (pool *lifePool) nextMobID() (int32, error) {
@@ -830,6 +862,9 @@ func (pool *lifePool) attemptMobSpawn(poolReset bool) {
 		mobsToSpawn := []monster{}
 
 		for _, spwnMob := range pool.spawnableMobs {
+			if pool.disabledMobs[spwnMob.id] {
+				continue
+			}
 			if spwnMob.spawnInterval == 0 { // normal mobs: boundary check
 				rct := lifePoolRectangle{
 					ax: spwnMob.pos.x - 100,
@@ -1762,7 +1797,33 @@ func (pool *reactorPool) processStateSideEffects(r *fieldReactor, plr *Player) {
 			}
 
 		case constant.ReactorSpawnNPC:
+			npcID := getInt(e, "0", 0)
+			if npcID <= 0 {
+				continue
+			}
+			x := int16(getInt(e, "1", int(r.pos.x)))
+			y := int16(getInt(e, "2", int(r.pos.y)))
+			npcData := nx.Life{ID: int32(npcID), Type: "n", X: x, Y: y, FaceLeft: false, Foothold: 0}
+			spawnID, err := pool.instance.lifePool.nextNpcID()
+			if err != nil {
+				log.Println(err)
+				continue
+			}
+			val := createNpcFromData(spawnID, npcData)
+			pool.instance.lifePool.npcs[spawnID] = &val
+			pool.instance.send(packetNpcShow(&val))
 		case constant.ReactorRunScript:
+			name := getString(e, "0", "")
+			if name == "" {
+				continue
+			}
+			if pool.server != nil && pool.server.reactorScriptStore != nil {
+				if program, ok := pool.server.reactorScriptStore.scripts[name]; ok {
+					if err := runReactorScript(program, pool.server, pool.instance, r); err != nil {
+						log.Println("reactor side effect script error:", name, err)
+					}
+				}
+			}
 
 		default:
 			continue

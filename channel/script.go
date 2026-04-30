@@ -221,6 +221,13 @@ func (ctrl *scriptPlayerWrapper) Warp(id int32) {
 	}
 }
 
+func (ctrl *scriptPlayerWrapper) EventRemainingTime() int32 {
+	if ctrl.plr == nil || ctrl.plr.event == nil {
+		return 0
+	}
+	return ctrl.plr.event.RemainingTime()
+}
+
 func (ctrl *scriptPlayerWrapper) WarpToPortalName(id int32, name string) {
 	if field, ok := ctrl.server.fields[id]; ok {
 		inst, err := field.getInstance(ctrl.plr.inst.id)
@@ -691,6 +698,15 @@ func (ctrl *scriptPlayerWrapper) HaveItem(id int32, quantity int32) bool {
 	return ctrl.plr.countItem(id) >= quantity
 }
 
+func (ctrl *scriptPlayerWrapper) IsWearingItem(id int32) bool {
+	for i := range ctrl.plr.equip {
+		if ctrl.plr.equip[i].ID == id && ctrl.plr.equip[i].slotID < 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func (ctrl *scriptPlayerWrapper) CanHold(id int32, amount int16) bool {
 	if amount <= 0 {
 		return true
@@ -1125,6 +1141,10 @@ func (ctrl *scriptMapWrapper) PortalEffect(path string) {
 	ctrl.inst.send(packetPortalEffectt(2, path))
 }
 
+func (ctrl *scriptMapWrapper) Message(msg string) {
+	ctrl.inst.send(packetMessageNotice(msg))
+}
+
 func (ctrl *scriptMapWrapper) PortalEnabled(enable bool, name string) {
 	ctrl.inst.setPortalEnabled(name, enable)
 }
@@ -1221,6 +1241,22 @@ func (ctrl *scriptMapWrapper) MobCount() int {
 	return ctrl.inst.lifePool.mobCount()
 }
 
+func (ctrl *scriptMapWrapper) MobCountByID(id int32) int {
+	return ctrl.inst.lifePool.mobCountByTemplate(id)
+}
+
+func (ctrl *scriptMapWrapper) RemoveAllMobs() {
+	ctrl.inst.lifePool.eraseMobs()
+}
+
+func (ctrl *scriptMapWrapper) RemoveMobsByID(id int32) {
+	ctrl.inst.lifePool.removeMobsByTemplate(id)
+}
+
+func (ctrl *scriptMapWrapper) SetMobSpawnEnabled(id int32, enable bool) {
+	ctrl.inst.lifePool.setMobSpawnEnabled(id, enable)
+}
+
 func (ctrl *scriptMapWrapper) RemoveDrops() {
 	ctrl.inst.dropPool.clearDrops()
 }
@@ -1267,6 +1303,28 @@ func (ctrl *scriptMapWrapper) ReactorStateByName(name string) int {
 		}
 	}
 	return -1
+}
+
+func (ctrl *scriptMapWrapper) SetReactorStateByName(name string, state int) bool {
+	for _, r := range ctrl.inst.reactorPool.reactors {
+		if r.name == name {
+			r.state = byte(state)
+			r.frameDelay = 0
+			ctrl.inst.send(packetMapReactorChangeState(r.spawnID, r.state, r.pos.x, r.pos.y, r.frameDelay, r.faceLeft, 0))
+			return true
+		}
+	}
+	return false
+}
+
+func (ctrl *scriptMapWrapper) HitReactorByTemplate(id int32) bool {
+	for _, r := range ctrl.inst.reactorPool.reactors {
+		if r.templateID == id {
+			ctrl.inst.reactorPool.triggerHit(r.spawnID, 0, ctrl.server, nil)
+			return true
+		}
+	}
+	return false
 }
 
 func (ctrl *scriptMapWrapper) SpawnNpc(id int32, x int16, y int16) bool {
@@ -1444,6 +1502,22 @@ func (ctrl *reactorScriptController) DropItems(args ...int32) {
 	}
 }
 
+func (ctrl *reactorScriptController) SetMapMobSpawnEnabled(mapID int32, mobID int32, enabled bool) bool {
+	field, ok := ctrl.server.fields[mapID]
+	if !ok {
+		return false
+	}
+	inst, err := field.getInstance(ctrl.inst.id)
+	if err != nil {
+		inst, err = field.getInstance(0)
+		if err != nil {
+			return false
+		}
+	}
+	inst.lifePool.setMobSpawnEnabled(mobID, enabled)
+	return true
+}
+
 func runReactorScript(program *goja.Program, server *Server, inst *fieldInstance, reactor *fieldReactor) error {
 	vm := goja.New()
 	vm.SetFieldNameMapper(goja.UncapFieldNameMapper())
@@ -1490,7 +1564,10 @@ func (ctrl *portalScriptController) Warp(mapID int32, portalName string) bool {
 		ctrl.blocked = true
 		return false
 	}
-	inst, err := dstField.getInstance(0)
+	inst, err := dstField.getInstance(ctrl.plr.inst.id)
+	if err != nil {
+		inst, err = dstField.getInstance(0)
+	}
 	if err != nil {
 		ctrl.blocked = true
 		return false

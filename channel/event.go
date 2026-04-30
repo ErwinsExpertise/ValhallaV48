@@ -114,13 +114,13 @@ func createEvent(id int32, instID int, players []int32, server *Server, program 
 }
 
 func (e *event) start() {
-	e.startCallback()
-
 	for _, id := range e.playerIDs {
 		if plr, err := e.server.players.GetFromID(id); err == nil {
 			plr.event = e
 		}
 	}
+
+	e.startCallback()
 
 	go func() {
 		timeout := time.NewTimer(e.duration)
@@ -168,6 +168,19 @@ func (e *event) start() {
 
 func (e *event) Log(msg string) {
 	log.Println(msg)
+}
+
+func (e *event) GetProperty(key string) interface{} {
+	if value, ok := e.properties[key]; ok {
+		return value
+	}
+	return nil
+}
+
+func (e *event) SetProperty(key string, value interface{}) interface{} {
+	prev := e.GetProperty(key)
+	e.properties[key] = value
+	return prev
 }
 
 func (e *event) RemainingTime() int32 {
@@ -231,9 +244,20 @@ func (e *event) SetDuration(duration string) {
 }
 
 func (e *event) Schedule(name string, duration string) {
-	cb, ok := e.scheduledCallbacks[strings.TrimSpace(name)]
+	name = strings.TrimSpace(name)
+	cb, ok := e.scheduledCallbacks[name]
 	if !ok || cb == nil {
-		return
+		if fn := e.vm.Get(name); fn != nil && !goja.IsUndefined(fn) && !goja.IsNull(fn) {
+			var exported func()
+			if err := e.vm.ExportTo(fn, &exported); err == nil && exported != nil {
+				cb = exported
+				e.scheduledCallbacks[name] = exported
+			} else {
+				return
+			}
+		} else {
+			return
+		}
 	}
 	d, err := time.ParseDuration(duration)
 	if err != nil {
