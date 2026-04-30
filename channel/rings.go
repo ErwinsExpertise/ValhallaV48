@@ -247,6 +247,28 @@ func (d *Player) firstRingIDByKind(kind ringKind) int32 {
 	return 0
 }
 
+func (d *Player) ringIDsByKind(kind ringKind) []int32 {
+	all := make([]Item, 0, len(d.equip)+len(d.use)+len(d.setUp)+len(d.etc)+len(d.cash))
+	all = append(all, d.equip...)
+	all = append(all, d.use...)
+	all = append(all, d.setUp...)
+	all = append(all, d.etc...)
+	all = append(all, d.cash...)
+	seen := make(map[int32]struct{})
+	out := make([]int32, 0, 2)
+	for _, item := range all {
+		if classifyRingItem(item.ID) != kind || item.ringID <= 0 {
+			continue
+		}
+		if _, ok := seen[item.ringID]; ok {
+			continue
+		}
+		seen[item.ringID] = struct{}{}
+		out = append(out, item.ringID)
+	}
+	return out
+}
+
 func (d *Player) encodeRemoteRingLooks(pkt *mpacket.Packet) {
 	encodeRemotePairRingLook(pkt, d.activeRing(ringKindCouple))
 	encodeRemoteFriendRingLook(pkt, d.activeRing(ringKindFriendship))

@@ -27,11 +27,15 @@ const (
 )
 
 const (
-	weddingLobbyDuration    = 10 * time.Minute
-	weddingBlessingDuration = 15 * time.Minute
-	weddingCeremonyDuration = 20 * time.Minute
-	weddingPartyDuration    = 45 * time.Minute
-	marriageDivorceCooldown = 7 * 24 * time.Hour
+	chapelWeddingLobbyDuration      = 5 * time.Minute
+	cathedralWeddingLobbyDuration   = 10 * time.Minute
+	weddingBlessingDuration         = 15 * time.Minute
+	weddingVowCompletionDuration    = 5 * time.Minute
+	weddingPhotoPictureDuration     = 1 * time.Minute
+	weddingPhotoCelebrationDuration = 5 * time.Minute
+	weddingPartyDuration            = 45 * time.Minute
+	weddingExitGraceDuration        = 15 * time.Minute
+	marriageDivorceCooldown         = 7 * 24 * time.Hour
 )
 
 type pendingMarriageProposal struct {
@@ -43,43 +47,56 @@ type pendingMarriageProposal struct {
 
 var pendingMarriageProposals = make(map[int32]pendingMarriageProposal)
 
+type weddingGiftEntry struct {
+	ID     int32 `json:"id"`
+	Amount int16 `json:"amount"`
+}
+
 type weddingReservation struct {
-	MarriageID    int32
-	GroomID       int32
-	BrideID       int32
-	Cathedral     bool
-	Premium       bool
-	InviteItem    int32
-	GuestTicket   int32
-	EntryMapID    int32
-	AltarMapID    int32
-	ReservedAt    time.Time
-	Started       bool
-	Completed     bool
-	Guests        map[int32]bool
-	Stage         byte
-	Blessings     int32
-	GroomWishlist []string
-	BrideWishlist []string
-	GroomGifts    []Item
-	BrideGifts    []Item
-	GiftCounts    map[int32]int
+	MarriageID     int32
+	ChannelID      byte
+	GroomID        int32
+	BrideID        int32
+	Cathedral      bool
+	Premium        bool
+	ReceiptItem    int32
+	InviteItem     int32
+	GuestTicket    int32
+	EntryMapID     int32
+	AltarMapID     int32
+	ResumeMapID    int32
+	ReservedAt     time.Time
+	StageChangedAt time.Time
+	DeadlineAt     time.Time
+	Started        bool
+	Finalized      bool
+	ExitReady      bool
+	Completed      bool
+	Guests         map[int32]bool
+	Rewarded       map[int32]bool
+	Stage          byte
+	Blessings      int32
+	GroomWishlist  []string
+	BrideWishlist  []string
+	GroomGifts     []weddingGiftEntry
+	BrideGifts     []weddingGiftEntry
+	GiftCounts     map[int32]int
 }
 
 var weddingReservations = make(map[int32]*weddingReservation)
 
-func engagementOutcomeItem(itemID int32) int32 {
+func engagementItemsForProposalBox(itemID int32) (int32, int32) {
 	switch itemID {
 	case constant.ItemEngagementBoxMoonstone:
-		return constant.ItemEngagementRingMoonstone
+		return constant.ItemEngagementRingMoonstone, constant.ItemEmptyEngagementBoxMoonstone
 	case constant.ItemEngagementBoxStar:
-		return constant.ItemEngagementRingStar
+		return constant.ItemEngagementRingStar, constant.ItemEmptyEngagementBoxStar
 	case constant.ItemEngagementBoxGolden:
-		return constant.ItemEngagementRingGolden
+		return constant.ItemEngagementRingGolden, constant.ItemEmptyEngagementBoxGolden
 	case constant.ItemEngagementBoxSilver:
-		return constant.ItemEngagementRingSilver
+		return constant.ItemEngagementRingSilver, constant.ItemEmptyEngagementBoxSilver
 	default:
-		return 0
+		return 0, 0
 	}
 }
 
@@ -94,8 +111,32 @@ func weddingRingOutcome(itemID int32) int32 {
 	case constant.ItemEngagementBoxSilver, constant.ItemEngagementRingSilver, constant.ItemEmptyEngagementBoxSilver:
 		return constant.ItemWeddingRingSilver
 	default:
-		return constant.ItemWeddingRingMoonstone
+		return 0
 	}
+}
+
+func weddingReceiptItem(cathedral, premium bool) int32 {
+	if cathedral {
+		if premium {
+			return constant.ItemWeddingReceiptCathedralPremium
+		}
+		return constant.ItemWeddingReceiptCathedralRegular
+	}
+	if premium {
+		return constant.ItemWeddingReceiptChapelPremium
+	}
+	return constant.ItemWeddingReceiptChapelRegular
+}
+
+func weddingLobbyDuration(cathedral bool) time.Duration {
+	if cathedral {
+		return cathedralWeddingLobbyDuration
+	}
+	return chapelWeddingLobbyDuration
+}
+
+func weddingPhotoDuration() time.Duration {
+	return weddingPhotoPictureDuration + weddingPhotoCelebrationDuration
 }
 
 func packetMarriageRequest(name string, playerID int32) mpacket.Packet {
@@ -167,6 +208,9 @@ func deleteMarriageRelationship(marriageID int32) error {
 func (server *Server) proposeMarriage(source *Player, targetName string, itemID int32) error {
 	if source.married() || source.partnerID > 0 {
 		return fmt.Errorf("you are already engaged or married")
+	}
+	if source.gender != 0 {
+		return fmt.Errorf("only male characters can propose in the v48 wedding system")
 	}
 	if source.underMarriageCooldown() {
 		return fmt.Errorf("you must wait before marrying again")
@@ -241,26 +285,26 @@ func (server *Server) resolveMarriageProposal(target *Player, accepted bool, pro
 		return
 	}
 
-	engagementRing := engagementOutcomeItem(proposal.ItemID)
-	if engagementRing == 0 {
+	partnerRing, proposerKeeps := engagementItemsForProposalBox(proposal.ItemID)
+	if partnerRing == 0 || proposerKeeps == 0 {
 		source.Send(packetMarriageResultNotice(0))
 		return
 	}
 
-	if err := source.GainItemByID(engagementRing, 1); err != nil {
+	if err := source.GainItemByID(proposerKeeps, 1); err != nil {
 		source.Send(packetMarriageResultNotice(0))
 		return
 	}
-	if err := target.GainItemByID(engagementRing+1, 1); err != nil {
-		_ = source.removeItemsByID(engagementRing, 1, false)
+	if err := target.GainItemByID(partnerRing, 1); err != nil {
+		_ = source.removeItemsByID(proposerKeeps, 1, false)
 		source.Send(packetMarriageResultNotice(0))
 		return
 	}
 
 	marriageID, err := createMarriageRelationship(source.ID, target.ID)
 	if err != nil {
-		_ = source.removeItemsByID(engagementRing, 1, false)
-		_ = target.removeItemsByID(engagementRing+1, 1, false)
+		_ = source.removeItemsByID(proposerKeeps, 1, false)
+		_ = target.removeItemsByID(partnerRing, 1, false)
 		source.Send(packetMarriageResultNotice(0))
 		return
 	}
@@ -269,10 +313,10 @@ func (server *Server) resolveMarriageProposal(target *Player, accepted bool, pro
 	_ = target.setPartnerID(source.ID)
 	source.marriageID = marriageID
 	target.marriageID = marriageID
-	_ = source.setMarriageItemID(engagementRing)
-	_ = target.setMarriageItemID(engagementRing + 1)
+	_ = source.setMarriageItemID(proposerKeeps)
+	_ = target.setMarriageItemID(partnerRing)
 
-	packet := packetMarriageResultRecord(marriageID, source.ID, target.ID, weddingRingOutcome(engagementRing), source.Name, target.Name, false)
+	packet := packetMarriageResultRecord(marriageID, source.ID, target.ID, weddingRingOutcome(partnerRing), source.Name, target.Name, false)
 	source.Send(packet)
 	target.Send(packet)
 	source.Send(packetNotifyWeddingPartnerTransfer(target.ID, target.mapID))
@@ -289,8 +333,10 @@ func (server *Server) breakMarriageState(plr *Player, itemID int32) {
 		_ = deleteMarriageRelationship(marriageID)
 		delete(weddingReservations, marriageID)
 	}
-	if ringID := plr.firstRingIDByKind(ringKindWedding); ringID > 0 {
-		_ = deleteRingRecordPair(ringID)
+	if ringIDs := plr.ringIDsByKind(ringKindWedding); len(ringIDs) > 0 {
+		for _, ringID := range ringIDs {
+			_ = deleteRingRecordPair(ringID)
+		}
 	}
 	partner, _ := server.players.GetFromID(partnerID)
 	_ = plr.setPartnerID(-1)
@@ -306,8 +352,14 @@ func (server *Server) breakMarriageState(plr *Player, itemID int32) {
 		partner.marriageID = -1
 		partner.refreshRingRecords()
 		_ = partner.setDivorceUntil(time.Now().Add(marriageDivorceCooldown).Unix())
-		_ = partner.removeItemsByID(itemID+1, 1, false)
+		_ = partner.removeItemsByID(itemID, 1, false)
+		for _, weddingRing := range []int32{constant.ItemWeddingRingMoonstone, constant.ItemWeddingRingStar, constant.ItemWeddingRingGolden, constant.ItemWeddingRingSilver} {
+			_ = partner.removeItemsByID(weddingRing, partner.countItem(weddingRing), false)
+		}
 		partner.Send(packetNotifyWeddingPartnerTransfer(0, 0))
+	}
+	for _, weddingRing := range []int32{constant.ItemWeddingRingMoonstone, constant.ItemWeddingRingStar, constant.ItemWeddingRingGolden, constant.ItemWeddingRingSilver} {
+		_ = plr.removeItemsByID(weddingRing, plr.countItem(weddingRing), false)
 	}
 }
 
@@ -376,47 +428,76 @@ func (server *Server) reserveWedding(plr *Player, cathedral, premium bool) error
 	if err != nil {
 		return fmt.Errorf("your partner must be online on this channel")
 	}
+	if !sameWeddingParty(plr, partner) {
+		return fmt.Errorf("you and your partner must be in the same two-person party")
+	}
 	if partner.mapID != plr.mapID || partner.inst.id != plr.inst.id {
 		return fmt.Errorf("your partner must be on the same map to reserve the wedding")
+	}
+	for _, existing := range weddingReservations {
+		if existing.Completed || existing.ChannelID != server.id || existing.Cathedral != cathedral {
+			continue
+		}
+		return fmt.Errorf("that wedding venue already has an active reservation on this channel")
 	}
 	if hasAnyWeddingRing(plr) || hasAnyWeddingRing(partner) {
 		return fmt.Errorf("one of you already has a wedding ring")
 	}
+	if cathedral && plr.countItem(4031374) < 1 && partner.countItem(4031374) < 1 {
+		return fmt.Errorf("a cathedral wedding requires Officiator's Permission")
+	}
 
 	reservationTicket := weddingReservationTicket(cathedral, premium)
+	receiptItem := weddingReceiptItem(cathedral, premium)
 	inviteItem := weddingInviteItem(cathedral)
 	guestTicket := weddingGuestTicket(cathedral)
 	if plr.countItem(reservationTicket) < 1 {
 		return fmt.Errorf("you need the correct wedding reservation ticket")
 	}
+	if plr.countItem(receiptItem) > 0 || partner.countItem(receiptItem) > 0 {
+		return fmt.Errorf("your couple already has a wedding reservation receipt")
+	}
 	if !plr.removeItemsByID(reservationTicket, 1, false) {
 		return fmt.Errorf("could not consume the wedding reservation ticket")
 	}
+	if err := plr.GainItemByID(receiptItem, 1); err != nil {
+		_ = plr.GainItemByID(reservationTicket, 1)
+		return fmt.Errorf("please make room in your ETC inventory first")
+	}
 	if err := plr.GainItemByID(inviteItem, 15); err != nil {
+		_ = plr.removeItemsByID(receiptItem, 1, false)
 		_ = plr.GainItemByID(reservationTicket, 1)
 		return fmt.Errorf("please make room in your ETC inventory first")
 	}
 	if err := partner.GainItemByID(inviteItem, 15); err != nil {
+		_ = plr.removeItemsByID(receiptItem, 1, false)
 		_ = plr.removeItemsByID(inviteItem, 15, false)
 		_ = plr.GainItemByID(reservationTicket, 1)
 		return fmt.Errorf("your partner needs room in their ETC inventory first")
 	}
 
-	weddingReservations[marriageID] = &weddingReservation{
+	res := &weddingReservation{
 		MarriageID:  marriageID,
+		ChannelID:   server.id,
 		GroomID:     plr.ID,
 		BrideID:     partner.ID,
 		Cathedral:   cathedral,
 		Premium:     premium,
+		ReceiptItem: receiptItem,
 		InviteItem:  inviteItem,
 		GuestTicket: guestTicket,
 		EntryMapID:  weddingEntryMap(cathedral),
 		AltarMapID:  weddingAltarMap(cathedral),
+		ResumeMapID: weddingEntryMap(cathedral),
 		ReservedAt:  time.Now(),
 		Guests:      make(map[int32]bool),
+		Rewarded:    make(map[int32]bool),
 		Stage:       weddingStageLobby,
 		GiftCounts:  make(map[int32]int),
 	}
+	res.ensureState()
+	weddingReservations[marriageID] = res
+	touchWeddingReservation(res)
 	return nil
 }
 
@@ -436,34 +517,36 @@ func (server *Server) startWedding(plr *Player, cathedral bool) error {
 	if err != nil {
 		return fmt.Errorf("your partner must be online on this channel")
 	}
+	if !sameWeddingParty(plr, partner) {
+		return fmt.Errorf("you and your partner must be in the same two-person party")
+	}
 	if partner.mapID != plr.mapID || partner.inst.id != plr.inst.id {
 		return fmt.Errorf("your partner must be here with you to begin the ceremony")
 	}
 	if plr.marriageItemID <= 0 || partner.marriageItemID <= 0 {
 		return fmt.Errorf("both partners must still hold their engagement rings")
 	}
+	if plr.countItem(res.ReceiptItem) < 1 && partner.countItem(res.ReceiptItem) < 1 {
+		return fmt.Errorf("your couple is missing the wedding reservation receipt")
+	}
+	lobbyDuration := weddingLobbyDuration(cathedral)
 	res.Started = true
+	res.Finalized = false
+	res.ExitReady = false
 	res.Stage = weddingStageLobby
+	res.ResumeMapID = res.EntryMapID
 	res.Blessings = 0
+	res.StageChangedAt = time.Now()
+	res.DeadlineAt = res.StageChangedAt.Add(lobbyDuration)
+	touchWeddingReservation(res)
 	server.warpWeddingCouple(res, res.EntryMapID)
-	server.showWeddingCountdown(res, int32(weddingLobbyDuration/time.Second))
+	server.showWeddingCountdown(res, int32(lobbyDuration/time.Second))
 
-	server.scheduleWeddingStage(res, weddingLobbyDuration, func(cur *weddingReservation) {
+	server.scheduleWeddingStage(res, lobbyDuration, func(cur *weddingReservation) {
 		if cur.Stage != weddingStageLobby {
 			return
 		}
 		server.advanceWeddingToCeremony(cur)
-	})
-	server.scheduleWeddingStage(res, weddingLobbyDuration+weddingBlessingDuration, func(cur *weddingReservation) {
-		if cur.Stage != weddingStageCeremony {
-			return
-		}
-		server.closeWeddingBlessings(cur)
-	})
-	server.scheduleWeddingStage(res, weddingLobbyDuration+weddingCeremonyDuration, func(cur *weddingReservation) {
-		if cur.Stage < weddingStageMarried {
-			server.endWedding(cur)
-		}
 	})
 	return nil
 }
@@ -473,11 +556,21 @@ func (server *Server) advanceWeddingToCeremony(res *weddingReservation) {
 		return
 	}
 	res.Stage = weddingStageCeremony
+	res.ResumeMapID = res.AltarMapID
+	res.StageChangedAt = time.Now()
+	res.DeadlineAt = res.StageChangedAt.Add(weddingBlessingDuration)
+	touchWeddingReservation(res)
 	server.warpWeddingParticipants(res, res.AltarMapID)
 	server.showWeddingCountdown(res, int32(weddingBlessingDuration/time.Second))
 	if groom, err := server.players.GetFromID(res.GroomID); err == nil && groom.inst != nil {
 		groom.inst.send(packetMessageNotice("Wedding Assistant: The couple are heading to the altar."))
 	}
+	server.scheduleWeddingStage(res, weddingBlessingDuration, func(cur *weddingReservation) {
+		if cur.Stage != weddingStageCeremony {
+			return
+		}
+		server.closeWeddingBlessings(cur)
+	})
 }
 
 func (server *Server) closeWeddingBlessings(res *weddingReservation) {
@@ -485,13 +578,21 @@ func (server *Server) closeWeddingBlessings(res *weddingReservation) {
 		return
 	}
 	res.Stage = weddingStageBlessingsClosed
-	server.showWeddingCountdown(res, int32((weddingCeremonyDuration-weddingBlessingDuration)/time.Second))
+	res.StageChangedAt = time.Now()
+	res.DeadlineAt = res.StageChangedAt.Add(weddingVowCompletionDuration)
+	touchWeddingReservation(res)
+	server.showWeddingCountdown(res, int32(weddingVowCompletionDuration/time.Second))
 	if groom, err := server.players.GetFromID(res.GroomID); err == nil {
 		groom.Send(packetMessageNotice("Wedding Assistant: The blessing period is now closed."))
 	}
 	if bride, err := server.players.GetFromID(res.BrideID); err == nil {
 		bride.Send(packetMessageNotice("Wedding Assistant: The blessing period is now closed."))
 	}
+	server.scheduleWeddingStage(res, weddingVowCompletionDuration, func(cur *weddingReservation) {
+		if cur.Stage < weddingStageMarried {
+			server.endWedding(cur)
+		}
+	})
 }
 
 func (server *Server) advanceWeddingCeremony(plr *Player, cathedral bool) error {
@@ -511,6 +612,9 @@ func (server *Server) advanceWeddingCeremony(plr *Player, cathedral bool) error 
 	partner, err := server.players.GetFromID(plr.partnerID)
 	if err != nil {
 		return fmt.Errorf("your partner must be online on this channel")
+	}
+	if !sameWeddingParty(plr, partner) {
+		return fmt.Errorf("you and your partner must be in the same two-person party")
 	}
 	if partner.mapID != plr.mapID || partner.inst == nil || plr.inst == nil || partner.inst.id != plr.inst.id {
 		return fmt.Errorf("your partner must be with you in the lounge")
@@ -537,6 +641,9 @@ func (server *Server) completeWedding(plr *Player, cathedral bool) error {
 	partner, err := server.players.GetFromID(plr.partnerID)
 	if err != nil {
 		return fmt.Errorf("your partner must be online on this channel")
+	}
+	if !sameWeddingParty(plr, partner) {
+		return fmt.Errorf("you and your partner must be in the same two-person party")
 	}
 	if partner.mapID != plr.mapID || partner.inst.id != plr.inst.id {
 		return fmt.Errorf("your partner must be here with you at the altar")
@@ -587,8 +694,18 @@ func (server *Server) completeWedding(plr *Player, cathedral bool) error {
 	packet := packetMarriageResultRecord(marriageID, plr.ID, partner.ID, weddingRing, plr.Name, partner.Name, true)
 	plr.Send(packet)
 	partner.Send(packet)
+	res.Finalized = true
 	res.Stage = weddingStageMarried
+	res.StageChangedAt = time.Now()
+	res.DeadlineAt = res.StageChangedAt.Add(weddingPhotoPictureDuration)
+	res.ResumeMapID = res.AltarMapID
+	touchWeddingReservation(res)
 	server.hideWeddingCountdown(res)
+	server.scheduleWeddingStage(res, weddingPhotoPictureDuration, func(cur *weddingReservation) {
+		if cur.Stage == weddingStageMarried {
+			server.startWeddingAfterPartyFromReservation(cur)
+		}
+	})
 	return nil
 }
 
@@ -623,53 +740,63 @@ func (server *Server) startWeddingAfterParty(plr *Player) error {
 	if res.Stage != weddingStageMarried {
 		return fmt.Errorf("the vows must be completed before the afterparty can begin")
 	}
-	if res.Premium {
-		res.Stage = weddingStageParty
-		server.warpWeddingParticipants(res, 680000300)
-		server.showWeddingCountdown(res, int32(weddingPartyDuration/time.Second))
-		server.scheduleWeddingStage(res, weddingPartyDuration, func(cur *weddingReservation) {
-			server.endWedding(cur)
-		})
-	} else {
-		server.endWedding(res)
-	}
+	server.startWeddingAfterPartyFromReservation(res)
 	return nil
 }
 
 func (server *Server) enterWeddingAsGuest(plr *Player, cathedral bool) error {
+	var participantReservation *weddingReservation
+	if plr.partnerID > 0 {
+		participantReservation = server.currentWeddingReservation(plr, cathedral)
+	}
+	if participantReservation != nil && participantReservation.Started && !participantReservation.Completed {
+		return server.enterWeddingReservation(plr, participantReservation, false)
+	}
 	for _, res := range weddingReservations {
-		if res.Cathedral != cathedral || !res.Started || res.Completed {
+		if res.Cathedral != cathedral || !res.Started || res.Completed || !res.Guests[plr.ID] {
 			continue
 		}
+		return server.enterWeddingReservation(plr, res, true)
+	}
+	return fmt.Errorf("there is no active wedding at that venue right now")
+}
+
+func (server *Server) enterWeddingReservation(plr *Player, res *weddingReservation, consumeGuestTicket bool) error {
+	if res == nil || res.Completed || !res.Started {
+		return fmt.Errorf("there is no active wedding at that venue right now")
+	}
+	if consumeGuestTicket && plr.countItem(res.GuestTicket) > 0 {
 		if !plr.removeItemsByID(res.GuestTicket, 1, false) {
 			return fmt.Errorf("you do not have the correct guest ticket")
 		}
-		dstMap := res.EntryMapID
-		if res.Stage >= weddingStageCeremony {
-			dstMap = res.AltarMapID
-		}
-		altarField, ok := server.fields[dstMap]
-		if !ok {
-			return fmt.Errorf("the wedding map is unavailable right now")
-		}
-		inst, err := altarField.getInstance(0)
-		if err != nil {
-			return fmt.Errorf("the wedding instance is unavailable right now")
-		}
-		portal, err := inst.getRandomSpawnPortal()
-		if err != nil {
-			return fmt.Errorf("the wedding entry point is unavailable right now")
-		}
-		_ = server.warpPlayer(plr, altarField, portal, true)
-		return nil
 	}
-	return fmt.Errorf("there is no active wedding at that venue right now")
+	dstMap := res.ResumeMapID
+	if dstMap == 0 {
+		dstMap = res.EntryMapID
+	}
+	field, ok := server.fields[dstMap]
+	if !ok {
+		return fmt.Errorf("the wedding map is unavailable right now")
+	}
+	inst, err := field.getInstance(0)
+	if err != nil {
+		return fmt.Errorf("the wedding instance is unavailable right now")
+	}
+	portal, err := inst.getRandomSpawnPortal()
+	if err != nil {
+		return fmt.Errorf("the wedding entry point is unavailable right now")
+	}
+	_ = server.warpPlayer(plr, field, portal, true)
+	return nil
 }
 
 func (server *Server) inviteGuest(plr *Player, guestName string, marriageID int32, slot int16) error {
 	res, ok := weddingReservations[marriageID]
 	if !ok {
 		return fmt.Errorf("your wedding reservation could not be found")
+	}
+	if !res.isParticipant(plr.ID) {
+		return fmt.Errorf("only the engaged couple can send wedding invitations")
 	}
 	if res.Started {
 		return fmt.Errorf("the wedding is already under way")
@@ -693,6 +820,7 @@ func (server *Server) inviteGuest(plr *Player, guestName string, marriageID int3
 		return fmt.Errorf("could not consume the wedding invitation")
 	}
 	res.Guests[guest.ID] = true
+	touchWeddingReservation(res)
 	guest.Send(packetMarriageInvitation(CharacterNameByID(res.GroomID, ""), CharacterNameByID(res.BrideID, ""), res.Cathedral))
 	return nil
 }
@@ -751,7 +879,7 @@ func (server *Server) activeWeddingByMap(mapID int32) *weddingReservation {
 		if !res.Started || res.Completed {
 			continue
 		}
-		if mapID == res.EntryMapID || mapID == res.AltarMapID {
+		if mapID == res.EntryMapID || mapID == res.AltarMapID || mapID == res.ResumeMapID || (res.ExitReady && mapID == 680000500) {
 			return res
 		}
 	}
@@ -771,12 +899,12 @@ func (server *Server) handleWeddingMapLeave(plr *Player, dstMapID int32) {
 		if !res.Started || res.Completed {
 			continue
 		}
+		if res.ExitReady {
+			continue
+		}
 		if res.isParticipant(plr.ID) && !isWeddingMap(dstMapID) {
 			server.endWedding(res)
 			return
-		}
-		if res.Guests[plr.ID] && !isWeddingMap(dstMapID) {
-			delete(res.Guests, plr.ID)
 		}
 	}
 }
@@ -786,12 +914,8 @@ func (server *Server) handleWeddingDisconnect(plr *Player) {
 		if !res.Started || res.Completed {
 			continue
 		}
-		if res.isParticipant(plr.ID) {
-			server.endWedding(res)
-			return
-		}
-		if res.Guests[plr.ID] {
-			delete(res.Guests, plr.ID)
+		if res.isParticipant(plr.ID) || res.Guests[plr.ID] {
+			touchWeddingReservation(res)
 		}
 	}
 }
@@ -831,9 +955,12 @@ func (server *Server) warpWeddingCouple(res *weddingReservation, mapID int32) {
 
 func (server *Server) endWedding(res *weddingReservation) {
 	server.hideWeddingCountdown(res)
-	res.Completed = true
+	res.ExitReady = true
 	res.Stage = weddingStageCompleted
-	delete(weddingReservations, res.MarriageID)
+	res.StageChangedAt = time.Now()
+	res.DeadlineAt = res.StageChangedAt.Add(weddingExitGraceDuration)
+	res.ResumeMapID = 680000500
+	touchWeddingReservation(res)
 	exitMap := int32(680000500)
 	field, ok := server.fields[exitMap]
 	if !ok {
@@ -849,9 +976,11 @@ func (server *Server) endWedding(res *weddingReservation) {
 	}
 	for _, plr := range append([]int32{res.GroomID, res.BrideID}, keysOfGuests(res.Guests)...) {
 		if p, err := server.players.GetFromID(plr); err == nil {
+			_ = p.removeItemsByID(constant.ItemWeddingEntryPermission, 1, false)
 			_ = server.warpPlayer(p, field, portal, true)
 		}
 	}
+	server.resumeWeddingReservation(res)
 }
 
 func keysOfGuests(m map[int32]bool) []int32 {
@@ -873,11 +1002,15 @@ func (server *Server) currentWeddingReservation(plr *Player, cathedral bool) *we
 
 func (server *Server) currentWeddingReservationAny(plr *Player) *weddingReservation {
 	marriageID := lookupMarriageID(plr.ID)
-	res, ok := weddingReservations[marriageID]
-	if !ok {
-		return nil
+	if res, ok := weddingReservations[marriageID]; ok {
+		return res
 	}
-	return res
+	for _, res := range weddingReservations {
+		if res.Guests[plr.ID] {
+			return res
+		}
+	}
+	return nil
 }
 
 func (res *weddingReservation) isGroom(id int32) bool {
@@ -898,7 +1031,7 @@ func (res *weddingReservation) spouseWishlistFor(id int32) *[]string {
 	return &res.GroomWishlist
 }
 
-func (res *weddingReservation) giftsFor(id int32) *[]Item {
+func (res *weddingReservation) giftsFor(id int32) *[]weddingGiftEntry {
 	if res.isGroom(id) {
 		return &res.GroomGifts
 	}

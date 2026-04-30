@@ -358,6 +358,11 @@ func (ctrl *scriptPlayerWrapper) WeddingStarted(cathedral bool) bool {
 	return res != nil && res.Started
 }
 
+func (ctrl *scriptPlayerWrapper) WeddingIsPremium() bool {
+	res := ctrl.server.currentWeddingReservationAny(ctrl.plr)
+	return res != nil && res.Premium
+}
+
 func (ctrl *scriptPlayerWrapper) WeddingGuestTicket(cathedral bool) int32 {
 	return weddingGuestTicket(cathedral)
 }
@@ -371,7 +376,10 @@ func (ctrl *scriptPlayerWrapper) WeddingInviteItem(cathedral bool) int32 {
 }
 
 func (ctrl *scriptPlayerWrapper) WeddingStage(cathedral bool) int {
-	res := ctrl.server.currentWeddingReservation(ctrl.plr, cathedral)
+	res := ctrl.server.currentWeddingReservationAny(ctrl.plr)
+	if res != nil && res.Cathedral != cathedral {
+		res = nil
+	}
 	if res == nil {
 		return -1
 	}
@@ -392,6 +400,10 @@ func (ctrl *scriptPlayerWrapper) UnderMarriageCooldown() bool {
 
 func (ctrl *scriptPlayerWrapper) StartWeddingAfterParty() bool {
 	return ctrl.server.startWeddingAfterParty(ctrl.plr) == nil
+}
+
+func (ctrl *scriptPlayerWrapper) ClaimWeddingExitReward() int {
+	return ctrl.server.claimWeddingExit(ctrl.plr)
 }
 
 func (ctrl *scriptPlayerWrapper) InGuild() bool {

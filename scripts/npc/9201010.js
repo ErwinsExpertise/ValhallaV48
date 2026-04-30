@@ -7,7 +7,7 @@ if (mapId === 680000300) {
         plr.warp(680000000)
     }
 } else {
-    if (plr.haveItem(4000313, 1) && plr.isMarried()) {
+    if (plr.weddingIsPremium() && plr.isMarried()) {
         npc.sendOk("Enjoy your wedding celebration. When you are ready, the afterparty awaits.")
     } else if (npc.sendYesNo("Are you sure you want to leave and return to Amoria?")) {
         plr.warp(680000000)

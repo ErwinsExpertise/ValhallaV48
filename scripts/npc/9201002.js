@@ -1,4 +1,16 @@
-if (plr.partnerID() <= 0) {
+if (plr.mapID() !== 680000210) {
+    if (!plr.haveItem(4031373, 1)) {
+        npc.sendOk("If you want to hold a Cathedral wedding, bring me #b#t4031373##k so I can issue #b#t4031374##k.")
+    } else if (plr.haveItem(4031374, 1)) {
+        npc.sendOk("You already have my Officiator's Permission. Present it when you reserve the Cathedral wedding.")
+    } else if (!plr.canHold(4031374, 1)) {
+        npc.sendOk("Please free an ETC slot before I issue your Officiator's Permission.")
+    } else {
+        plr.gainItem(4031373, -1)
+        plr.gainItem(4031374, 1)
+        npc.sendOk("Very well. I have converted your Parent's Blessing into #b#t4031374##k. You may now reserve the Cathedral wedding.")
+    }
+} else if (plr.partnerID() <= 0) {
     npc.sendOk("I oversee Cathedral weddings. Come back with your fiancee when you are ready for the vows.")
 } else if (!plr.hasWeddingReservation(true)) {
     npc.sendOk("There is no Cathedral wedding reservation registered for your couple on this channel.")

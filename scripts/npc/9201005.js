@@ -1,5 +1,7 @@
 var commonTicket = 5251000
 var premiumTicket = 5251003
+var premiumReceipt = 4031375
+var regularReceipt = 4031480
 var mapId = plr.mapID()
 var indoors = mapId >= 680000100 && mapId <= 680000500
 
@@ -43,26 +45,26 @@ if (indoors) {
     var choice = npc.selection()
 
     if (choice === 0) {
-        npc.sendOk("To marry in the Cathedral, you must first be engaged. Then one partner needs either a #b#t5251000##k or a #b#t5251003##k. After the reservation, both partners receive stacked invitation cards for their guests.")
+        npc.sendOk("To marry in the Cathedral, you must first be engaged, be in the same 2-person party, obtain #b#t4031374##k, and have one partner bring either a #b#t5251000##k or a #b#t5251003##k. Reserving the wedding grants a Cathedral reservation receipt plus invitation cards for your guests.")
     } else if (choice === 1) {
         var premium = plr.haveItem(premiumTicket, 1)
         var regular = plr.haveItem(commonTicket, 1)
         if (!premium && !regular) {
             npc.sendOk("You need a Cathedral wedding reservation ticket first.")
         } else if (plr.reserveWedding(true, premium)) {
-            npc.sendOk("Your Cathedral wedding has been reserved. Both partners have received 15 invitation cards. Speak with #b#p9201002##k when you are ready to begin.")
+            npc.sendOk("Your Cathedral wedding has been reserved. Your couple received a reservation receipt and 15 invitation cards. Speak with #b#p9201013##k when you are ready to begin.")
         } else {
-            npc.sendOk("I could not reserve the wedding. Make sure your partner is here, you are engaged, and both inventories have room for invitation cards.")
+            npc.sendOk("I could not reserve the wedding. Make sure your partner is here, you are in the same 2-person party, your couple has #b#t4031374##k, both inventories have room for the receipt and invitations, and no other Cathedral wedding is active on this channel.")
         }
     } else if (choice === 2) {
         if (plr.enterWeddingAsGuest(true)) {
             npc.sendOk("Please proceed inside and enjoy the ceremony.")
         } else {
-            npc.sendOk("I cannot admit you right now. Make sure there is an active Cathedral wedding and that you have the correct guest ticket.")
+            npc.sendOk("I cannot admit you right now. Make sure there is an active Cathedral wedding and that you are either one of the partners or have the correct guest ticket.")
         }
     } else if (choice === 3) {
-        if (!plr.hasWeddingReservation(true)) {
-            npc.sendOk("Your couple does not currently have a Cathedral reservation.")
+        if (!plr.haveItem(premiumReceipt, 1) && !plr.haveItem(regularReceipt, 1)) {
+            npc.sendOk("You need your Cathedral reservation receipt before I can issue additional invitations.")
         } else if (!plr.haveItem(5251100, 1)) {
             npc.sendOk("You need #b#t5251100##k if you want additional invitation cards.")
         } else if (!plr.canHold(plr.weddingInviteItem(true), 3)) {

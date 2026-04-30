@@ -5,7 +5,19 @@ var options = [
     { label: "Silver Swan", item: 2240003, mats: [4011004, 4021007], qty: [1, 1], cost: 5000 }
 ]
 
-if (!plr.hasEngagementBox()) {
+function proofCount() {
+    var count = 0
+    for (var item = 4031367; item <= 4031372; item++) {
+        if (plr.haveItem(item, 1)) {
+            count++
+        }
+    }
+    return count
+}
+
+if (plr.gender() !== 0) {
+    npc.sendOk("Moony only crafts engagement ring boxes for male characters in the original wedding system.")
+} else if (!plr.hasEngagementBox()) {
     var text = "I'm #p9201000#, the #bengagement ring maker#k. What kind of engagement ring box do you want me to craft?#b"
     for (var i = 0; i < options.length; i++) {
         text += "\r\n#L" + i + "#" + options[i].label + "#l"
@@ -23,11 +35,20 @@ if (!plr.hasEngagementBox()) {
         npc.sendOk("Changed your mind? Come back if you decide you want a ring box.")
     } else if (!plr.canHold(ring.item, 1)) {
         npc.sendOk("Check your inventory for a free ETC slot first.")
+    } else if (proofCount() < 4) {
+        npc.sendOk("Before I can craft an engagement ring box, you need to prove your devotion. Bring me #b4 different Proofs of Love#k first.")
     } else if (plr.getMesos() < ring.cost) {
         npc.sendOk("I'm sorry but there's a fee for my services. Please bring me the right amount of mesos first.")
     } else if (!plr.haveItem(ring.mats[0], ring.qty[0]) || !plr.haveItem(ring.mats[1], ring.qty[1])) {
         npc.sendOk("Hm, it seems you're lacking some ingredients for that engagement ring box.")
     } else {
+        var removed = 0
+        for (var proof = 4031367; proof <= 4031372 && removed < 4; proof++) {
+            if (plr.haveItem(proof, 1)) {
+                plr.gainItem(proof, -1)
+                removed++
+            }
+        }
         plr.gainItem(ring.mats[0], -ring.qty[0])
         plr.gainItem(ring.mats[1], -ring.qty[1])
         plr.gainMesos(-ring.cost)

@@ -67,6 +67,7 @@ func (server *Server) playerRingAction(conn mnet.Client, reader mpacket.Reader) 
 		for i := 0; i < count; i++ {
 			*list = append(*list, reader.ReadString(reader.ReadInt16()))
 		}
+		touchWeddingReservation(res)
 	default:
 		log.Printf("Unhandled ring action mode=%d for %s", mode, plr.Name)
 	}
@@ -116,24 +117,26 @@ func (server *Server) playerWeddingAction(conn mnet.Client, reader mpacket.Reade
 			break
 		}
 		gifts := res.giftsFor(spouseID)
-		*gifts = append(*gifts, gift)
+		*gifts = append(*gifts, weddingGiftEntry{ID: gift.ID, Amount: gift.amount})
 		res.GiftCounts[plr.ID]++
+		touchWeddingReservation(res)
 		plr.Send(packetWeddingGiftResult(0x0B, *res.spouseWishlistFor(plr.ID), []Item{gift}))
 	case 7:
 		_ = reader.ReadByte()
 		idx := int(reader.ReadByte())
 		gifts := res.giftsFor(plr.ID)
 		if idx < 0 || idx >= len(*gifts) {
-			plr.Send(packetWeddingGiftResult(0x0E, *res.wishlistFor(plr.ID), *gifts))
+			plr.Send(packetWeddingGiftResult(0x0E, *res.wishlistFor(plr.ID), weddingGiftItems(*gifts)))
 			break
 		}
 		gift := (*gifts)[idx]
-		if err := plr.GainItemByID(gift.ID, gift.amount); err != nil {
-			plr.Send(packetWeddingGiftResult(0x0E, *res.wishlistFor(plr.ID), *gifts))
+		if err := plr.GainItemByID(gift.ID, gift.Amount); err != nil {
+			plr.Send(packetWeddingGiftResult(0x0E, *res.wishlistFor(plr.ID), weddingGiftItems(*gifts)))
 			break
 		}
 		*gifts = append((*gifts)[:idx], (*gifts)[idx+1:]...)
-		plr.Send(packetWeddingGiftResult(0x0F, *res.wishlistFor(plr.ID), *gifts))
+		touchWeddingReservation(res)
+		plr.Send(packetWeddingGiftResult(0x0F, *res.wishlistFor(plr.ID), weddingGiftItems(*gifts)))
 	case 8:
 		plr.Send(packetPlayerNoChange())
 	default:
@@ -171,6 +174,7 @@ func (server *Server) playerWeddingTalk(conn mnet.Client, reader mpacket.Reader)
 	default:
 		if !isCouple && res.Stage == weddingStageCeremony {
 			res.Blessings++
+			touchWeddingReservation(res)
 			plr.Send(packetMessageNotice("High Priest John: Your blessings have been added to their love."))
 		}
 	}
