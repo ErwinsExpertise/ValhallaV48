@@ -5277,11 +5277,18 @@ func (server *Server) playerHitReactor(conn mnet.Client, reader mpacket.Reader) 
 			}
 
 			if status == "display" {
-				combo := appendValue("stage1combo", reactor.name)
-				props["stage1combo"] = combo
-				if countVals(combo) >= expected {
+				displayCount, _ := props["stage1displaycount"].(int)
+				if displayCount == 0 {
+					if v, ok := props["stage1displaycount"].(float64); ok {
+						displayCount = int(v)
+					}
+				}
+				displayCount++
+				props["stage1displaycount"] = displayCount
+				if displayCount >= expected {
 					props["stage1status"] = "active"
 					props["stage1guess"] = ""
+					props["stage1displaycount"] = 0
 					plr.inst.send(packetMessageRedText("The combination has been shown. Repeat it carefully."))
 				}
 			} else if status == "active" {

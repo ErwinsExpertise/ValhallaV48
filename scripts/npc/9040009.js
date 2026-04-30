@@ -13,56 +13,58 @@ var leader = plr.getEventProperty("leader");
 if (leader == null) {
     plr.warp(990001100);
 } else if (leader !== plr.name()) {
-    npc.sendOk("I need the leader of your group to speak with me.");
+    npc.sendOk("I need the registered leader to speak with me.");
 } else {
     var props = map.properties();
     var phase = parseInt(props["stage1phase"] || "1", 10);
-    var state = props["stage1status"] || "waiting";
+    var status = props["stage1status"] || "waiting";
 
-    if (map.hitReactorByName("statuegate")) {
-        npc.sendOk("Proceed.");
-    } else if (state === "waiting") {
-        npc.sendOk(phase === 1
-            ? "In this challenge, I shall show a pattern on the statues around me. When I give the word, repeat the pattern to me to proceed."
-            : "I shall now present a more difficult puzzle for you. Good luck.");
-
-        var names = [];
-        var reactors = map.reactorNames();
-        for (var i = 0; i < reactors.length; i++) {
-            if (reactors[i] !== "statuegate") names.push(reactors[i]);
-        }
+    if (map.reactorStateByName("statuegate") === 1 || props["stage1clear"] === true || props["stage1clear"] === "true") {
+        npc.sendOk("You have already passed my trial. Proceed.");
+    } else if (status === "waiting") {
+        var names = map.reactorNames().filter(function(name) { return name !== "statuegate"; });
         var combo = gatekeeperCombo(names, phase + 3);
         props["stage1phase"] = phase;
         props["stage1status"] = "display";
         props["stage1combo"] = combo.join(",");
         props["stage1guess"] = "";
-        map.showEffect("quest/party/wrong_kor");
-        map.playSound("Party1/Failed");
+        props["stage1displaycount"] = 0;
+
+        npc.sendOk(phase === 1
+            ? "Watch the statues closely and remember the order in which they shine. Strike them in that same order, then return to me."
+            : "You succeeded once, but I require a harder answer now. Watch carefully.");
+
         map.revealReactorsByName(combo, 5000, 3500);
-    } else if (state === "active") {
+    } else if (status === "display") {
+        npc.sendOk("Wait until all of the statues finish revealing the pattern.");
+    } else {
         var comboList = (props["stage1combo"] || "").split(",").filter(function(v) { return v.length > 0; });
         var guessList = (props["stage1guess"] || "").split(",").filter(function(v) { return v.length > 0; });
-        if (comboList.join(",") === guessList.join(",")) {
+        if (guessList.length < comboList.length) {
+            npc.sendOk("You have not struck enough statues yet.");
+        } else if (comboList.join(",") === guessList.join(",")) {
             if (phase >= 3) {
-                map.hitReactorByName("statuegate");
+                map.setReactorStateByName("statuegate", 1);
+                props["stage1clear"] = true;
+                props["stage1status"] = "done";
+                props["statuegateopen"] = "yes";
                 map.showEffect("quest/party/clear");
                 map.playSound("Party1/Clear");
-                props["stage1clear"] = true;
-                plr.gainGuildPoints(15);
-                npc.sendOk("Excellent work. Please proceed to the next stage.");
+                plr.logEvent("gpq stage1 clear");
+                npc.sendOk("Brilliant. I will open the way to the castle.");
             } else {
                 props["stage1phase"] = phase + 1;
                 props["stage1status"] = "waiting";
                 props["stage1guess"] = "";
-                npc.sendOk("Very good. You still have more to complete, however. Talk to me again when you're ready.");
+                props["stage1displaycount"] = 0;
+                npc.sendOk("Correct. Speak to me again when you are ready for the next sequence.");
             }
         } else {
             props["stage1phase"] = 1;
             props["stage1status"] = "waiting";
             props["stage1guess"] = "";
-            npc.sendOk("You have failed this test.");
+            props["stage1displaycount"] = 0;
+            npc.sendOk("Incorrect. You must begin again from the first test.");
         }
-    } else {
-        npc.sendOk("Please wait while the combination is revealed.");
     }
 }

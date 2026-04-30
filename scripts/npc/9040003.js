@@ -5,17 +5,18 @@ if (leader == null) {
     plr.warp(990001100);
 } else if (leader !== plr.name()) {
     if (alreadyClear === true || alreadyClear === "true") {
-        npc.sendOk("The path ahead is already open. Your hardest test still lies before you.");
+        npc.sendOk("The path ahead is already open. Hurry to the throne.");
     } else {
-        npc.sendOk("I need the leader of your guild's group to speak with me.");
+        npc.sendOk("I need the registered leader to speak with me.");
     }
 } else if (alreadyClear === true || alreadyClear === "true") {
-    npc.sendOk("The path ahead is already open. Your hardest test still lies before you.");
+    npc.sendOk("The path ahead is already open. Hurry to the throne.");
 } else {
     plr.setEventProperty("stage4clear", true);
-    plr.gainGuildPoints(180);
+    plr.setEventProperty("ghostgateopen", "yes");
+    map.setReactorStateByName("ghostgate", 1);
     map.showEffect("quest/party/clear");
     map.playSound("Party1/Clear");
-    map.hitReactorByName("ghostgate");
-    npc.sendOk("I have opened the path for you. Go now, and face the evil waiting ahead.");
+    plr.logEvent("gpq stage4 clear");
+    npc.sendOk("At last... I can rest. The path to the throne is now open.");
 }

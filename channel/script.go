@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -449,6 +450,14 @@ func (ctrl *scriptPlayerWrapper) InGuild() bool {
 	return ctrl.plr.guild != nil
 }
 
+func (ctrl *scriptPlayerWrapper) GuildQuestActive() bool {
+	if ctrl == nil || ctrl.plr == nil || ctrl.plr.guild == nil || ctrl.server == nil {
+		return false
+	}
+	_, ok := ctrl.server.events[int32(ctrl.plr.guild.id)]
+	return ok
+}
+
 func (ctrl *scriptPlayerWrapper) GuildRank() byte {
 	if ctrl.plr.guild != nil {
 		for i, id := range ctrl.plr.guild.playerID {
@@ -498,6 +507,44 @@ func (ctrl *scriptPlayerWrapper) PartyMembersOnMapCount() int {
 	}
 
 	return count
+}
+
+func (ctrl *scriptPlayerWrapper) GuildMembersOnMapCount() int {
+	if ctrl == nil || ctrl.plr == nil || ctrl.plr.guild == nil || ctrl.server == nil {
+		return 0
+	}
+
+	count := 0
+	ctrl.server.players.observe(func(other *Player) {
+		if other == nil || other.guild == nil || other.guild.id != ctrl.plr.guild.id {
+			return
+		}
+		if other.mapID != ctrl.plr.mapID || other.inst == nil || ctrl.plr.inst == nil || other.inst.id != ctrl.plr.inst.id {
+			return
+		}
+		count++
+	})
+
+	return count
+}
+
+func (ctrl *scriptPlayerWrapper) GuildMembersOnMap() []scriptPlayerWrapper {
+	if ctrl == nil || ctrl.plr == nil || ctrl.plr.guild == nil || ctrl.server == nil {
+		return []scriptPlayerWrapper{}
+	}
+
+	members := make([]scriptPlayerWrapper, 0)
+	ctrl.server.players.observe(func(other *Player) {
+		if other == nil || other.guild == nil || other.guild.id != ctrl.plr.guild.id {
+			return
+		}
+		if other.mapID != ctrl.plr.mapID || other.inst == nil || ctrl.plr.inst == nil || other.inst.id != ctrl.plr.inst.id {
+			return
+		}
+		members = append(members, scriptPlayerWrapper{plr: other, server: ctrl.server})
+	})
+	sort.Slice(members, func(i, j int) bool { return members[i].plr.ID < members[j].plr.ID })
+	return members
 }
 
 func (ctrl *scriptPlayerWrapper) PartyMembersOnMap() []scriptPlayerWrapper {
@@ -569,6 +616,12 @@ func (ctrl *scriptPlayerWrapper) SetEventProperty(key string, value interface{})
 func (ctrl *scriptPlayerWrapper) FinishEvent() {
 	if ctrl.plr.event != nil {
 		ctrl.plr.event.Finished()
+	}
+}
+
+func (ctrl *scriptPlayerWrapper) SetEventDuration(duration string) {
+	if ctrl.plr != nil && ctrl.plr.event != nil {
+		ctrl.plr.event.SetDuration(duration)
 	}
 }
 
@@ -1028,6 +1081,10 @@ func (ctrl *scriptPlayerWrapper) MapID() int32 {
 	return ctrl.plr.mapID
 }
 
+func (ctrl *scriptPlayerWrapper) ID() int32 {
+	return ctrl.plr.ID
+}
+
 func (ctrl *scriptPlayerWrapper) Position() map[string]int16 {
 	return map[string]int16{
 		"x": ctrl.plr.pos.x,
@@ -1126,11 +1183,23 @@ func (ctrl *scriptPlayerWrapper) StartGuildQuest(name string, instID int) {
 	if ctrl.plr.guild == nil {
 		return
 	}
+	if _, exists := ctrl.server.events[int32(ctrl.plr.guild.id)]; exists {
+		return
+	}
+	if instID <= 0 {
+		field, ok := ctrl.server.fields[ctrl.plr.mapID]
+		if !ok {
+			return
+		}
+		instID = field.createInstance(&ctrl.server.rates, ctrl.server)
+	}
 	program, ok := ctrl.server.eventScriptStore.scripts[name]
 	if !ok {
 		return
 	}
-	ids := []int32{}
+	ids := []int32{ctrl.plr.ID}
+	seen := map[int32]struct{}{ctrl.plr.ID: {}}
+	extra := make([]int32, 0)
 	ctrl.server.players.observe(func(other *Player) {
 		if other == nil || other.guild == nil || other.guild.id != ctrl.plr.guild.id {
 			return
@@ -1138,8 +1207,15 @@ func (ctrl *scriptPlayerWrapper) StartGuildQuest(name string, instID int) {
 		if other.mapID != ctrl.plr.mapID || other.inst == nil || ctrl.plr.inst == nil || other.inst.id != ctrl.plr.inst.id {
 			return
 		}
-		ids = append(ids, other.ID)
+		if _, ok := seen[other.ID]; ok {
+			return
+		}
+		seen[other.ID] = struct{}{}
+		extra = append(extra, other.ID)
 	})
+	sort.Slice(extra, func(i, j int) bool { return extra[i] < extra[j] })
+	ids = append(ids, extra...)
+	log.Printf("gpq: starting guild=%d leader=%d:%s map=%d instance=%d players=%v", ctrl.plr.guild.id, ctrl.plr.ID, ctrl.plr.Name, ctrl.plr.mapID, instID, ids)
 	event, err := createEvent(int32(ctrl.plr.guild.id), instID, ids, ctrl.server, program)
 	if err != nil {
 		log.Println(err)
@@ -1157,7 +1233,16 @@ func (ctrl *scriptPlayerWrapper) JoinGuildQuest() bool {
 	if !ok {
 		return false
 	}
+	if value, ok := event.properties["canEnter"]; ok {
+		if blocked, ok := value.(bool); ok && !blocked {
+			return false
+		}
+		if blocked, ok := value.(string); ok && blocked == "false" {
+			return false
+		}
+	}
 	event.AddPlayer(*ctrl)
+	log.Printf("gpq: joined guild=%d player=%d:%s instance=%d", ctrl.plr.guild.id, ctrl.plr.ID, ctrl.plr.Name, event.instanceID)
 	return true
 }
 

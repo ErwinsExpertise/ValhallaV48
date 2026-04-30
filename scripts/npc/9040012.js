@@ -1,1 +1,1 @@
-npc.sendOk("Stage 2 is a test of observation and coordination. Watch the spears carefully, remember the correct route, and work with your guild instead of rushing ahead alone.");
+npc.sendOk("To break Ergoth's seal, restore the power of #b#t4001025##k. Search the side halls, gather what you need, and do not rush the spear trial.");
