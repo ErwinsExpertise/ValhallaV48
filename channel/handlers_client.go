@@ -2717,10 +2717,32 @@ func (server Server) mobDamagePlayer(conn mnet.Client, reader mpacket.Reader, mo
 		}
 
 		if !plr.admin() {
+			if mobAttack >= 0 && mobAttack < int8(len(mob.attacks)) {
+				attackInfo := mob.attacks[mobAttack]
+				if attackInfo.DeadlyAttack > 0 && plr.deadlyAttackActive && time.Now().UnixMilli()-plr.deadlyAttackTime <= 5000 {
+					if plr.hp > 1 {
+						plr.setHP(1)
+					}
+					if plr.mp > 1 {
+						plr.setMP(1)
+					}
+					damage = 0
+					reducedDamage = 0
+					plr.deadlyAttackActive = false
+				}
+			}
 			plr.damagePlayer(int16(damage))
 		}
 
 		inst.send(packetPlayerReceivedDmg(plr.ID, mobAttack, damage, reducedDamage, spawnID, mobID, healSkillID, stance, reflectAction, reflected, reflectX, reflectY))
+
+		if mobAttack >= 0 && mobAttack < int8(len(mob.attacks)) {
+			attackInfo := mob.attacks[mobAttack]
+			if attackInfo.Disease > 0 && attackInfo.Level > 0 {
+				mobSkillID = byte(attackInfo.Disease)
+				mobSkillLevel = byte(attackInfo.Level)
+			}
+		}
 	}
 	if mobSkillID != 0 && mobSkillLevel != 0 {
 		// Apply mob skill debuff to the player
@@ -2745,6 +2767,31 @@ func (server Server) mobDistance(conn mnet.Client, reader mpacket.Reader) {
 		This packet is to blow up mobs when player is near
 	*/
 
+}
+
+func playerSkillMobStatMask(skillID int32) (int32, bool) {
+	switch skill.Skill(skillID) {
+	case skill.Threaten:
+		return skill.MobStat.PhysicalDefense | skill.MobStat.MagicDefense, true
+	case skill.ArmorCrash:
+		return skill.MobStat.PhysicalDefense, true
+	case skill.PowerCrash:
+		return skill.MobStat.PhysicalDamage, true
+	case skill.MagicCrash:
+		return skill.MobStat.MagicDefense, true
+	case skill.Slow, skill.ILSlow:
+		return skill.MobStat.Speed, true
+	case skill.Seal, skill.ILSeal:
+		return skill.MobStat.Seal, true
+	case skill.ShadowWeb:
+		return skill.MobStat.Web, true
+	case skill.Doom:
+		return skill.MobStat.Doom, true
+	case skill.PoisonBreath:
+		return skill.MobStat.Poison, true
+	default:
+		return 0, false
+	}
 }
 
 func (server Server) playerMeleeSkill(conn mnet.Client, reader mpacket.Reader) {
@@ -2805,6 +2852,9 @@ func (server Server) playerMeleeSkill(conn mnet.Client, reader mpacket.Reader) {
 		}
 		for _, attack := range data.attackInfo {
 			inst.lifePool.mobDamaged(attack.spawnID, plr, attack.damages...)
+			if statMask, ok := playerSkillMobStatMask(data.skillID); ok {
+				inst.lifePool.applyMobBuff(plr.ID, attack.spawnID, data.skillID, data.skillLevel, statMask, inst)
+			}
 		}
 		if plr.buffs != nil && plr.buffs.HasSkillBuff(int32(skill.ComboAttack)) {
 			switch skill.Skill(data.skillID) {
@@ -2910,6 +2960,9 @@ func (server Server) playerRangedSkill(conn mnet.Client, reader mpacket.Reader) 
 
 	for _, attack := range data.attackInfo {
 		inst.lifePool.mobDamaged(attack.spawnID, plr, attack.damages...)
+		if statMask, ok := playerSkillMobStatMask(data.skillID); ok {
+			inst.lifePool.applyMobBuff(plr.ID, attack.spawnID, data.skillID, data.skillLevel, statMask, inst)
+		}
 	}
 }
 
@@ -2965,6 +3018,9 @@ func (server Server) playerMagicSkill(conn mnet.Client, reader mpacket.Reader) {
 
 	for _, attack := range data.attackInfo {
 		inst.lifePool.mobDamaged(attack.spawnID, plr, attack.damages...)
+		if statMask, ok := playerSkillMobStatMask(data.skillID); ok {
+			inst.lifePool.applyMobBuff(plr.ID, attack.spawnID, data.skillID, data.skillLevel, statMask, inst)
+		}
 	}
 }
 
@@ -4781,29 +4837,9 @@ func (server *Server) playerSpecialSkill(conn mnet.Client, reader mpacket.Reader
 
 		sendPrimarySkillAnimation(plr, skillID, skillLevel)
 
-		var statMask int32
-		switch skill.Skill(skillID) {
-		case skill.Threaten:
-			statMask = skill.MobStat.PhysicalDefense | skill.MobStat.MagicDefense
-		case skill.ArmorCrash:
-			statMask = skill.MobStat.PhysicalDefense
-		case skill.PowerCrash:
-			statMask = skill.MobStat.PhysicalDamage
-		case skill.MagicCrash:
-			statMask = skill.MobStat.MagicDefense
-		case skill.Slow, skill.ILSlow:
-			statMask = skill.MobStat.Speed
-		case skill.Seal, skill.ILSeal:
-			statMask = skill.MobStat.Seal
-		case skill.ShadowWeb:
-			statMask = skill.MobStat.Web
-		case skill.Doom:
-			statMask = skill.MobStat.Doom
-		}
-
-		if plr.inst != nil {
+		if statMask, ok := playerSkillMobStatMask(skillID); ok && plr.inst != nil {
 			for _, mobID := range targetIDs {
-				plr.inst.lifePool.applyMobBuff(mobID, skillID, skillLevel, statMask, plr.inst)
+				plr.inst.lifePool.applyMobBuff(plr.ID, mobID, skillID, skillLevel, statMask, plr.inst)
 			}
 		}
 

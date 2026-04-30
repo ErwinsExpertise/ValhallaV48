@@ -628,21 +628,6 @@ func (calc *DamageCalculator) handleSpecialSkillDamage(result *CalcHitResult, mo
 		applyResultTolerance(result, 1.0+constant.DamageVarianceTolerance)
 		return true
 
-	case skill.PoisonMyst:
-		if calc.skillLevel <= 0 {
-			return true
-		}
-
-		divisor := 70.0 - float64(calc.skillLevel)
-		if divisor <= 0 {
-			divisor = 1.0
-		}
-		dmg := float64(mob.maxHP) / divisor
-		result.MinDamage = dmg
-		result.MaxDamage = dmg
-		result.ExpectedDmg = dmg
-		applyResultTolerance(result, 1.0+constant.DamageVarianceTolerance)
-		return true
 	}
 
 	return false

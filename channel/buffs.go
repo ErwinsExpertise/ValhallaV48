@@ -43,10 +43,12 @@ const (
 	BuffMesoGuard        = 0x10000000
 	BuffWeakness         = 0x40000000
 	BuffRecovery         = 0x400000000
+	BuffSlow             = 0x100000000
 	BuffMapleWarrior     = 0x800000000
 	BuffStance           = 0x1000000000
 	BuffSharpEyes        = 0x2000000000
 	BuffManaReflection   = 0x4000000000
+	BuffSeduce           = 0x8000000000
 	BuffShadowClaw       = 0x10000000000
 	BuffInfinity         = 0x20000000000
 	BuffHolyShield       = 0x40000000000
@@ -54,6 +56,7 @@ const (
 	BuffBlind            = 0x100000000000
 	BuffConcentrate      = 0x200000000000
 	BuffMonsterRiding    = 0x400000000000
+	BuffBanMap           = 0x800000000000
 	BuffEchoOfHero       = 0x1000000000000
 	BuffThaw             = 0x20000000
 	BuffCurse            = 0x80000000
@@ -814,6 +817,13 @@ func (cb *CharacterBuffs) AddMobDebuff(skillID, level byte, durationSec int16) {
 		return
 	}
 
+	mobSkillX := int16(1)
+	if levels, err := nx.GetMobSkill(skillID); err == nil && int(level) > 0 && int(level) <= len(levels) {
+		if levels[level-1].X != 0 {
+			mobSkillX = int16(levels[level-1].X)
+		}
+	}
+
 	// Map mob skill IDs to buff bit positions
 	var bits []int
 
@@ -831,7 +841,11 @@ func (cb *CharacterBuffs) AddMobDebuff(skillID, level byte, durationSec int16) {
 	case skill.Mob.Poison:
 		bits = []int{BuffPoison}
 	case skill.Mob.Slow:
-		bits = []int{BuffSpeed}
+		bits = []int{BuffSlow}
+	case skill.Mob.Seduce:
+		bits = []int{BuffSeduce}
+	case skill.Mob.SendToTown:
+		bits = []int{BuffBanMap}
 	default:
 		return
 	}
@@ -855,14 +869,15 @@ func (cb *CharacterBuffs) AddMobDebuff(skillID, level byte, durationSec int16) {
 	for _, globalBit := range orderedBuffBits(bits) {
 		var nValue int16
 		switch globalBit {
-		case BuffSpeed:
-			// Slow: negative speed value
-			nValue = -int16(level * 10)
+		case BuffSlow:
+			nValue = mobSkillX
 		case BuffPoison:
-			// Poison: damage value based on level (X value from skill data)
-			nValue = int16(level)
+			nValue = mobSkillX
+		case BuffSeduce:
+			nValue = mobSkillX
+		case BuffBanMap:
+			nValue = 1
 		default:
-			// Other debuffs: just 1
 			nValue = 1
 		}
 
@@ -883,20 +898,15 @@ func (cb *CharacterBuffs) AddMobDebuff(skillID, level byte, durationSec int16) {
 	fout := make([]byte, 0, 16)
 	for _, globalBit := range orderedBuffBits(bits) {
 		switch globalBit {
-		case BuffSpeed:
-			// Speed/Slow: write byte N (speed value)
-			speedVal := byte(-level * 10) // negative for slow
-			fout = append(fout, speedVal)
+		case BuffSlow, BuffSeduce, BuffBanMap:
+			fout = append(fout, byte(rValue), byte(rValue>>8), byte(rValue>>16), byte(rValue>>24))
 		case BuffStun, BuffDarkness, BuffSeal, BuffWeakness:
-			// These need int32 R (packed skill ID and level)
 			fout = append(fout, byte(rValue), byte(rValue>>8), byte(rValue>>16), byte(rValue>>24))
 		case BuffPoison:
-			// Poison: write short N, int32 R
-			n := int16(level)
+			n := mobSkillX
 			fout = append(fout, byte(n), byte(n>>8))
 			fout = append(fout, byte(rValue), byte(rValue>>8), byte(rValue>>16), byte(rValue>>24))
 		case BuffCurse:
-			// Curse: write int32 R (packed skill ID and level)
 			fout = append(fout, byte(rValue), byte(rValue>>8), byte(rValue>>16), byte(rValue>>24))
 		}
 	}

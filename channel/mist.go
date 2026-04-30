@@ -7,6 +7,7 @@ import (
 	"github.com/Hucaru/Valhalla/common/opcode"
 	"github.com/Hucaru/Valhalla/constant/skill"
 	"github.com/Hucaru/Valhalla/mpacket"
+	"github.com/Hucaru/Valhalla/nx"
 )
 
 // fieldMist represents a poison mist on the field
@@ -59,8 +60,23 @@ func (pool *mistPool) createMist(ownerID, skillID int32, skillLevel byte, pos po
 		return nil
 	}
 
-	const mistWidth int16 = 150
-	const mistHeight int16 = 100
+	x1, y1 := pos.x-int16(150), pos.y-int16(100)
+	x2, y2 := pos.x+int16(150), pos.y+int16(100)
+	if levels, err := nx.GetPlayerSkill(skillID); err == nil && int(skillLevel) > 0 && int(skillLevel) <= len(levels) {
+		sl := levels[skillLevel-1]
+		if sl.Lt.X != 0 || sl.Lt.Y != 0 || sl.Rb.X != 0 || sl.Rb.Y != 0 {
+			x1 = pos.x + int16(sl.Lt.X)
+			y1 = pos.y + int16(sl.Lt.Y)
+			x2 = pos.x + int16(sl.Rb.X)
+			y2 = pos.y + int16(sl.Rb.Y)
+			if x1 > x2 {
+				x1, x2 = x2, x1
+			}
+			if y1 > y2 {
+				y1, y2 = y2, y1
+			}
+		}
+	}
 
 	mist := &fieldMist{
 		ID:         mistID,
@@ -68,10 +84,10 @@ func (pool *mistPool) createMist(ownerID, skillID int32, skillLevel byte, pos po
 		skillID:    skillID,
 		skillLevel: skillLevel,
 		box: mistBox{
-			x1: pos.x - mistWidth,
-			y1: pos.y - mistHeight,
-			x2: pos.x + mistWidth,
-			y2: pos.y + mistHeight,
+			x1: x1,
+			y1: y1,
+			x2: x2,
+			y2: y2,
 		},
 		createdAt:    time.Now(),
 		duration:     duration,
@@ -123,15 +139,15 @@ func packetMistSpawn(mist *fieldMist) mpacket.Packet {
 	p := mpacket.CreateWithOpcode(opcode.SendChannelAffectedAreaCreate)
 	p.WriteInt32(mist.ID)
 
-	// v48 client-side area categories affect who the area harms.
-	// Use the non-hostile player area type for player-created mist and let the
-	// server handle mob poisoning ticks separately.
-	areaType := byte(2)
+	// Brazil/v48 encodes player-created affected areas with bMobSkill=0.
+	// Using a non-zero type here can make the client treat the area as harmful
+	// to players, which Poison Mist should never be.
+	areaType := byte(0)
 	p.WriteByte(areaType)
 	p.WriteInt32(mist.ownerID)
 	p.WriteInt32(mist.skillID)
 	p.WriteByte(mist.skillLevel)
-	p.WriteInt16(8) // skill delay
+	p.WriteInt16(0)
 	p.WriteInt32(int32(mist.box.x1))
 	p.WriteInt32(int32(mist.box.y1))
 	p.WriteInt32(int32(mist.box.x2))
@@ -186,7 +202,7 @@ func (pool *mistPool) update(t time.Time) {
 				}
 
 				if (mob.statBuff & skill.MobStat.Poison) == 0 {
-					mob.applyBuff(mist.skillID, mist.skillLevel, skill.MobStat.Poison, pool.instance)
+					mob.applyBuff(mist.ownerID, mist.skillID, mist.skillLevel, skill.MobStat.Poison, pool.instance)
 				}
 
 				if mob.buffs != nil {

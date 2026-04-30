@@ -44,6 +44,11 @@ type MobSkill struct {
 	Count           int64
 	SummonEffect    int64
 	Time            int64
+	Prop            int64
+	X               int64
+	Y               int64
+	Lt              gonx.Vector
+	Rb              gonx.Vector
 }
 
 func extractSkills(nodes []gonx.Node, textLookup []string) (map[int32][]PlayerSkill, map[byte][]MobSkill) {
@@ -267,15 +272,20 @@ func getMobSkill(node *gonx.Node, nodes []gonx.Node, textLookup []string) MobSki
 			skill.MpCon = gonx.DataToInt32(option.Data)
 		case "count":
 			skill.Count = gonx.DataToInt64(option.Data)
+		case "prop":
+			skill.Prop = gonx.DataToInt64(option.Data)
+		case "x":
+			skill.X = gonx.DataToInt64(option.Data)
+		case "y":
+			skill.Y = gonx.DataToInt64(option.Data)
+		case "lt":
+			skill.Lt = gonx.DataToVector(option.Data)
+		case "rb":
+			skill.Rb = gonx.DataToVector(option.Data)
 
 		// not sure what these are used for
-		case "lt":
-		case "rb":
 		case "effect":
-		case "x":
-		case "y":
 		case "tile":
-		case "prop":
 		case "affected":
 		case "mob":
 		case "mob0":

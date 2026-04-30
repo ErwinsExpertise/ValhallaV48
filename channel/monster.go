@@ -630,7 +630,7 @@ type mobBuff struct {
 }
 
 // applyBuff applies a buff to the mob from a player skill
-func (m *monster) applyBuff(skillID int32, skillLevel byte, statMask int32, inst *fieldInstance) {
+func (m *monster) applyBuff(ownerID, skillID int32, skillLevel byte, statMask int32, inst *fieldInstance) {
 	if m.buffs == nil {
 		m.buffs = make(map[int32]*mobBuff)
 	}
@@ -654,9 +654,19 @@ func (m *monster) applyBuff(skillID int32, skillLevel byte, statMask int32, inst
 	case skill.Seal, skill.ILSeal:
 		value = 1
 	case skill.ShadowWeb:
-		value = int16(si.X)
+		if m.boss {
+			return
+		}
+		divisor := int32(50 - skillLevel)
+		if divisor <= 0 {
+			divisor = 1
+		}
+		value = int16(m.maxHP / divisor)
 	case skill.Doom:
-		value = int16(si.X)
+		if m.boss {
+			return
+		}
+		value = 1
 	case skill.PoisonMyst:
 		divisor := 70 - int32(skillLevel)
 		if divisor <= 0 {
@@ -690,7 +700,7 @@ func (m *monster) applyBuff(skillID int32, skillLevel byte, statMask int32, inst
 		value:     value,
 		duration:  duration,
 		expiresAt: expiresAt,
-		ownerID:   0, // will be set by caller that knows the applier (e.g., mist)
+		ownerID:   ownerID,
 		visible:   true,
 	}
 
@@ -850,6 +860,15 @@ func packetMobStatReset(spawnID int32, statMask int32, calcDamageStatIndex byte)
 	p.WriteInt32(spawnID)
 	p.WriteInt32(statMask)
 	p.WriteByte(calcDamageStatIndex)
+
+	return p
+}
+
+func packetMobAffected(spawnID int32, skillID int32, delay int16) mpacket.Packet {
+	p := mpacket.CreateWithOpcode(opcode.SendChannelMobAffected)
+	p.WriteInt32(spawnID)
+	p.WriteInt16(delay)
+	p.WriteInt32(skillID)
 
 	return p
 }

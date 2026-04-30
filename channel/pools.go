@@ -63,6 +63,28 @@ func isZakumBodyMob(id int32) bool {
 	return id == constant.MobZakum1Body || id == constant.MobZakum2Body || id == constant.MobZakum3Body
 }
 
+func mobSkillAffectsPlayerInRange(mob *monster, plr *Player, skillData nx.MobSkill) bool {
+	if mob == nil || plr == nil {
+		return false
+	}
+	left := int16(skillData.Lt.X)
+	right := int16(skillData.Rb.X)
+	if mob.faceLeft {
+		left, right = -right, -left
+	}
+	minX := mob.pos.x + left
+	maxX := mob.pos.x + right
+	if minX > maxX {
+		minX, maxX = maxX, minX
+	}
+	minY := mob.pos.y + int16(skillData.Lt.Y)
+	maxY := mob.pos.y + int16(skillData.Rb.Y)
+	if minY > maxY {
+		minY, maxY = maxY, minY
+	}
+	return plr.pos.x >= minX && plr.pos.x <= maxX && plr.pos.y >= minY && plr.pos.y <= maxY
+}
+
 func creatNewLifePool(inst *fieldInstance, npcData, mobData []nx.Life, mobCapMin, mobCapMax int) lifePool {
 	pool := lifePool{instance: inst, activeMobCtrl: make(map[*Player]bool)}
 
@@ -348,8 +370,22 @@ func (pool *lifePool) performSkill(mob *monster, skillID, skillLevel byte, skill
 		pool.handleMobSummon(mob, skillLevel, skillData)
 		return
 	default:
+		remainingTargets := int(skillData.Count)
+		if remainingTargets == 0 {
+			remainingTargets = -1
+		}
 		for _, plr := range pool.instance.players {
 			if plr == nil || plr.buffs == nil {
+				continue
+			}
+			if !mobSkillAffectsPlayerInRange(mob, plr, skillData) {
+				continue
+			}
+			prop := skillData.Prop
+			if prop <= 0 {
+				prop = 100
+			}
+			if pool.rNumber.Intn(100) >= int(prop) {
 				continue
 			}
 
@@ -359,6 +395,12 @@ func (pool *lifePool) performSkill(mob *monster, skillID, skillLevel byte, skill
 			}
 
 			plr.addMobDebuff(skillID, skillLevel, durationSec)
+			if remainingTargets > 0 {
+				remainingTargets--
+				if remainingTargets == 0 {
+					break
+				}
+			}
 		}
 	}
 }
@@ -849,10 +891,13 @@ func (pool *lifePool) getMobFromID(mobID int32) (monster, error) {
 }
 
 // applyMobBuff applies a buff to a mob with the given spawn ID
-func (pool *lifePool) applyMobBuff(spawnID int32, skillID int32, skillLevel byte, statMask int32, inst *fieldInstance) {
+func (pool *lifePool) applyMobBuff(ownerID, spawnID int32, skillID int32, skillLevel byte, statMask int32, inst *fieldInstance) {
 	for _, mob := range pool.mobs {
 		if mob.spawnID == spawnID {
-			mob.applyBuff(skillID, skillLevel, statMask, inst)
+			mob.applyBuff(ownerID, skillID, skillLevel, statMask, inst)
+			if inst != nil {
+				inst.send(packetMobAffected(spawnID, skillID, 0))
+			}
 			return
 		}
 	}
