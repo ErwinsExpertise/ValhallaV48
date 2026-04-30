@@ -32,6 +32,7 @@ type event struct {
 
 	closeFinish func()
 	timerReset  chan struct{}
+	properties  map[string]interface{}
 }
 
 func createEvent(id int32, instID int, players []int32, server *Server, program *goja.Program) (*event, error) {
@@ -45,6 +46,7 @@ func createEvent(id int32, instID int, players []int32, server *Server, program 
 		vm:                 goja.New(),
 		timerReset:         make(chan struct{}, 1),
 		scheduledCallbacks: make(map[string]func()),
+		properties:         make(map[string]interface{}),
 	}
 
 	ctrl.closeFinish = sync.OnceFunc(func() {
@@ -276,7 +278,29 @@ func (e *event) WarpPlayers(dst int32) {
 	}
 
 	for _, id := range e.playerIDs {
-		if plr, err := e.server.players.GetFromID(id); err != nil {
+		if plr, err := e.server.players.GetFromID(id); err == nil {
+			e.server.warpPlayer(plr, field, dstPortal, false)
+		}
+	}
+}
+
+func (e *event) WarpPlayersToPortal(dst int32, portalName string) {
+	field := e.server.fields[dst]
+	dstInst, err := field.getInstance(e.instanceID)
+	if err != nil {
+		dstInst, err = field.getInstance(0)
+		if err != nil {
+			return
+		}
+	}
+
+	dstPortal, err := dstInst.getPortalFromName(portalName)
+	if err != nil {
+		return
+	}
+
+	for _, id := range e.playerIDs {
+		if plr, err := e.server.players.GetFromID(id); err == nil {
 			e.server.warpPlayer(plr, field, dstPortal, false)
 		}
 	}
@@ -284,7 +308,7 @@ func (e *event) WarpPlayers(dst int32) {
 
 func (e *event) IsParticipantsOnMap(mapID int32) bool {
 	for _, id := range e.playerIDs {
-		if plr, err := e.server.players.GetFromID(id); err != nil {
+		if plr, err := e.server.players.GetFromID(id); err == nil {
 			if plr.mapID != mapID {
 				return false
 			}

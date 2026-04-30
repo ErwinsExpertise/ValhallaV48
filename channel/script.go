@@ -478,7 +478,16 @@ func (ctrl *scriptPlayerWrapper) EventMembersOnMap(id int32) bool {
 }
 
 func (ctrl *scriptPlayerWrapper) GetEventProperty(key string) interface{} {
-	if ctrl.plr == nil || ctrl.plr.inst == nil {
+	if ctrl.plr == nil {
+		return nil
+	}
+	if ctrl.plr.event != nil {
+		if value, ok := ctrl.plr.event.properties[key]; ok {
+			return value
+		}
+		return nil
+	}
+	if ctrl.plr.inst == nil {
 		return nil
 	}
 	if value, ok := ctrl.plr.inst.properties[key]; ok {
@@ -488,10 +497,17 @@ func (ctrl *scriptPlayerWrapper) GetEventProperty(key string) interface{} {
 }
 
 func (ctrl *scriptPlayerWrapper) SetEventProperty(key string, value interface{}) interface{} {
-	if ctrl.plr == nil || ctrl.plr.inst == nil {
+	if ctrl.plr == nil {
 		return nil
 	}
 	prev := ctrl.GetEventProperty(key)
+	if ctrl.plr.event != nil {
+		ctrl.plr.event.properties[key] = value
+		return prev
+	}
+	if ctrl.plr.inst == nil {
+		return nil
+	}
 	ctrl.plr.inst.properties[key] = value
 	return prev
 }
@@ -511,6 +527,12 @@ func (ctrl *scriptPlayerWrapper) LeaveEvent() {
 func (ctrl *scriptPlayerWrapper) WarpEventMembers(id int32) {
 	if ctrl.plr.event != nil {
 		ctrl.plr.event.WarpPlayers(id)
+	}
+}
+
+func (ctrl *scriptPlayerWrapper) WarpEventMembersToPortal(id int32, portalName string) {
+	if ctrl.plr.event != nil {
+		ctrl.plr.event.WarpPlayersToPortal(id, portalName)
 	}
 }
 
@@ -1010,7 +1032,7 @@ func (ctrl *scriptPlayerWrapper) StartPartyQuest(name string, instID int) {
 		ids = append(ids, ctrl.plr.ID)
 	}
 
-	event, err := createEvent(ctrl.plr.ID, instID, ids, ctrl.server, program)
+	event, err := createEvent(ctrl.plr.party.ID, instID, ids, ctrl.server, program)
 
 	if err != nil {
 		log.Println(err)
@@ -1147,6 +1169,34 @@ func (ctrl *scriptMapWrapper) PlayersInArea(id int) int {
 
 	}
 
+	return count
+}
+
+func (ctrl *scriptMapWrapper) MalePlayersInArea(id int) int {
+	areas := nx.GetMaps()[ctrl.inst.fieldID].Areas
+	if id < 0 || id >= len(areas) {
+		return 0
+	}
+	count := 0
+	for _, plr := range ctrl.inst.players {
+		if plr.gender == 0 && areas[id].Inside(plr.pos.x, plr.pos.y) {
+			count++
+		}
+	}
+	return count
+}
+
+func (ctrl *scriptMapWrapper) FemalePlayersInArea(id int) int {
+	areas := nx.GetMaps()[ctrl.inst.fieldID].Areas
+	if id < 0 || id >= len(areas) {
+		return 0
+	}
+	count := 0
+	for _, plr := range ctrl.inst.players {
+		if plr.gender == 1 && areas[id].Inside(plr.pos.x, plr.pos.y) {
+			count++
+		}
+	}
 	return count
 }
 
@@ -1315,6 +1365,7 @@ type npcChatController struct {
 type portalScriptController struct {
 	plr     *Player
 	server  *Server
+	portal  portal
 	warped  bool
 	blocked bool
 }
@@ -1467,6 +1518,14 @@ func (ctrl *portalScriptController) Message(msg string) {
 	ctrl.plr.Send(packetMessageRedText(msg))
 }
 
+func (ctrl *portalScriptController) Id() int {
+	return int(ctrl.portal.id)
+}
+
+func (ctrl *portalScriptController) Name() string {
+	return ctrl.portal.name
+}
+
 func (ctrl *portalScriptController) Block(msg string) bool {
 	if msg != "" {
 		ctrl.Message(msg)
@@ -1475,12 +1534,12 @@ func (ctrl *portalScriptController) Block(msg string) bool {
 	return false
 }
 
-func runPortalScript(program *goja.Program, plr *Player, server *Server) (warped bool, blocked bool, err error) {
+func runPortalScript(program *goja.Program, plr *Player, server *Server, src portal) (warped bool, blocked bool, err error) {
 	vm := goja.New()
 	vm.SetFieldNameMapper(goja.UncapFieldNameMapper())
 	plrCtrl := &scriptPlayerWrapper{plr: plr, server: server}
 	mapWrapper := &scriptMapWrapper{inst: plr.inst, server: server}
-	portalCtrl := &portalScriptController{plr: plr, server: server}
+	portalCtrl := &portalScriptController{plr: plr, server: server, portal: src}
 	_ = vm.Set("plr", plrCtrl)
 	_ = vm.Set("map", mapWrapper)
 	_ = vm.Set("portal", portalCtrl)

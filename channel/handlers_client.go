@@ -387,6 +387,10 @@ func (server *Server) playerChangeChannel(conn mnet.Client, reader mpacket.Reade
 	server.removeSummonsFromField(player)
 	player.saveBuffSnapshot()
 
+	if player.event != nil && player.event.playerLeaveEventCallback != nil {
+		player.event.playerLeaveEventCallback(scriptPlayerWrapper{plr: player, server: server})
+	}
+
 	if int(id) < len(server.channels) {
 		if server.channels[id].Port == 0 {
 			conn.Send(packetCannotChangeChannel())
@@ -1209,7 +1213,7 @@ func (server Server) playerUseScriptedPortal(conn mnet.Client, reader mpacket.Re
 
 	if srcPortal.script != "" {
 		if program, ok := server.portalScriptStore.scripts[srcPortal.script]; ok {
-			warped, blocked, err := runPortalScript(program, plr, &server)
+			warped, blocked, err := runPortalScript(program, plr, &server, srcPortal)
 			if err != nil {
 				log.Println("portal script error:", srcPortal.script, err)
 				plr.Send(packetPlayerNoChange())

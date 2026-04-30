@@ -298,17 +298,23 @@ func (server *Server) ClientDisconnected(conn mnet.Client) {
 
 	server.handleWeddingDisconnect(plr)
 
-	if field, ok := server.fields[plr.mapID]; ok && plr.inst != nil {
-		if inst, ierr := field.getInstance(plr.inst.id); ierr == nil {
-			if remErr := inst.removePlayer(plr, true); remErr != nil {
-				log.Println(remErr)
-			}
-		} else {
-			log.Println("Unable to find instance for player on disconnect:", ierr)
-		}
+	if plr != nil && plr.event != nil && plr.event.playerLeaveEventCallback != nil {
+		plr.event.playerLeaveEventCallback(scriptPlayerWrapper{plr: plr, server: server})
 	}
 
-	plr.Logout()
+	if plr != nil {
+		if field, ok := server.fields[plr.mapID]; ok && plr.inst != nil {
+			if inst, ierr := field.getInstance(plr.inst.id); ierr == nil {
+				if remErr := inst.removePlayer(plr, true); remErr != nil {
+					log.Println(remErr)
+				}
+			} else {
+				log.Println("Unable to find instance for player on disconnect:", ierr)
+			}
+		}
+
+		plr.Logout()
+	}
 
 	if _, ok := server.npcChat[conn]; ok {
 		delete(server.npcChat, conn)
