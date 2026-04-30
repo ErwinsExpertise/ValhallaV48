@@ -194,7 +194,7 @@ func (pool *mistPool) update(t time.Time) {
 						b.ownerID = mist.ownerID
 						b.duration = remainSec
 						b.expiresAt = t.Add(time.Duration(remainSec) * time.Second).UnixMilli()
-						pool.instance.send(packetMobStatSet(mob.spawnID, skill.MobStat.Poison, b.value, b.skillID, b.duration, 0))
+						pool.instance.send(packetMobStatSet(mob.spawnID, skill.MobStat.Poison, b.value, b.skillID, b.duration, 0, mob.advanceCalcDamageStatIndex(skill.MobStat.Poison)))
 					}
 				}
 			}

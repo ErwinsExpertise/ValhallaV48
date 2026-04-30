@@ -43,17 +43,20 @@ type monster struct {
 	noRegen                int32
 	fixedDamage            int32
 	skills                 map[byte]byte
+	attacks                []nx.MobAttackInfo
 	revives                []int32
 	stance                 byte
 	poison                 bool
 
 	lastAttackTime int64
 	lastSkillTime  int64
+	lastSkillUseMS int64
 	skillTimes     map[byte]int64
 
-	skillID    byte
-	skillLevel byte
-	statBuff   int32
+	skillID             byte
+	skillLevel          byte
+	statBuff            int32
+	calcDamageStatIndex byte
 
 	buffs            map[int32]*mobBuff
 	buffExpireTimers map[int32]*time.Timer
@@ -73,6 +76,87 @@ type monster struct {
 	lastHeal         int64
 	lastTimeAttacked int64
 	lastPoisonTick   int64
+}
+
+func isVisibleMobSelfBuffStat(statMask int32) bool {
+	switch statMask {
+	case skill.MobStat.PowerUp,
+		skill.MobStat.MagicUp,
+		skill.MobStat.PowerGuardUp,
+		skill.MobStat.MagicGuardUp,
+		skill.MobStat.PhysicalImmune,
+		skill.MobStat.MagicImmune:
+		return true
+	default:
+		return false
+	}
+}
+
+const mobCalcDamageStatMask int32 = 0x2ADF01F
+
+func isCalcDamageMobStat(statMask int32) bool {
+	return (statMask & mobCalcDamageStatMask) != 0
+}
+
+func (m *monster) advanceCalcDamageStatIndex(statMask int32) byte {
+	if !isCalcDamageMobStat(statMask) {
+		return m.calcDamageStatIndex
+	}
+	if m.calcDamageStatIndex >= 127 {
+		m.calcDamageStatIndex = 0
+	}
+	m.calcDamageStatIndex++
+	return m.calcDamageStatIndex
+}
+
+func (m *monster) hasVisibleSelfBuff() bool {
+	if m == nil || len(m.buffs) == 0 {
+		return false
+	}
+	for _, statMask := range []int32{
+		skill.MobStat.PowerUp,
+		skill.MobStat.MagicUp,
+		skill.MobStat.PowerGuardUp,
+		skill.MobStat.MagicGuardUp,
+		skill.MobStat.PhysicalImmune,
+		skill.MobStat.MagicImmune,
+	} {
+		if (m.statBuff & statMask) == 0 {
+			continue
+		}
+		if buff, ok := m.buffs[statMask]; ok && buff != nil && buff.visible {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *monster) refreshVisibleSelfBuffSync(inst *fieldInstance) {
+	if inst == nil || len(m.buffs) == 0 {
+		return
+	}
+
+	now := time.Now().UnixMilli()
+	if m.lastStatusUpdate != 0 && now-m.lastStatusUpdate < 2000 {
+		return
+	}
+
+	for statMask, buff := range m.buffs {
+		if buff == nil || !buff.visible || !isVisibleMobSelfBuffStat(statMask) {
+			continue
+		}
+		remainingMS := buff.expiresAt - now
+		if remainingMS <= 0 {
+			continue
+		}
+		remainingSec := int16((remainingMS + 999) / 1000)
+		if remainingSec < 1 {
+			remainingSec = 1
+		}
+		inst.send(packetMobStatSet(m.spawnID, statMask, buff.value, buff.skillID, remainingSec, 0, m.advanceCalcDamageStatIndex(statMask)))
+	}
+
+	m.lastStatusUpdate = now
 }
 
 var mobStatusEncodeOrder = []int32{
@@ -129,6 +213,7 @@ func createMonsterFromData(spawnID int32, life nx.Life, m nx.Mob, dropsItems, dr
 		noRegen:          int32(m.NoRegen),
 		fixedDamage:      int32(m.FixedDamage),
 		revives:          m.Revives,
+		attacks:          m.Attacks,
 		summonType:       constant.MobSummonTypeRegen,
 		boss:             m.Boss > 0,
 		hpBgColour:       byte(m.HPTagBGColor),
@@ -191,7 +276,6 @@ func (m *monster) acknowledgeController(moveID int16, movData movementFrag, allo
 	if m.mp < int32(math.MaxInt16) {
 		mp16 = int16(m.mp)
 	}
-
 	m.controller.Send(packetMobControlAcknowledge(m.spawnID, moveID, allowedToUseSkill, mp16, skill, level))
 }
 
@@ -409,6 +493,29 @@ func (mob *monster) chooseNextSkill() (byte, byte) {
 		return 0, 0
 	}
 
+	// While a visible mob self-buff is active, do not advertise another pending
+	// skill to the controller. The controller client uses CtrlAck skill bytes as
+	// current intent, which can replace the still-active self-buff indicator.
+	for _, statMask := range []int32{
+		skill.MobStat.PowerUp,
+		skill.MobStat.MagicUp,
+		skill.MobStat.PowerGuardUp,
+		skill.MobStat.MagicGuardUp,
+		skill.MobStat.PhysicalImmune,
+		skill.MobStat.MagicImmune,
+	} {
+		if (mob.statBuff & statMask) == 0 {
+			continue
+		}
+		if buff, ok := mob.buffs[statMask]; ok && buff != nil && buff.visible {
+			return 0, 0
+		}
+	}
+
+	if (mob.statBuff&skill.MobStat.PhysicalImmune) > 0 || (mob.statBuff&skill.MobStat.MagicImmune) > 0 {
+		return 0, 0
+	}
+
 	candidates := make([]byte, 0, len(mob.skills))
 	for id, lvl := range mob.skills {
 		levels, err := nx.GetMobSkill(id)
@@ -452,9 +559,9 @@ func (mob *monster) chooseNextSkill() (byte, byte) {
 			case skill.Mob.MagicDefenceUp, skill.Mob.MagicDefenceUpAoe:
 				alreadySet = (mob.statBuff & skill.MobStat.MagicGuardUp) > 0
 			case skill.Mob.WeaponImmunity:
-				alreadySet = (mob.statBuff & skill.MobStat.PhysicalImmune) > 0
+				alreadySet = (mob.statBuff&skill.MobStat.PhysicalImmune) > 0 || (mob.statBuff&skill.MobStat.MagicImmune) > 0
 			case skill.Mob.MagicImmunity:
-				alreadySet = (mob.statBuff & skill.MobStat.MagicImmune) > 0
+				alreadySet = (mob.statBuff&skill.MobStat.PhysicalImmune) > 0 || (mob.statBuff&skill.MobStat.MagicImmune) > 0
 			case skill.Mob.McSpeedUp:
 				alreadySet = (mob.statBuff & skill.MobStat.Speed) > 0
 			default:
@@ -475,7 +582,6 @@ func (mob *monster) chooseNextSkill() (byte, byte) {
 	if chosenLevel == 0 {
 		chosenID = 0
 	}
-
 	return chosenID, chosenLevel
 }
 
@@ -602,7 +708,7 @@ func (m *monster) applyBuff(skillID int32, skillLevel byte, statMask int32, inst
 		})
 	}
 
-	inst.send(packetMobStatSet(m.spawnID, statMask, value, skillID, duration, 0))
+	inst.send(packetMobStatSet(m.spawnID, statMask, value, skillID, duration, 0, m.advanceCalcDamageStatIndex(statMask)))
 }
 
 // removeDebuff removes a debuff from the mob
@@ -622,7 +728,8 @@ func (m *monster) removeDebuff(statMask int32, inst *fieldInstance) {
 	}
 
 	if inst != nil && (buff == nil || buff.visible) {
-		inst.send(packetMobStatReset(m.spawnID, statMask))
+		calcIndex := m.advanceCalcDamageStatIndex(statMask)
+		inst.send(packetMobStatReset(m.spawnID, statMask, calcIndex))
 	}
 }
 
@@ -665,11 +772,12 @@ func (m *monster) applyTimedStat(statMask int32, value int16, skillID int32, dur
 	}
 
 	if sendPacket {
-		inst.send(packetMobStatSet(m.spawnID, statMask, value, skillID, duration, 0))
+		calcIndex := m.advanceCalcDamageStatIndex(statMask)
+		inst.send(packetMobStatSet(m.spawnID, statMask, value, skillID, duration, 0, calcIndex))
 	}
 }
 
-func packetMobStatSet(spawnID int32, statMask int32, value int16, skillID int32, duration int16, delay int16) mpacket.Packet {
+func packetMobStatSet(spawnID int32, statMask int32, value int16, skillID int32, duration int16, delay int16, calcDamageStatIndex byte) mpacket.Packet {
 	p := mpacket.CreateWithOpcode(opcode.SendChannelMobStatSet)
 	p.WriteInt32(spawnID)
 	p.WriteUint32(uint32(statMask))
@@ -684,7 +792,7 @@ func packetMobStatSet(spawnID int32, statMask int32, value int16, skillID int32,
 	}
 
 	p.WriteInt16(delay)
-	p.WriteByte(1)
+	p.WriteByte(calcDamageStatIndex)
 	return p
 }
 
@@ -737,11 +845,11 @@ func packetMobShowHpChange(spawnID int32, dmg int32) mpacket.Packet {
 	return p
 }
 
-func packetMobStatReset(spawnID int32, statMask int32) mpacket.Packet {
+func packetMobStatReset(spawnID int32, statMask int32, calcDamageStatIndex byte) mpacket.Packet {
 	p := mpacket.CreateWithOpcode(opcode.SendChannelMobStatReset)
 	p.WriteInt32(spawnID)
 	p.WriteInt32(statMask)
-	p.WriteByte(1)
+	p.WriteByte(calcDamageStatIndex)
 
 	return p
 }

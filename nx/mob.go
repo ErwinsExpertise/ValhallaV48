@@ -49,6 +49,18 @@ type Mob struct {
 	HPGaugeHide        int64
 	HPTagBGColor       int64
 	HPTagColor         int64
+	Attacks            []MobAttackInfo
+}
+
+type MobAttackInfo struct {
+	ConMP        int64
+	AttackAfter  int64
+	EffectAfter  int64
+	Type         int64
+	Magic        int64
+	DeadlyAttack int64
+	Disease      int64
+	Level        int64
 }
 
 func extractMobs(nodes []gonx.Node, textLookup []string) map[int32]Mob {
@@ -189,11 +201,52 @@ func getMob(node *gonx.Node, nodes []gonx.Node, textLookup []string) Mob {
 		case "hpTagColor":
 			mob.HPTagColor = gonx.DataToInt64(option.Data)
 		default:
+			if strings.HasPrefix(optionName, "attack") {
+				mob.Attacks = append(mob.Attacks, getMobAttack(&option, nodes, textLookup))
+				continue
+			}
 			log.Println("Unsupported NX mob option:", optionName, "->", option.Data)
 		}
 	}
 
 	return mob
+}
+
+func getMobAttack(node *gonx.Node, nodes []gonx.Node, textLookup []string) MobAttackInfo {
+	attack := MobAttackInfo{}
+
+	for i := uint32(0); i < uint32(node.ChildCount); i++ {
+		child := nodes[node.ChildID+i]
+		if textLookup[child.NameID] != "info" {
+			continue
+		}
+
+		for j := uint32(0); j < uint32(child.ChildCount); j++ {
+			option := nodes[child.ChildID+j]
+			switch textLookup[option.NameID] {
+			case "conMP":
+				attack.ConMP = gonx.DataToInt64(option.Data)
+			case "attackAfter":
+				attack.AttackAfter = gonx.DataToInt64(option.Data)
+			case "effectAfter":
+				attack.EffectAfter = gonx.DataToInt64(option.Data)
+			case "type":
+				attack.Type = gonx.DataToInt64(option.Data)
+			case "magic":
+				attack.Magic = gonx.DataToInt64(option.Data)
+			case "deadlyAttack":
+				attack.DeadlyAttack = gonx.DataToInt64(option.Data)
+			case "disease":
+				attack.Disease = gonx.DataToInt64(option.Data)
+			case "level":
+				attack.Level = gonx.DataToInt64(option.Data)
+			}
+		}
+
+		break
+	}
+
+	return attack
 }
 
 func getSkills(node *gonx.Node, nodes []gonx.Node, textLookup []string) map[byte]byte {

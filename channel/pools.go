@@ -59,6 +59,10 @@ type lifePool struct {
 	rNumber *rand.Rand
 }
 
+func isZakumBodyMob(id int32) bool {
+	return id == constant.MobZakum1Body || id == constant.MobZakum2Body || id == constant.MobZakum3Body
+}
+
 func creatNewLifePool(inst *fieldInstance, npcData, mobData []nx.Life, mobCapMin, mobCapMax int) lifePool {
 	pool := lifePool{instance: inst, activeMobCtrl: make(map[*Player]bool)}
 
@@ -235,24 +239,51 @@ func (pool *lifePool) mobAcknowledge(poolID int32, plr *Player, moveID int16, sk
 		mob := pool.mobs[i]
 
 		if poolID == v.spawnID && v.controller.Conn == plr.Conn {
-			skillID := byte(skillData)
-			skillLevel := byte(skillData >> 8)
+			currentSkillID := byte(skillData)
+			currentSkillLevel := byte(skillData >> 8)
 			skillDelay := int16(skillData >> 16)
-
+			rawAction := int(uint8(action) >> 1)
+			isSkillAction := rawAction >= 21 && rawAction <= 25
+			hadVisibleSelfBuff := mob.hasVisibleSelfBuff()
 			// v48 only takes the mob-skill path in CMob::OnMove when action>>1 is in
 			// the skill range [21..25]. Align server-side application timing with that
 			// cast path instead of applying any non-zero skillData on arbitrary moves.
-			rawAction := int(uint8(action) >> 1)
-			if rawAction >= 21 && rawAction <= 25 {
-				mobSkillID, mobSkillLevel, mobSkillData := pool.mobs[i].getMobSkill(skillDelay, skillLevel, skillID)
+			if isSkillAction {
+				if currentSkillID != 0 && currentSkillID == mob.skillID && currentSkillLevel == mob.skillLevel {
+					mobSkillID, mobSkillLevel, mobSkillData := pool.mobs[i].getMobSkill(skillDelay, currentSkillLevel, currentSkillID)
 
-				if mobSkillID != 0 {
-					pool.performSkill(mob, mobSkillID, mobSkillLevel, mobSkillData)
+					if mobSkillID != 0 {
+						pool.performSkill(mob, mobSkillID, mobSkillLevel, mobSkillData)
+					}
+				}
+				mob.skillID = 0
+				mob.skillLevel = 0
+			} else if rawAction >= 12 && rawAction <= 20 && isZakumBodyMob(mob.id) {
+				attackIndex := rawAction - 12
+				if attackIndex >= 0 && attackIndex < len(mob.attacks) && mob.attacks[attackIndex].DeadlyAttack > 0 {
+					now := time.Now().UnixMilli()
+					for _, target := range pool.instance.players {
+						target.deadlyAttackActive = true
+						target.deadlyAttackTime = now
+					}
 				}
 			}
 
-			// Choose next skill
-			skillID, skillLevel = mob.chooseNextSkill()
+			// Brazil's OnMobMove keeps a prepared next skill command and only replaces
+			// it when there isn't already one pending. Mirror that behavior so the
+			// client isn't constantly fed a new skill intent every movement ack.
+			nextSkillID, nextSkillLevel := byte(0), byte(0)
+			if !isSkillAction {
+				if mob.skillID == 0 && (mob.lastSkillUseMS == 0 || time.Now().UnixMilli()-mob.lastSkillUseMS >= 3000) {
+					mob.skillID, mob.skillLevel = mob.chooseNextSkill()
+				}
+				nextSkillID, nextSkillLevel = mob.skillID, mob.skillLevel
+			}
+			if hadVisibleSelfBuff && rawAction >= 12 && rawAction <= 20 {
+				mob.refreshVisibleSelfBuffSync(pool.instance)
+			}
+
+			mob.refreshVisibleSelfBuffSync(pool.instance)
 
 			if !moveData.validateMob(v) {
 				return
@@ -265,7 +296,7 @@ func (pool *lifePool) mobAcknowledge(poolID int32, plr *Player, moveID int16, sk
 				finalData.posSet = true
 			}
 
-			pool.mobs[i].acknowledgeController(moveID, finalData, skillPossible, skillID, skillLevel)
+			pool.mobs[i].acknowledgeController(moveID, finalData, skillPossible, nextSkillID, nextSkillLevel)
 			pool.instance.sendExcept(packetMobMove(poolID, skillPossible, action, skillData, moveBytes), v.controller.Conn)
 
 		}
@@ -275,8 +306,8 @@ func (pool *lifePool) mobAcknowledge(poolID int32, plr *Player, moveID int16, sk
 func (pool *lifePool) performSkill(mob *monster, skillID, skillLevel byte, skillData nx.MobSkill) {
 	currentTime := time.Now().Unix()
 	mob.lastSkillTime = currentTime
+	mob.lastSkillUseMS = time.Now().UnixMilli()
 	mob.skillTimes[skillID] = currentTime
-
 	switch skillID {
 	case skill.Mob.Dispel:
 		for _, plr := range pool.instance.players {
@@ -335,10 +366,13 @@ func (pool *lifePool) performSkill(mob *monster, skillID, skillLevel byte, skill
 func (pool *lifePool) mobDamaged(poolID int32, damager *Player, dmg ...int32) {
 	for i, v := range pool.mobs {
 		if v.spawnID == poolID {
+			wasVisibleSelfBuff := v.hasVisibleSelfBuff()
 
 			if damager != nil {
-				pool.mobs[i].removeController()
-				pool.mobs[i].setController(damager, true)
+				if pool.mobs[i].controller == nil || pool.mobs[i].controller != damager {
+					pool.mobs[i].removeController()
+					pool.mobs[i].setController(damager, true)
+				}
 				pool.activeMobCtrl[damager] = true
 				pool.mobs[i].giveDamage(damager, dmg...)
 
@@ -371,6 +405,10 @@ func (pool *lifePool) mobDamaged(poolID int32, damager *Player, dmg ...int32) {
 				}
 			} else {
 				pool.mobs[i].giveDamage(nil, dmg...)
+			}
+
+			if wasVisibleSelfBuff {
+				pool.mobs[i].refreshVisibleSelfBuffSync(pool.instance)
 			}
 
 			pool.showMobBossHPBar(v, nil)
@@ -639,8 +677,8 @@ func (pool *lifePool) spawnMob(m *monster, hasAgro bool) bool {
 
 	if plr := pool.instance.findController(); plr != nil {
 		if cont, ok := plr.(*Player); ok {
-			for _, v := range pool.mobs {
-				v.setController(cont, hasAgro)
+			if m.controller == nil || m.controller != cont {
+				m.setController(cont, hasAgro)
 			}
 		}
 	}

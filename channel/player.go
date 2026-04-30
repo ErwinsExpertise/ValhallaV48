@@ -447,6 +447,9 @@ type Player struct {
 
 	lastChairHeal time.Time
 
+	deadlyAttackActive bool
+	deadlyAttackTime   int64
+
 	// Safety charm flag - prevents exp loss on death
 	hasSafetyCharm bool
 
