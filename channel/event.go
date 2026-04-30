@@ -10,6 +10,13 @@ import (
 	"github.com/dop251/goja"
 )
 
+func ensureFieldInstance(f *field, id int, rates *rates, server *Server) (*fieldInstance, error) {
+	for len(f.instances) <= id {
+		f.createInstance(rates, server)
+	}
+	return f.getInstance(id)
+}
+
 type event struct {
 	id         int32
 	duration   time.Duration
@@ -129,16 +136,41 @@ func (e *event) start() {
 		for {
 			select {
 			case <-timeout.C:
+				keepRunning := make(chan bool, 1)
 				e.server.dispatch <- func() {
 					for _, id := range e.playerIDs {
-						if plr, err := e.server.players.GetFromID(id); err == nil {
-							plr.event = nil
+						if plr, err := e.server.players.GetFromID(id); err == nil && e.timeoutCallback != nil {
 							e.timeoutCallback(scriptPlayerWrapper{plr: plr, server: e.server})
 						}
 					}
 
-					delete(e.server.events, e.id)
+					keep := false
+					if current, ok := e.server.events[e.id]; ok && current == e {
+						keep = time.Until(e.endTime) > 0
+					}
+
+					if !keep {
+						for _, id := range e.playerIDs {
+							if plr, err := e.server.players.GetFromID(id); err == nil {
+								plr.event = nil
+							}
+						}
+
+						delete(e.server.events, e.id)
+					}
+
+					keepRunning <- keep
 				}
+
+				if <-keepRunning {
+					remaining := time.Until(e.endTime)
+					if remaining <= 0 {
+						remaining = time.Second
+					}
+					timeout.Reset(remaining)
+					continue
+				}
+
 				return
 
 			case <-e.timerReset:
@@ -274,7 +306,7 @@ func (e *event) Schedule(name string, duration string) {
 
 func (e *event) GetMap(id int32) scriptMapWrapper {
 	if field, ok := e.server.fields[id]; ok {
-		inst, err := field.getInstance(e.instanceID)
+		inst, err := ensureFieldInstance(field, e.instanceID, &e.server.rates, e.server)
 
 		if err != nil {
 			return scriptMapWrapper{}
@@ -288,12 +320,9 @@ func (e *event) GetMap(id int32) scriptMapWrapper {
 
 func (e *event) WarpPlayers(dst int32) {
 	field := e.server.fields[dst]
-	dstInst, err := field.getInstance(e.instanceID)
+	dstInst, err := ensureFieldInstance(field, e.instanceID, &e.server.rates, e.server)
 	if err != nil {
-		dstInst, err = field.getInstance(0)
-		if err != nil {
-			return
-		}
+		return
 	}
 
 	dstPortal, err := dstInst.getRandomSpawnPortal()
@@ -310,12 +339,9 @@ func (e *event) WarpPlayers(dst int32) {
 
 func (e *event) WarpPlayersToPortal(dst int32, portalName string) {
 	field := e.server.fields[dst]
-	dstInst, err := field.getInstance(e.instanceID)
+	dstInst, err := ensureFieldInstance(field, e.instanceID, &e.server.rates, e.server)
 	if err != nil {
-		dstInst, err = field.getInstance(0)
-		if err != nil {
-			return
-		}
+		return
 	}
 
 	dstPortal, err := dstInst.getPortalFromName(portalName)

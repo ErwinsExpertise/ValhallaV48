@@ -1037,12 +1037,17 @@ func (server *Server) playerUsePortal(conn mnet.Client, reader mpacket.Reader) {
 				return
 			}
 
-			dstInst, err := dstFld.getInstance(instID)
-			if err != nil {
-				dstInst, err = dstFld.getInstance(0)
+			var dstInst *fieldInstance
+			if plr.event != nil {
+				dstInst, err = ensureFieldInstance(dstFld, plr.event.instanceID, &server.rates, server)
+			} else {
+				dstInst, err = dstFld.getInstance(instID)
 				if err != nil {
-					return
+					dstInst, err = dstFld.getInstance(0)
 				}
+			}
+			if err != nil {
+				return
 			}
 
 			dstPortal, err := chooseDstPortal(dstInst, curField.id, "", "")
@@ -1087,13 +1092,18 @@ func (server *Server) playerUsePortal(conn mnet.Client, reader mpacket.Reader) {
 		return
 	}
 
-	dstInst, err := dstFld.getInstance(instID)
-	if err != nil {
-		dstInst, err = dstFld.getInstance(0)
+	var dstInst *fieldInstance
+	if plr.event != nil {
+		dstInst, err = ensureFieldInstance(dstFld, plr.event.instanceID, &server.rates, server)
+	} else {
+		dstInst, err = dstFld.getInstance(instID)
 		if err != nil {
-			conn.Send(packetPlayerNoChange())
-			return
+			dstInst, err = dstFld.getInstance(0)
 		}
+	}
+	if err != nil {
+		conn.Send(packetPlayerNoChange())
+		return
 	}
 
 	dstPortal, err := chooseDstPortal(dstInst, curField.id, srcPortal.name, srcPortal.destName)
@@ -1409,7 +1419,7 @@ func (server Server) playerTeleportRockOperation(conn mnet.Client, reader mpacke
 	}
 }
 
-func (server Server) warpPlayer(plr *Player, dstField *field, dstPortal portal, usedPortal bool) error {
+func (server Server) warpPlayerToInstance(plr *Player, dstField *field, dstPortal portal, dstInstanceID int, usedPortal bool) error {
 	hadStarterVisualOverride := isStarterEquipOverrideMap(plr.mapID)
 
 	srcField, ok := server.fields[plr.mapID]
@@ -1422,10 +1432,23 @@ func (server Server) warpPlayer(plr *Player, dstField *field, dstPortal portal, 
 		return err
 	}
 
-	dstInst, err := dstField.getInstance(plr.inst.id)
-	if err != nil {
-		if dstInst, err = dstField.getInstance(0); err != nil {
+	var dstInst *fieldInstance
+	if dstInstanceID >= 0 {
+		dstInst, err = ensureFieldInstance(dstField, dstInstanceID, &server.rates, &server)
+		if err != nil {
 			return err
+		}
+	} else if plr.event != nil {
+		dstInst, err = ensureFieldInstance(dstField, plr.event.instanceID, &server.rates, &server)
+		if err != nil {
+			return err
+		}
+	} else {
+		dstInst, err = dstField.getInstance(plr.inst.id)
+		if err != nil {
+			if dstInst, err = dstField.getInstance(0); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -1498,6 +1521,10 @@ func (server Server) warpPlayer(plr *Player, dstField *field, dstPortal portal, 
 	}
 
 	return nil
+}
+
+func (server Server) warpPlayer(plr *Player, dstField *field, dstPortal portal, usedPortal bool) error {
+	return server.warpPlayerToInstance(plr, dstField, dstPortal, -1, usedPortal)
 }
 
 func (server Server) playerMoveInventoryItem(conn mnet.Client, reader mpacket.Reader) {

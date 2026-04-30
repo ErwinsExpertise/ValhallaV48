@@ -201,14 +201,22 @@ type scriptPlayerWrapper struct {
 
 func (ctrl *scriptPlayerWrapper) Warp(id int32) {
 	if field, ok := ctrl.server.fields[id]; ok {
-		inst, err := field.getInstance(ctrl.plr.inst.id)
+		var (
+			inst *fieldInstance
+			err  error
+		)
+
+		if ctrl.plr.event != nil {
+			inst, err = ensureFieldInstance(field, ctrl.plr.event.instanceID, &ctrl.server.rates, ctrl.server)
+		} else {
+			inst, err = field.getInstance(ctrl.plr.inst.id)
+			if err != nil {
+				inst, err = field.getInstance(0)
+			}
+		}
 
 		if err != nil {
-			inst, err = field.getInstance(0)
-
-			if err != nil {
-				return
-			}
+			return
 		}
 
 		portal, err := inst.getRandomSpawnPortal()
@@ -230,14 +238,22 @@ func (ctrl *scriptPlayerWrapper) EventRemainingTime() int32 {
 
 func (ctrl *scriptPlayerWrapper) WarpToPortalName(id int32, name string) {
 	if field, ok := ctrl.server.fields[id]; ok {
-		inst, err := field.getInstance(ctrl.plr.inst.id)
+		var (
+			inst *fieldInstance
+			err  error
+		)
+
+		if ctrl.plr.event != nil {
+			inst, err = ensureFieldInstance(field, ctrl.plr.event.instanceID, &ctrl.server.rates, ctrl.server)
+		} else {
+			inst, err = field.getInstance(ctrl.plr.inst.id)
+			if err != nil {
+				inst, err = field.getInstance(0)
+			}
+		}
 
 		if err != nil {
-			inst, err = field.getInstance(0)
-
-			if err != nil {
-				return
-			}
+			return
 		}
 
 		portal, err := inst.getPortalFromName(name)
@@ -247,6 +263,22 @@ func (ctrl *scriptPlayerWrapper) WarpToPortalName(id int32, name string) {
 		}
 
 		ctrl.server.warpPlayer(ctrl.plr, field, portal, true)
+	}
+}
+
+func (ctrl *scriptPlayerWrapper) WarpToPortalNameInInstance(id int32, name string, instanceID int) {
+	if field, ok := ctrl.server.fields[id]; ok {
+		inst, err := ensureFieldInstance(field, instanceID, &ctrl.server.rates, ctrl.server)
+		if err != nil {
+			return
+		}
+
+		portal, err := inst.getPortalFromName(name)
+		if err != nil {
+			return
+		}
+
+		ctrl.server.warpPlayerToInstance(ctrl.plr, field, portal, instanceID, true)
 	}
 }
 
@@ -433,6 +465,14 @@ func (ctrl *scriptPlayerWrapper) InParty() bool {
 	return ctrl.plr.party != nil
 }
 
+func (ctrl *scriptPlayerWrapper) PartyQuestActive() bool {
+	if ctrl == nil || ctrl.plr == nil || ctrl.plr.party == nil || ctrl.server == nil {
+		return false
+	}
+	_, ok := ctrl.server.events[ctrl.plr.party.ID]
+	return ok
+}
+
 func (ctrl *scriptPlayerWrapper) IsPartyLeader() bool {
 	if ctrl.InParty() {
 		return ctrl.plr.party.players[0] == ctrl.plr
@@ -468,12 +508,19 @@ func (ctrl *scriptPlayerWrapper) PartyMembersOnMap() []scriptPlayerWrapper {
 	members := make([]scriptPlayerWrapper, 0, constant.MaxPartySize)
 
 	for _, v := range ctrl.plr.party.players {
-		if v != nil {
+		if v != nil && v.mapID == ctrl.plr.mapID && v.inst != nil && ctrl.plr.inst != nil && v.inst.id == ctrl.plr.inst.id {
 			members = append(members, scriptPlayerWrapper{plr: v, server: ctrl.server})
 		}
 	}
 
 	return members
+}
+
+func (ctrl *scriptPlayerWrapper) LogEvent(msg string) {
+	if ctrl == nil || ctrl.plr == nil || ctrl.plr.event == nil {
+		return
+	}
+	log.Printf("event[%d] player[%d:%s] %s", ctrl.plr.event.id, ctrl.plr.ID, ctrl.plr.Name, msg)
 }
 
 func (ctrl *scriptPlayerWrapper) EventMembersOnMap(id int32) bool {
@@ -1028,6 +1075,18 @@ func (ctrl *scriptPlayerWrapper) StartPartyQuest(name string, instID int) {
 		return
 	}
 
+	if _, ok := ctrl.server.events[ctrl.plr.party.ID]; ok {
+		return
+	}
+
+	if instID <= 0 {
+		field, ok := ctrl.server.fields[ctrl.plr.mapID]
+		if !ok {
+			return
+		}
+		instID = field.createInstance(&ctrl.server.rates, ctrl.server)
+	}
+
 	program, ok := ctrl.server.eventScriptStore.scripts[name]
 
 	if !ok {
@@ -1038,7 +1097,7 @@ func (ctrl *scriptPlayerWrapper) StartPartyQuest(name string, instID int) {
 
 	if ctrl.plr.party != nil {
 		for i, id := range ctrl.plr.party.PlayerID {
-			if ctrl.plr.mapID == ctrl.plr.party.MapID[i] && ctrl.plr.party.players[i] != nil {
+			if ctrl.plr.mapID == ctrl.plr.party.MapID[i] && ctrl.plr.party.players[i] != nil && ctrl.plr.inst != nil && ctrl.plr.party.players[i].inst != nil {
 				if ctrl.plr.inst.id == ctrl.plr.party.players[i].inst.id {
 					ids = append(ids, id)
 				}
@@ -1046,6 +1105,10 @@ func (ctrl *scriptPlayerWrapper) StartPartyQuest(name string, instID int) {
 		}
 	} else {
 		ids = append(ids, ctrl.plr.ID)
+	}
+
+	if len(ids) == 0 {
+		return
 	}
 
 	event, err := createEvent(ctrl.plr.party.ID, instID, ids, ctrl.server, program)
@@ -1127,6 +1190,13 @@ func (ctrl *scriptMapWrapper) PlayerCount(mapID int32, instID int) int {
 	}
 
 	return len(inst.players)
+}
+
+func (ctrl *scriptMapWrapper) PlayerCountInMap(mapID int32) int {
+	if ctrl == nil || ctrl.inst == nil {
+		return 0
+	}
+	return ctrl.PlayerCount(mapID, ctrl.inst.id)
 }
 
 func (ctrl *scriptMapWrapper) PlaySound(path string) {
@@ -1564,9 +1634,17 @@ func (ctrl *portalScriptController) Warp(mapID int32, portalName string) bool {
 		ctrl.blocked = true
 		return false
 	}
-	inst, err := dstField.getInstance(ctrl.plr.inst.id)
-	if err != nil {
-		inst, err = dstField.getInstance(0)
+	var (
+		inst *fieldInstance
+		err  error
+	)
+	if ctrl.plr.event != nil {
+		inst, err = ensureFieldInstance(dstField, ctrl.plr.event.instanceID, &ctrl.server.rates, ctrl.server)
+	} else {
+		inst, err = dstField.getInstance(ctrl.plr.inst.id)
+		if err != nil {
+			inst, err = dstField.getInstance(0)
+		}
 	}
 	if err != nil {
 		ctrl.blocked = true
