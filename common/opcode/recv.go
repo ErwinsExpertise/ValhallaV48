@@ -48,6 +48,7 @@ const (
 	RecvChannelPlayerFame        int16 = 0x4A
 	RecvChannelCharacterInfo     int16 = 0x4C
 	RecvChannelPetSpawn          int16 = 0x4D
+	RecvChannelSyncBuff          int16 = 0x4E
 	RecvChannelCancelBuff        int16 = 0x5B
 	RecvChannelScriptedPortal    int16 = 0x4F
 	RecvChannelTeleportRock      int16 = 0x51

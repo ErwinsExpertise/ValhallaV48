@@ -75,6 +75,33 @@ type monster struct {
 	lastPoisonTick   int64
 }
 
+var mobStatusEncodeOrder = []int32{
+	0x1,
+	0x2,
+	0x4,
+	0x8,
+	0x10,
+	0x20,
+	0x40,
+	0x80,
+	0x100,
+	0x200,
+	0x400,
+	0x800,
+	0x1000,
+	0x2000,
+	0x4000,
+	0x8000,
+	0x40000,
+	0x80000,
+	0x10000,
+	0x20000,
+	0x200000,
+	0x400000,
+	0x1000000,
+	0x2000000,
+}
+
 func createMonsterFromData(spawnID int32, life nx.Life, m nx.Mob, dropsItems, dropsMesos bool) monster {
 	return monster{
 		id:               life.ID,
@@ -257,15 +284,14 @@ func (m monster) displayBytes() []byte {
 	p.WriteUint32(uint32(m.statBuff))
 
 	nowMs := time.Now().UnixMilli()
-	for bit := 0; bit < 32; bit++ {
-		if (m.statBuff & (1 << uint(bit))) != 0 {
+	for _, singleBitMask := range mobStatusEncodeOrder {
+		if (m.statBuff & singleBitMask) != 0 {
 			var (
 				value         int16
 				sourceSkillID int32
 				durationUnits int16
 			)
 
-			singleBitMask := int32(1 << uint(bit))
 			buff, ok := m.buffs[singleBitMask]
 			if !ok {
 				for mask, b := range m.buffs {
@@ -649,34 +675,7 @@ func packetMobStatSet(spawnID int32, statMask int32, value int16, skillID int32,
 	p.WriteUint32(uint32(statMask))
 
 	durationUnits := duration * 2
-	encodeOrder := []int32{
-		0x1,
-		0x2,
-		0x4,
-		0x8,
-		0x10,
-		0x20,
-		0x40,
-		0x80,
-		0x100,
-		0x200,
-		0x400,
-		0x800,
-		0x1000,
-		0x2000,
-		0x4000,
-		0x8000,
-		0x40000,
-		0x80000,
-		0x10000,
-		0x20000,
-		0x200000,
-		0x400000,
-		0x1000000,
-		0x2000000,
-	}
-
-	for _, mask := range encodeOrder {
+	for _, mask := range mobStatusEncodeOrder {
 		if (statMask & mask) != 0 {
 			p.WriteInt16(value)
 			p.WriteInt32(skillID)

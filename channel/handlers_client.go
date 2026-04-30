@@ -170,7 +170,7 @@ func (server *Server) HandleClientPacket(conn mnet.Client, reader mpacket.Reader
 		// [mapID int32][? byte]
 	case opcode.RecvChannelAcknowledgeBuff:
 		server.playerPing(conn, reader)
-	case opcode.RecvChannelCancelBuff:
+	case opcode.RecvChannelCancelBuff, opcode.RecvChannelSyncBuff:
 		server.playerCancelBuff(conn, reader)
 	case opcode.RecvChannelQuestOperation:
 		server.playerQuestOperation(conn, reader)

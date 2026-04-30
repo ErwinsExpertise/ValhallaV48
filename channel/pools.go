@@ -239,10 +239,16 @@ func (pool *lifePool) mobAcknowledge(poolID int32, plr *Player, moveID int16, sk
 			skillLevel := byte(skillData >> 8)
 			skillDelay := int16(skillData >> 16)
 
-			mobSkillID, mobSkillLevel, mobSkillData := pool.mobs[i].getMobSkill(skillDelay, skillLevel, skillID)
+			// v48 only takes the mob-skill path in CMob::OnMove when action>>1 is in
+			// the skill range [21..25]. Align server-side application timing with that
+			// cast path instead of applying any non-zero skillData on arbitrary moves.
+			rawAction := int(uint8(action) >> 1)
+			if rawAction >= 21 && rawAction <= 25 {
+				mobSkillID, mobSkillLevel, mobSkillData := pool.mobs[i].getMobSkill(skillDelay, skillLevel, skillID)
 
-			if mobSkillID != 0 {
-				pool.performSkill(mob, mobSkillID, mobSkillLevel, mobSkillData)
+				if mobSkillID != 0 {
+					pool.performSkill(mob, mobSkillID, mobSkillLevel, mobSkillData)
+				}
 			}
 
 			// Choose next skill
