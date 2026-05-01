@@ -563,8 +563,9 @@ func (pool *lifePool) mobDamaged(poolID int32, damager *Player, dmg ...int32) {
 
 				if killer != nil {
 					if dropEntry, ok := dropTable[v.id]; ok {
-						mesos, drops := buildDropRewards(pool.rNumber, dropEntry, pool.dropPool.rates.drop, killer)
-						pool.dropPool.createDrop(dropSpawnNormal, dropFreeForAll, int32(killer.rates.mesos*float32(mesos)), v.pos, true, false, 0, 0, drops...)
+						now := time.Now()
+						mesos, drops := buildDropRewards(pool.rNumber, dropEntry, pool.dropPool.rates.drop*killer.dropCouponMultiplier(now), killer)
+						pool.dropPool.createDrop(dropSpawnNormal, dropFreeForAll, int32(killer.rates.mesos*killer.dropCouponMultiplier(now)*float32(mesos)), v.pos, true, false, 0, 0, drops...)
 					}
 				}
 

@@ -415,6 +415,14 @@ type Player struct {
 	regTeleportRocks []int32 // 5 regular teleport rocks
 	vipTeleportRocks []int32 // 10 VIP teleport rocks
 
+	chalkboardText   string
+	chalkboardActive bool
+
+	expCouponItemID     int32
+	expCouponExpiresAt  int64
+	dropCouponItemID    int32
+	dropCouponExpiresAt int64
+
 	party *party
 	guild *guild
 
@@ -817,7 +825,7 @@ func (d *Player) setEXP(amount int32) {
 }
 
 func (d *Player) giveEXP(amount int32, fromMob, fromParty bool) {
-	amount = int32(d.rates.exp * float32(amount))
+	amount = int32(d.rates.exp * d.expCouponMultiplier(time.Now()) * float32(amount))
 
 	switch {
 	case fromMob:
@@ -1945,6 +1953,15 @@ func (d *Player) updateSkill(updatedSkill playerSkill) {
 	d.MarkDirty(DirtySkills, 800*time.Millisecond)
 }
 
+func (d *Player) removeSkill(skillID int32) {
+	delete(d.skills, skillID)
+	d.Send(packetPlayerSkillBookUpdate(skillID, 0))
+	if _, err := common.DB.Exec("DELETE FROM skills WHERE characterID=? AND skillID=?", d.ID, skillID); err != nil {
+		log.Printf("removeSkill delete failed: player=%s id=%d skillID=%d err=%v", d.Name, d.ID, skillID, err)
+	}
+	d.MarkDirty(DirtySkills, 800*time.Millisecond)
+}
+
 func (d *Player) useSkill(id int32, level byte, projectileID int32) error {
 	skillInfo, _ := nx.GetPlayerSkill(id)
 
@@ -2232,7 +2249,7 @@ func (d *Player) damagePlayer(damage int16) {
 	newHP := d.hp - damage
 	if newHP <= 0 {
 		newHP = 0
-		if d.level >= 10 && !d.hasSafetyCharm {
+		if d.level >= 10 && !d.removeItemsByID(constant.ItemSafetyCharm, 1, false) {
 			percent := int32(10 - int(d.luk)/10)
 			if percent < 5 {
 				percent = 5
@@ -2502,18 +2519,19 @@ func LoadPlayerFromID(id int32, conn mnet.Client) Player {
 	filter := "ID,accountID,worldID,Name,gender,skin,hair,face,level,job,str,dex,intt," +
 		"luk,hp,maxHP,mp,maxMP,ap,sp, exp,fame,mapID,mapPos,previousMapID,mesos," +
 		"equipSlotSize,useSlotSize,setupSlotSize,etcSlotSize,cashSlotSize,miniGameWins," +
-		"miniGameDraw,miniGameLoss,miniGamePoints,buddyListSize,regTeleportRocks,vipTeleportRocks,partnerID,marriageItemID,divorceUntil"
+		"miniGameDraw,miniGameLoss,miniGamePoints,buddyListSize,regTeleportRocks,vipTeleportRocks,partnerID,marriageItemID,divorceUntil,expCouponItemID,expCouponExpiresAt,dropCouponItemID,dropCouponExpiresAt"
 
 	var regTeleportRocksStr, vipTeleportRocksStr sql.NullString
-	var partnerID, marriageItemID sql.NullInt32
+	var partnerID, marriageItemID, expCouponItemID, dropCouponItemID sql.NullInt32
 	var divorceUntil sql.NullInt64
+	var expCouponExpiresAt, dropCouponExpiresAt sql.NullInt64
 	err := common.DB.QueryRow("SELECT "+filter+" FROM characters where ID=?", id).Scan(&c.ID,
 		&c.accountID, &c.worldID, &c.Name, &c.gender, &c.skin, &c.hair, &c.face,
 		&c.level, &c.job, &c.str, &c.dex, &c.intt, &c.luk, &c.hp, &c.maxHP, &c.mp,
 		&c.maxMP, &c.ap, &c.sp, &c.exp, &c.fame, &c.mapID, &c.mapPos,
 		&c.previousMap, &c.mesos, &c.equipSlotSize, &c.useSlotSize, &c.setupSlotSize,
 		&c.etcSlotSize, &c.cashSlotSize, &c.miniGameWins, &c.miniGameDraw, &c.miniGameLoss,
-		&c.miniGamePoints, &c.buddyListSize, &regTeleportRocksStr, &vipTeleportRocksStr, &partnerID, &marriageItemID, &divorceUntil)
+		&c.miniGamePoints, &c.buddyListSize, &regTeleportRocksStr, &vipTeleportRocksStr, &partnerID, &marriageItemID, &divorceUntil, &expCouponItemID, &expCouponExpiresAt, &dropCouponItemID, &dropCouponExpiresAt)
 
 	if err != nil {
 		log.Println(err)
@@ -2534,6 +2552,18 @@ func LoadPlayerFromID(id int32, conn mnet.Client) Player {
 	c.divorceUntil = 0
 	if divorceUntil.Valid {
 		c.divorceUntil = divorceUntil.Int64
+	}
+	if expCouponItemID.Valid {
+		c.expCouponItemID = expCouponItemID.Int32
+	}
+	if expCouponExpiresAt.Valid {
+		c.expCouponExpiresAt = expCouponExpiresAt.Int64
+	}
+	if dropCouponItemID.Valid {
+		c.dropCouponItemID = dropCouponItemID.Int32
+	}
+	if dropCouponExpiresAt.Valid {
+		c.dropCouponExpiresAt = dropCouponExpiresAt.Int64
 	}
 
 	c.petCashID = 0
@@ -2600,6 +2630,7 @@ func LoadPlayerFromID(id int32, conn mnet.Client) Player {
 
 	// Initialize the per-Player buff manager so handlers can call plr.addBuff(...)
 	NewCharacterBuffs(&c)
+	c.cleanupExpiredRateCoupons(time.Now())
 
 	c.storageInventory = new(storage)
 
@@ -4001,7 +4032,7 @@ func packetPlayerEnterGame(plr Player, channelID int32) mpacket.Packet {
 	if sectionMask&setFieldCharSectionRings != 0 {
 		writeSetFieldRings(&p, &plr)
 	}
-	writeSetFieldTeleportRocks(&p)
+	writeSetFieldTeleportRocks(&p, &plr)
 
 	return p
 }
@@ -4041,12 +4072,20 @@ func writeSetFieldPostStatByte(p *mpacket.Packet, plr Player) {
 	p.WriteByte(plr.buddyListSize)
 }
 
-func writeSetFieldTeleportRocks(p *mpacket.Packet) {
+func writeSetFieldTeleportRocks(p *mpacket.Packet, plr *Player) {
 	for i := 0; i < constant.TeleportRockRegSlots; i++ {
-		p.WriteInt32(constant.InvalidMap)
+		if i < len(plr.regTeleportRocks) {
+			p.WriteInt32(plr.regTeleportRocks[i])
+		} else {
+			p.WriteInt32(constant.InvalidMap)
+		}
 	}
 	for i := 0; i < constant.TeleportRockVIPSlots; i++ {
-		p.WriteInt32(constant.InvalidMap)
+		if i < len(plr.vipTeleportRocks) {
+			p.WriteInt32(plr.vipTeleportRocks[i])
+		} else {
+			p.WriteInt32(constant.InvalidMap)
+		}
 	}
 }
 

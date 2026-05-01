@@ -319,6 +319,7 @@ func (f *field) createInstance(rates *rates, server *Server) int {
 		properties:      make(map[string]interface{}),
 		mysticDoors:     make(map[int32]*mysticDoorInfo),
 		pendingDoorSync: make(map[int32]bool),
+		messageBoxes:    make(map[int32]*messageBox),
 		fhHist:          f.fhHist,
 		server:          server,
 	}
@@ -587,6 +588,9 @@ type fieldInstance struct {
 	weatherMessage string
 	weatherTimer   time.Time
 
+	messageBoxes      map[int32]*messageBox
+	messageBoxCounter int32
+
 	fhHist fhHistogram
 
 	server *Server // reference to server for metrics
@@ -601,6 +605,16 @@ type mysticDoorInfo struct {
 	destMapID   int32
 	townPortal  bool
 	expiresAt   time.Time
+}
+
+type messageBox struct {
+	id        int32
+	ownerID   int32
+	ownerName string
+	itemID    int32
+	text      string
+	pos       pos
+	expiresAt time.Time
 }
 
 func newMysticDoor(ownerID, spawnID int32, portalIndex int, doorPos, srcPos pos, destMapID int32, townPortal bool, expiresAt time.Time) *mysticDoorInfo {
@@ -715,6 +729,9 @@ func (inst *fieldInstance) addPlayer(plr *Player) error {
 	if inst.weatherID != 0 {
 		plr.Send(packetBlowWeather(inst.weatherID, inst.weatherMessage))
 	}
+
+	inst.showMessageBoxesTo(plr)
+	inst.showChalkboardsTo(plr)
 
 	inst.players = append(inst.players, plr)
 
@@ -838,6 +855,8 @@ func (inst *fieldInstance) removePlayer(plr *Player, usedPortal bool) error {
 
 	inst.lifePool.removePlayer(plr, usedPortal)
 	inst.roomPool.removePlayer(plr)
+	inst.removeMessageBox(plr.ID, 1)
+	inst.clearChalkboard(plr, false)
 
 	return nil
 }
@@ -1093,6 +1112,7 @@ func (inst *fieldInstance) fieldUpdate(t time.Time) {
 	inst.dropPool.update(t)
 	inst.mistPool.update(t)
 	inst.stopWeatherEffect(t)
+	inst.expireMessageBoxes(t)
 
 	if len(inst.mysticDoors) > 0 {
 		var toExpire []int32
@@ -1127,6 +1147,78 @@ func (inst *fieldInstance) fieldUpdate(t time.Time) {
 
 	if inst.lifePool.canPause() && inst.dropPool.canPause() {
 		inst.stopFieldTimer()
+	}
+}
+
+func (inst *fieldInstance) showMessageBoxesTo(plr *Player) {
+	for _, box := range inst.messageBoxes {
+		if box == nil {
+			continue
+		}
+		plr.Send(packetMessageBoxEnter(*box))
+	}
+}
+
+func (inst *fieldInstance) expireMessageBoxes(t time.Time) {
+	for ownerID, box := range inst.messageBoxes {
+		if box == nil || box.expiresAt.IsZero() || t.Before(box.expiresAt) {
+			continue
+		}
+		inst.removeMessageBox(ownerID, 0)
+	}
+}
+
+func (inst *fieldInstance) setMessageBox(plr *Player, itemID int32, text string) {
+	inst.removeMessageBox(plr.ID, 1)
+	inst.messageBoxCounter++
+	box := &messageBox{
+		id:        inst.messageBoxCounter,
+		ownerID:   plr.ID,
+		ownerName: plr.Name,
+		itemID:    itemID,
+		text:      text,
+		pos:       plr.pos,
+		expiresAt: time.Now().Add(time.Hour),
+	}
+	inst.messageBoxes[plr.ID] = box
+	inst.send(packetMessageBoxEnter(*box))
+	if !inst.runUpdate {
+		inst.startFieldTimer()
+	}
+}
+
+func (inst *fieldInstance) removeMessageBox(ownerID int32, leaveType byte) {
+	box, ok := inst.messageBoxes[ownerID]
+	if !ok || box == nil {
+		return
+	}
+	delete(inst.messageBoxes, ownerID)
+	inst.send(packetMessageBoxLeave(box.id, leaveType))
+}
+
+func (inst *fieldInstance) showChalkboardsTo(plr *Player) {
+	for _, other := range inst.players {
+		if other == nil || !other.chalkboardActive {
+			continue
+		}
+		plr.Send(packetChalkboardUpdate(other.ID, true, other.chalkboardText))
+	}
+}
+
+func (inst *fieldInstance) setChalkboard(plr *Player, text string) {
+	plr.chalkboardText = text
+	plr.chalkboardActive = true
+	inst.send(packetChalkboardUpdate(plr.ID, true, text))
+}
+
+func (inst *fieldInstance) clearChalkboard(plr *Player, broadcast bool) {
+	if plr == nil || !plr.chalkboardActive {
+		return
+	}
+	plr.chalkboardText = ""
+	plr.chalkboardActive = false
+	if broadcast {
+		inst.send(packetChalkboardUpdate(plr.ID, false, ""))
 	}
 }
 
@@ -1303,6 +1395,34 @@ func packetBlowWeather(itemID int32, msg string) mpacket.Packet {
 	p.WriteBool(false) // isAdmin flag
 	p.WriteInt32(itemID)
 	p.WriteString(msg)
+	return p
+}
+
+func packetMessageBoxEnter(box messageBox) mpacket.Packet {
+	p := mpacket.CreateWithOpcode(opcode.SendChannelSpecialMapObjectSpawn)
+	p.WriteInt32(int32(box.pos.x))
+	p.WriteInt32(box.id)
+	p.WriteString(box.ownerName)
+	p.WriteString(box.text)
+	p.WriteInt16(int16(box.itemID))
+	p.WriteInt16(box.pos.y)
+	return p
+}
+
+func packetMessageBoxLeave(messageBoxID int32, leaveType byte) mpacket.Packet {
+	p := mpacket.CreateWithOpcode(opcode.SendChannelSpecialMapObjectRemove)
+	p.WriteByte(leaveType)
+	p.WriteInt32(messageBoxID)
+	return p
+}
+
+func packetChalkboardUpdate(charID int32, active bool, text string) mpacket.Packet {
+	p := mpacket.CreateWithOpcode(opcode.SendChannelChalkboard)
+	p.WriteInt32(charID)
+	p.WriteBool(active)
+	if active {
+		p.WriteString(text)
+	}
 	return p
 }
 

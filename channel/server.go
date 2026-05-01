@@ -62,6 +62,7 @@ func (server *Server) Initialise(work chan func(), dbuser, dbpassword, dbaddress
 		log.Fatal(err)
 	}
 	log.Println("Connected to database")
+	ensureCharacterRateCouponColumns()
 
 	server.fields = make(map[int32]*field)
 

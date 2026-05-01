@@ -37,6 +37,7 @@ const (
 	DirtyMaplePoints
 	DirtyPet
 	DirtyTeleportRocks
+	DirtyRateCoupons
 )
 
 // snapshot contains only columns we may persist.
@@ -73,9 +74,14 @@ type snapshot struct {
 	Skills map[int32]playerSkill
 
 	Pet *pet
-	
+
 	RegTeleportRocks []int32
 	VipTeleportRocks []int32
+
+	ExpCouponItemID     int32
+	ExpCouponExpiresAt  int64
+	DropCouponItemID    int32
+	DropCouponExpiresAt int64
 }
 
 type pendingSave struct {
@@ -165,13 +171,17 @@ func snapshotFromPlayer(p *Player) snapshot {
 	if p.dirty&DirtySkills != 0 {
 		s.Skills = copySkills(p.skills)
 	}
-	
+
 	if p.dirty&DirtyTeleportRocks != 0 {
 		s.RegTeleportRocks = make([]int32, len(p.regTeleportRocks))
 		copy(s.RegTeleportRocks, p.regTeleportRocks)
 		s.VipTeleportRocks = make([]int32, len(p.vipTeleportRocks))
 		copy(s.VipTeleportRocks, p.vipTeleportRocks)
 	}
+	s.ExpCouponItemID = p.expCouponItemID
+	s.ExpCouponExpiresAt = p.expCouponExpiresAt
+	s.DropCouponItemID = p.dropCouponItemID
+	s.DropCouponExpiresAt = p.dropCouponExpiresAt
 
 	return s
 }
@@ -333,6 +343,11 @@ func mergeSnapshot(lhs *snapshot, rhs snapshot) {
 		lhs.Skills = rhs.Skills
 	}
 
+	lhs.ExpCouponItemID = rhs.ExpCouponItemID
+	lhs.ExpCouponExpiresAt = rhs.ExpCouponExpiresAt
+	lhs.DropCouponItemID = rhs.DropCouponItemID
+	lhs.DropCouponExpiresAt = rhs.DropCouponExpiresAt
+
 }
 
 func (s *saver) persist(job pendingSave) bool {
@@ -426,6 +441,10 @@ func (s *saver) persist(job pendingSave) bool {
 	if job.bits&DirtyTeleportRocks != 0 {
 		cols = append(cols, "regTeleportRocks=?, vipTeleportRocks=?")
 		args = append(args, serializeTeleportRocks(job.snap.RegTeleportRocks), serializeTeleportRocks(job.snap.VipTeleportRocks))
+	}
+	if job.bits&DirtyRateCoupons != 0 {
+		cols = append(cols, "expCouponItemID=?, expCouponExpiresAt=?, dropCouponItemID=?, dropCouponExpiresAt=?")
+		args = append(args, job.snap.ExpCouponItemID, job.snap.ExpCouponExpiresAt, job.snap.DropCouponItemID, job.snap.DropCouponExpiresAt)
 	}
 
 	if len(cols) > 0 {

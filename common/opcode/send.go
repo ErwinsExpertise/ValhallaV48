@@ -65,6 +65,7 @@ const (
 	SendChannelSummonAttack            int16 = 0x78
 	SendChannelSummonDamage            int16 = 0x79
 	SendChannelPlayerMovement          int16 = 0x7E
+	SendChannelChalkboard              int16 = 0x7B
 	SendChannelPlayerUseMeleeSkill     int16 = 0x7F
 	SendChannelPlayerUseRangedSkill    int16 = 0x80
 	SendChannelPlayerUseMagicSkill     int16 = 0x81

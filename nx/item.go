@@ -49,6 +49,7 @@ type Item struct {
 	Rate                                                           int64
 	Meso                                                           int64
 	Path                                                           string
+	Msg                                                            string
 	FloatType                                                      int64
 	NoFlip                                                         string
 	StateChangeItem                                                int64
@@ -76,6 +77,7 @@ type Item struct {
 	SoldInform, Direction, Emotion, ShowMessage                    int64
 	Interact                                                       map[byte]PetReaction
 	SpawnMobs                                                      map[int32]int32
+	TimeEntries                                                    []string
 }
 type PetReaction struct {
 	Inc      byte
@@ -212,8 +214,11 @@ func extractItems(nodes []gonx.Node, textLookup []string) map[int32]Item {
 		name, err := itemName(id, nodes, textLookup)
 		if err == nil {
 			it.Name = name
-			items[id] = it
 		}
+		if msg, err := itemStringValue(id, "msg", nodes, textLookup); err == nil {
+			it.Msg = msg
+		}
+		items[id] = it
 	}
 
 	return items
@@ -416,7 +421,17 @@ func (item *Item) getItem(node *gonx.Node, nodes []gonx.Node, textLookup []strin
 		case "dropSweep":
 			item.DropSweep = gonx.DataToInt64(option.Data)
 		case "time":
-			item.Time = gonx.DataToInt16((option.Data))
+			if option.ChildCount > 0 {
+				item.TimeEntries = make([]string, 0, option.ChildCount)
+				for j := uint32(0); j < uint32(option.ChildCount); j++ {
+					child := nodes[option.ChildID+j]
+					if child.Type == 3 {
+						item.TimeEntries = append(item.TimeEntries, textLookup[gonx.DataToUint32(child.Data)])
+					}
+				}
+			} else {
+				item.Time = gonx.DataToInt16((option.Data))
+			}
 		case "rate":
 			item.Rate = gonx.DataToInt64(option.Data)
 		case "meso":
@@ -603,14 +618,18 @@ func (itm *Item) loadPetInteract(node *gonx.Node, nodes []gonx.Node, textLookup 
 }
 
 func itemName(id int32, nodes []gonx.Node, textLookup []string) (string, error) {
+	return itemStringValue(id, "name", nodes, textLookup)
+}
+
+func itemStringValue(id int32, field string, nodes []gonx.Node, textLookup []string) (string, error) {
 	groups := []string{"Cash", "Con", "Eqp", "Etc", "Ins", "Pet"}
 	for _, g := range groups {
-		path := fmt.Sprintf("/String/Item.img/%s/%07d/name", g, id)
+		path := fmt.Sprintf("/String/Item.img/%s/%07d/%s", g, id, field)
 		var nameNode *gonx.Node
 		gonx.FindNode(path, nodes, textLookup, func(n *gonx.Node) { nameNode = n })
 		if nameNode != nil {
 			return textLookup[gonx.DataToUint32(nameNode.Data)], nil
 		}
 	}
-	return "", fmt.Errorf("no string node for %07d", id)
+	return "", fmt.Errorf("no string field %q for %07d", field, id)
 }

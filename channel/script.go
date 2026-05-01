@@ -2035,7 +2035,6 @@ func (ctrl *npcChatController) SendGuildEmblemEditor() {
 func (ctrl *npcChatController) SendShop(goods [][]int32) {
 	if ctrl.stateTracker.performInterrupt() {
 		ctrl.goods = goods
-		log.Println("sending shop")
 		ctrl.conn.Send(packetNpcShop(ctrl.npcID, goods))
 		ctrl.vm.Interrupt("SendShop")
 	}

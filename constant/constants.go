@@ -442,10 +442,16 @@ const (
 	ItemSPResetFirstJob                = 5050001
 	ItemSPResetSecondJob               = 5050002
 	ItemSPResetThirdJob                = 5050003
+	ItemSPResetFourthJob               = 5050004
+	ItemItemNameTag                    = 5060000
 	ItemMegaphone                      = 5071000
 	ItemSuperMegaphone                 = 5072000
 	ItemHeartSMegaphone                = 5073000
 	ItemSkullSMegaphone                = 5074000
+	ItemKoreanKite                     = 5080000
+	ItemHeartBalloon                   = 5080001
+	ItemGraduationBanner               = 5080002
+	ItemAdmissionBanner                = 5080003
 	ItemWeatherSnow                    = 5120000
 	ItemWeatherFlowers                 = 5120001
 	ItemWeatherSoap                    = 5120002
@@ -487,6 +493,7 @@ const (
 	ItemWeddingGuestTicketChapel       = 4031406
 	ItemWeddingEntryPermission         = 4000313
 	ItemPetNameTag                     = 5170000
+	ItemChalkboard                     = 5370000
 	ItemWaterOfLife                    = 5180000
 )
 
