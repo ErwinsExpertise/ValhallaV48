@@ -23,6 +23,7 @@ type Item struct {
 	ReqSTR, ReqDEX, ReqINT, ReqLUK, IncSTR, IncDEX, IncINT, IncLUK int16
 	IncACC, IncEVA, IncMDD, IncPDD, IncMAD, IncPAD, IncMHP, IncMMP float64
 	Speed, Jump, PAD, PDD, MAD, MDD, ACC, EVA, Morph, Thaw         int16
+	ThawRate                                                       int16
 	Poison, Darkness, Weakness, Curse, Seal                        int16
 	Attack, IncJump, IncSpeed, RecoveryHP                          float64
 	HP, MP, HPR, MPR                                               int16
@@ -523,6 +524,8 @@ func (item *Item) getItem(node *gonx.Node, nodes []gonx.Node, textLookup []strin
 			item.MPR = gonx.DataToInt16(option.Data)
 		case "thaw":
 			item.Thaw = gonx.DataToInt16(option.Data)
+		case "thawRate":
+			item.ThawRate = gonx.DataToInt16(option.Data)
 		default:
 			if _, err := strconv.Atoi(optionName); err == nil {
 				item.loadSpawnMobs(&option, nodes, textLookup)

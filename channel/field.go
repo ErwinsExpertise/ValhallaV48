@@ -316,6 +316,7 @@ func (f *field) createInstance(rates *rates, server *Server) int {
 		town:            f.Data.Town,
 		returnMapID:     f.Data.ReturnMap,
 		timeLimit:       f.Data.TimeLimit,
+		decHP:           int16(f.Data.DecHP),
 		properties:      make(map[string]interface{}),
 		mysticDoors:     make(map[int32]*mysticDoorInfo),
 		pendingDoorSync: make(map[int32]bool),
@@ -555,6 +556,7 @@ type fieldInstance struct {
 	fieldID     int32
 	returnMapID int32
 	timeLimit   int64
+	decHP       int16
 
 	lifePool    lifePool
 	dropPool    dropPool
@@ -688,6 +690,7 @@ func (inst fieldInstance) findController() interface{} {
 
 func (inst *fieldInstance) addPlayer(plr *Player) error {
 	plr.inst = inst
+	plr.nextMapDamageAtMs = time.Now().Add(time.Second).UnixMilli()
 
 	for _, other := range inst.players {
 		if other == nil {
@@ -1111,6 +1114,7 @@ func (inst *fieldInstance) fieldUpdate(t time.Time) {
 	inst.lifePool.update(t)
 	inst.dropPool.update(t)
 	inst.mistPool.update(t)
+	inst.applyMapDamage(t)
 	inst.stopWeatherEffect(t)
 	inst.expireMessageBoxes(t)
 
@@ -1147,6 +1151,30 @@ func (inst *fieldInstance) fieldUpdate(t time.Time) {
 
 	if inst.lifePool.canPause() && inst.dropPool.canPause() {
 		inst.stopFieldTimer()
+	}
+}
+
+func (inst *fieldInstance) applyMapDamage(t time.Time) {
+	if inst.decHP <= 0 {
+		return
+	}
+
+	now := t.UnixMilli()
+	for _, plr := range inst.players {
+		if plr == nil || plr.hp <= 0 {
+			continue
+		}
+		if plr.nextMapDamageAtMs > now {
+			continue
+		}
+
+		plr.nextMapDamageAtMs = now + int64(time.Second/time.Millisecond)
+
+		if plr.hasBuff(BuffThaw) {
+			continue
+		}
+
+		plr.damagePlayer(inst.decHP)
 	}
 }
 

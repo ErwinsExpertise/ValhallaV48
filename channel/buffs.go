@@ -767,6 +767,41 @@ func buildItemBuffValueMap(meta nx.Item, bits []int) map[int]int16 {
 	return values
 }
 
+func itemBuffBits(meta nx.Item) []int {
+	bits := make([]int, 0, 8)
+	if meta.ACC != 0 {
+		bits = append(bits, BuffAccuracy)
+	}
+	if meta.EVA != 0 {
+		bits = append(bits, BuffAvoidability)
+	}
+	if meta.Speed != 0 {
+		bits = append(bits, BuffSpeed)
+	}
+	if meta.Jump != 0 {
+		bits = append(bits, BuffJump)
+	}
+	if meta.MAD != 0 {
+		bits = append(bits, BuffMagicAttack)
+	}
+	if meta.MDD != 0 {
+		bits = append(bits, BuffMagicDefense)
+	}
+	if meta.PAD != 0 {
+		bits = append(bits, BuffWeaponAttack)
+	}
+	if meta.PDD != 0 {
+		bits = append(bits, BuffWeaponDefense)
+	}
+	if meta.Thaw != 0 {
+		bits = append(bits, BuffThaw)
+	}
+	if meta.Morph != 0 {
+		bits = append(bits, BuffMorph)
+	}
+	return bits
+}
+
 func buildItemForeignBuffMaskAndValues(meta nx.Item, bits []int, sourceID int32) ([]byte, []byte) {
 	mask := buildForeignMaskBytes64(bits)
 	if len(mask) == 0 {
@@ -962,37 +997,7 @@ func (cb *CharacterBuffs) AddItemBuff(meta nx.Item, sourceID int32) {
 	// Handle debuff curing first
 	cb.cureDebuffs(meta)
 
-	bits := make([]int, 0, 6)
-	if meta.ACC != 0 {
-		bits = append(bits, BuffAccuracy)
-	}
-	if meta.EVA != 0 {
-		bits = append(bits, BuffAvoidability)
-	}
-	if meta.Speed != 0 {
-		bits = append(bits, BuffSpeed)
-	}
-	if meta.Jump != 0 {
-		bits = append(bits, BuffJump)
-	}
-	if meta.MAD != 0 {
-		bits = append(bits, BuffMagicAttack)
-	}
-	if meta.MDD != 0 {
-		bits = append(bits, BuffMagicDefense)
-	}
-	if meta.PAD != 0 {
-		bits = append(bits, BuffWeaponAttack)
-	}
-	if meta.PDD != 0 {
-		bits = append(bits, BuffWeaponDefense)
-	}
-	if meta.Thaw != 0 {
-		bits = append(bits, BuffThaw)
-	}
-	if meta.Morph != 0 {
-		bits = append(bits, BuffMorph)
-	}
+	bits := itemBuffBits(meta)
 	if len(bits) == 0 {
 		return
 	}
@@ -1123,38 +1128,7 @@ func (cb *CharacterBuffs) AddItemBuffFromCC(itemID int32, expiresAtMs int64) {
 		return
 	}
 
-	// Re-derive bits like AddItemBuff
-	bits := make([]int, 0, 8)
-	if meta.ACC != 0 {
-		bits = append(bits, BuffAccuracy)
-	}
-	if meta.EVA != 0 {
-		bits = append(bits, BuffAvoidability)
-	}
-	if meta.Speed != 0 {
-		bits = append(bits, BuffSpeed)
-	}
-	if meta.Jump != 0 {
-		bits = append(bits, BuffJump)
-	}
-	if meta.MAD != 0 {
-		bits = append(bits, BuffMagicAttack)
-	}
-	if meta.MDD != 0 {
-		bits = append(bits, BuffMagicDefense)
-	}
-	if meta.PAD != 0 {
-		bits = append(bits, BuffWeaponAttack)
-	}
-	if meta.PDD != 0 {
-		bits = append(bits, BuffWeaponDefense)
-	}
-	if meta.Thaw != 0 {
-		bits = append(bits, BuffThaw)
-	}
-	if meta.Morph != 0 {
-		bits = append(bits, BuffMorph)
-	}
+	bits := itemBuffBits(meta)
 	if len(bits) == 0 {
 		return
 	}
@@ -1190,6 +1164,14 @@ func (cb *CharacterBuffs) AddItemBuffFromCC(itemID int32, expiresAtMs int64) {
 		cb.expireAt[sourceID] = expiresAtMs
 		cb.scheduleExpiryLocked(sourceID, time.Until(time.UnixMilli(expiresAtMs)))
 	}
+}
+
+func (cb *CharacterBuffs) hasBuff(mask int) bool {
+	if cb == nil {
+		return false
+	}
+	_, ok := cb.activeBitStates[mask]
+	return ok
 }
 
 // AddMobDebuff applies a debuff from a mob skill to the player

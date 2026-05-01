@@ -404,6 +404,7 @@ type Player struct {
 	miniGameWins, miniGameDraw, miniGameLoss, miniGamePoints int32
 
 	lastAttackPacketTime int64
+	nextMapDamageAtMs    int64
 
 	buddyListSize      byte
 	buddyList          []buddy
@@ -3695,6 +3696,13 @@ func (p *Player) hasEquipped(itemID int32) bool {
 		}
 	}
 	return false
+}
+
+func (p *Player) hasBuff(mask int) bool {
+	if p == nil || p.buffs == nil {
+		return false
+	}
+	return p.buffs.hasBuff(mask)
 }
 
 func packetPlayerReceivedDmg(charID int32, attack int8, initalAmmount, reducedAmmount, spawnID, mobID, healSkillID int32,
