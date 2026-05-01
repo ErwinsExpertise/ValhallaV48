@@ -2134,13 +2134,10 @@ func (d Player) encodeDisplayBytes(pkt *mpacket.Packet) {
 }
 
 func (d Player) remoteSpawnTempStatMask() uint64 {
-	var mask uint64
-
-	if d.buffs != nil && d.buffs.HasGMHide() {
-		mask |= BuffDarkSight
+	if d.buffs == nil {
+		return 0
 	}
-
-	return mask
+	return d.buffs.remoteSpawnMask()
 }
 
 func (d Player) encodeRemoteMiniRoomBalloon(pkt *mpacket.Packet) {
@@ -2885,7 +2882,7 @@ func (d *Player) loadAndApplyBuffSnapshot() {
 		}
 
 		if s.ExpiresAtMs == 0 {
-			toDelete = append(toDelete, s.SourceID)
+			snaps = append(snaps, s)
 			continue
 		}
 
@@ -3838,7 +3835,7 @@ func buffMaskNeedsExtraByte(mask []byte) bool {
 	}
 	value := uint64(mask[0]) | uint64(mask[1])<<8 | uint64(mask[2])<<16 | uint64(mask[3])<<24 |
 		uint64(mask[4])<<32 | uint64(mask[5])<<40 | uint64(mask[6])<<48 | uint64(mask[7])<<56
-	const forcedStatExtraMask uint64 = 0x408B40220180
+	const forcedStatExtraMask uint64 = 0x0000408B40020180
 	return (value & forcedStatExtraMask) != 0
 }
 

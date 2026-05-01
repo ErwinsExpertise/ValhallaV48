@@ -349,6 +349,7 @@ func (server *Server) playerConnect(conn mnet.Client, reader mpacket.Reader) {
 	if newPlr.buffs != nil {
 		newPlr.buffs.plr.inst = newPlr.inst
 		newPlr.buffs.AuditAndExpireStaleBuffs()
+		newPlr.buffs.broadcastCurrentRemoteBuffs()
 	}
 
 	for _, q := range newPlr.quests.inProgressList() {
@@ -1594,14 +1595,38 @@ func (server Server) playerUseInventoryItem(conn mnet.Client, reader mpacket.Rea
 	slot := reader.ReadInt16()
 	itemid := reader.ReadInt32()
 
-	item, err := plr.takeItem(itemid, slot, 1, constant.InventoryUse)
+	item, err := plr.getItem(constant.InventoryUse, slot)
 	if err != nil {
 		if server.ac != nil {
 			server.ac.LogInvalidItemViolation(plr.accountID)
 		}
+		plr.noChange()
 		return
 	}
-	item.use(plr)
+	if item.ID != itemid {
+		if server.ac != nil {
+			server.ac.LogInvalidItemViolation(plr.accountID)
+		}
+		plr.noChange()
+		return
+	}
+
+	nxData, err := item.validateConsumeUse(plr)
+	if err != nil {
+		log.Printf("playerUseInventoryItem rejected: player=%s itemID=%d slot=%d err=%v", plr.Name, itemid, slot, err)
+		plr.noChange()
+		return
+	}
+
+	if _, err := plr.takeItem(itemid, slot, 1, constant.InventoryUse); err != nil {
+		if server.ac != nil {
+			server.ac.LogInvalidItemViolation(plr.accountID)
+		}
+		plr.noChange()
+		return
+	}
+
+	item.applyConsumeUse(plr, nxData)
 
 }
 

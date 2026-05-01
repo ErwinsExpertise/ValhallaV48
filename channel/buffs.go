@@ -60,6 +60,7 @@ const (
 	BuffEchoOfHero       = 0x1000000000000
 	BuffThaw             = 0x20000000
 	BuffCurse            = 0x80000000
+	BuffMorph            = 0x200000000
 	BuffSummon           = BuffComboAttack
 	BuffPuppet           = BuffPickPocketMesoUP
 )
@@ -177,7 +178,15 @@ type CharacterBuffs struct {
 	expireTimers      map[int32]*time.Timer
 	itemMasks         map[int32][]byte // sourceID (-itemId) -> mask
 	expireAt          map[int32]int64  // sourceID -> unix ms expiry
-	recoveryTicker    *time.Ticker     // 5-second ticker for Recovery skill
+	activeBitStates   map[int]tempStatState
+	sourceBitValues   map[int32]map[int]int16
+	sourceAppliedAt   map[int32]int64
+	recoveryTicker    *time.Ticker // 5-second ticker for Recovery skill
+}
+
+type tempStatState struct {
+	sourceID int32
+	value    int16
 }
 
 func NewCharacterBuffs(p *Player) {
@@ -187,6 +196,9 @@ func NewCharacterBuffs(p *Player) {
 		expireTimers:      make(map[int32]*time.Timer),
 		itemMasks:         make(map[int32][]byte),
 		expireAt:          make(map[int32]int64),
+		activeBitStates:   make(map[int]tempStatState),
+		sourceBitValues:   make(map[int32]map[int]int16),
+		sourceAppliedAt:   make(map[int32]int64),
 	}
 }
 
@@ -200,49 +212,174 @@ func (cb *CharacterBuffs) getStatBonuses() statBonuses {
 		return out
 	}
 
-	for src, _ := range cb.itemMasks {
-		if src >= 0 {
-			continue
-		}
-		itemID := -src
-		meta, err := nx.GetItem(itemID)
-		if err != nil {
-			continue
-		}
-
-		if meta.PAD != 0 {
-			out.watk += meta.PAD
-		}
-		if meta.MAD != 0 {
-			out.matk += meta.MAD
-		}
-		if meta.ACC != 0 {
-			out.accuracy += meta.ACC
-		}
-	}
-
-	for sid, lvl := range cb.activeSkillLevels {
-		if lvl == 0 {
-			continue
-		}
-		skillData, err := nx.GetPlayerSkill(sid)
-		if err != nil || int(lvl) < 1 || int(lvl) > len(skillData) {
-			continue
-		}
-		sl := skillData[lvl-1]
-
-		if sl.Pad != 0 {
-			out.watk += int16(sl.Pad)
-		}
-		if sl.Mad != 0 {
-			out.matk += int16(sl.Mad)
-		}
-		if sl.Acc != 0 {
-			out.accuracy += int16(sl.Acc)
+	for bit, state := range cb.activeBitStates {
+		switch bit {
+		case BuffWeaponAttack:
+			out.watk += state.value
+		case BuffMagicAttack:
+			out.matk += state.value
+		case BuffAccuracy:
+			out.accuracy += state.value
 		}
 	}
 
 	return out
+}
+
+func uniqueBuffBits(bits []int) []int {
+	ordered := orderedBuffBits(bits)
+	if len(ordered) == 0 {
+		return nil
+	}
+	out := make([]int, 0, len(ordered))
+	prev := 0
+	for i, bit := range ordered {
+		if i == 0 || bit != prev {
+			out = append(out, bit)
+			prev = bit
+		}
+	}
+	return out
+}
+
+func (cb *CharacterBuffs) registerSourceBits(sourceID int32, bits []int, values map[int]int16) {
+	if cb == nil {
+		return
+	}
+	b := uniqueBuffBits(bits)
+	if len(b) == 0 {
+		delete(cb.sourceBitValues, sourceID)
+		delete(cb.sourceAppliedAt, sourceID)
+		return
+	}
+	stored := make(map[int]int16, len(b))
+	for _, bit := range b {
+		value := int16(1)
+		if values != nil {
+			if v, ok := values[bit]; ok {
+				value = v
+			}
+		}
+		stored[bit] = value
+	}
+	cb.sourceBitValues[sourceID] = stored
+	cb.sourceAppliedAt[sourceID] = time.Now().UnixNano()
+	cb.recomputeActiveBits(b)
+}
+
+func (cb *CharacterBuffs) recomputeActiveBits(bits []int) {
+	if cb == nil {
+		return
+	}
+	for _, bit := range uniqueBuffBits(bits) {
+		bestSource := int32(0)
+		bestValue := int16(0)
+		bestAppliedAt := int64(0)
+		for sourceID, sourceBits := range cb.sourceBitValues {
+			value, ok := sourceBits[bit]
+			if !ok {
+				continue
+			}
+			appliedAt := cb.sourceAppliedAt[sourceID]
+			if bestSource == 0 || appliedAt >= bestAppliedAt {
+				bestSource = sourceID
+				bestValue = value
+				bestAppliedAt = appliedAt
+			}
+		}
+		if bestSource == 0 {
+			delete(cb.activeBitStates, bit)
+			continue
+		}
+		cb.activeBitStates[bit] = tempStatState{sourceID: bestSource, value: bestValue}
+	}
+}
+
+func (cb *CharacterBuffs) bitsForSource(sourceID int32) []int {
+	if cb == nil {
+		return nil
+	}
+	values, ok := cb.sourceBitValues[sourceID]
+	if !ok {
+		return nil
+	}
+	bits := make([]int, 0, len(values))
+	for bit := range values {
+		bits = append(bits, bit)
+	}
+	return uniqueBuffBits(bits)
+}
+
+func (cb *CharacterBuffs) bitsOwnedBySource(sourceID int32) []int {
+	if cb == nil {
+		return nil
+	}
+	bits := make([]int, 0, len(cb.activeBitStates))
+	for bit, state := range cb.activeBitStates {
+		if state.sourceID == sourceID {
+			bits = append(bits, bit)
+		}
+	}
+	return uniqueBuffBits(bits)
+}
+
+func (cb *CharacterBuffs) remainingDurationMs(sourceID int32) int32 {
+	if cb == nil {
+		return 0
+	}
+	expiresAtMs, ok := cb.expireAt[sourceID]
+	if !ok || expiresAtMs <= 0 {
+		return 0
+	}
+	remain := expiresAtMs - time.Now().UnixMilli()
+	if remain <= 0 {
+		return 0
+	}
+	if remain > int64(^uint32(0)>>1) {
+		return int32(^uint32(0) >> 1)
+	}
+	return int32(remain)
+}
+
+func (cb *CharacterBuffs) remoteSpawnMask() uint64 {
+	if cb == nil {
+		return 0
+	}
+	mask := uint64(0)
+	for bit := range cb.activeBitStates {
+		switch bit {
+		case BuffSpeed,
+			BuffComboAttack,
+			BuffCharges,
+			BuffStun,
+			BuffPoison,
+			BuffSeal,
+			BuffDarkness,
+			BuffWeakness,
+			BuffCurse,
+			BuffShadowPartner,
+			BuffDarkSight,
+			BuffSoulArrow,
+			BuffMorph,
+			BuffMonsterRiding,
+			BuffBanMap:
+			mask |= uint64(bit)
+		}
+	}
+	return mask
+}
+
+func (cb *CharacterBuffs) broadcastCurrentRemoteBuffs() {
+	if cb == nil || cb.plr == nil || cb.plr.inst == nil || cb.plr.Conn == nil {
+		return
+	}
+	grouped := make(map[int32][]int)
+	for bit, state := range cb.activeBitStates {
+		grouped[state.sourceID] = append(grouped[state.sourceID], bit)
+	}
+	for sourceID, bits := range grouped {
+		cb.sendSourceForeignApply(sourceID, bits, 0)
+	}
 }
 
 func (cb *CharacterBuffs) HasGMHide() bool {
@@ -536,6 +673,8 @@ func buildForeignMaskBytes64(bits []int) []byte {
 			BuffShadowPartner,
 			BuffDarkSight,
 			BuffSoulArrow,
+			BuffMorph,
+			BuffBanMap,
 			BuffMonsterRiding:
 			remoteBits = append(remoteBits, bit)
 		}
@@ -570,6 +709,10 @@ func buildItemBuffTriplesWireOrder(meta nx.Item, bits []int, durationMs int32, s
 			return meta.PAD
 		case BuffWeaponDefense:
 			return meta.PDD
+		case BuffThaw:
+			return meta.Thaw
+		case BuffMorph:
+			return meta.Morph
 		default:
 			return 1
 		}
@@ -593,6 +736,225 @@ func buildItemBuffTriplesWireOrder(meta nx.Item, bits []int, durationMs int32, s
 	return out
 }
 
+func buildItemBuffValueMap(meta nx.Item, bits []int) map[int]int16 {
+	values := make(map[int]int16, len(bits))
+	for _, bit := range uniqueBuffBits(bits) {
+		switch bit {
+		case BuffAccuracy:
+			values[bit] = meta.ACC
+		case BuffAvoidability:
+			values[bit] = meta.EVA
+		case BuffSpeed:
+			values[bit] = meta.Speed
+		case BuffJump:
+			values[bit] = meta.Jump
+		case BuffMagicAttack:
+			values[bit] = meta.MAD
+		case BuffMagicDefense:
+			values[bit] = meta.MDD
+		case BuffWeaponAttack:
+			values[bit] = meta.PAD
+		case BuffWeaponDefense:
+			values[bit] = meta.PDD
+		case BuffThaw:
+			values[bit] = meta.Thaw
+		case BuffMorph:
+			values[bit] = meta.Morph
+		default:
+			values[bit] = 1
+		}
+	}
+	return values
+}
+
+func buildItemForeignBuffMaskAndValues(meta nx.Item, bits []int, sourceID int32) ([]byte, []byte) {
+	mask := buildForeignMaskBytes64(bits)
+	if len(mask) == 0 {
+		return nil, nil
+	}
+	out := make([]byte, 0, 8)
+	for _, bit := range uniqueBuffBits(bits) {
+		switch bit {
+		case BuffSpeed:
+			out = append(out, byte(meta.Speed))
+		case BuffMorph:
+			out = append(out, byte(meta.Morph), byte(meta.Morph>>8))
+		case BuffPoison:
+			out = append(out, byte(meta.Poison), byte(meta.Poison>>8))
+			out = append(out, byte(sourceID), byte(sourceID>>8), byte(sourceID>>16), byte(sourceID>>24))
+		case BuffStun, BuffDarkness, BuffSeal, BuffWeakness, BuffCurse, BuffBanMap:
+			out = append(out, byte(sourceID), byte(sourceID>>8), byte(sourceID>>16), byte(sourceID>>24))
+		}
+	}
+	return mask, out
+}
+
+func (cb *CharacterBuffs) buffValueForSkillBit(skillID int32, level byte, bit int) int16 {
+	levels, err := nx.GetPlayerSkill(skillID)
+	if err != nil || level == 0 || int(level) > len(levels) {
+		return 0
+	}
+	sl := levels[level-1]
+
+	if bit == BuffComboAttack && skill.Skill(skillID) == skill.ComboAttack {
+		if cb.comboCount > 0 {
+			return int16(cb.comboCount)
+		}
+		return 1
+	}
+	if skillUsesOneAsOption(skillID, bit) {
+		return 1
+	}
+
+	switch bit {
+	case BuffSpeed:
+		if sl.Speed != 0 {
+			return int16(sl.Speed)
+		}
+		return 1
+	case BuffJump:
+		if sl.Jump != 0 {
+			return int16(sl.Jump)
+		}
+		return 1
+	case BuffWeaponAttack:
+		if sl.Pad != 0 {
+			return int16(sl.Pad)
+		}
+		return 1
+	case BuffWeaponDefense:
+		if sl.Pdd != 0 {
+			return int16(sl.Pdd)
+		}
+		return 1
+	case BuffMagicAttack:
+		if sl.Mad != 0 {
+			return int16(sl.Mad)
+		}
+		return 1
+	case BuffMagicDefense:
+		if sl.Mdd != 0 {
+			return int16(sl.Mdd)
+		}
+		return 1
+	case BuffAccuracy:
+		if sl.Acc != 0 {
+			return int16(sl.Acc)
+		}
+		return 1
+	case BuffAvoidability:
+		if sl.Eva != 0 {
+			return int16(sl.Eva)
+		}
+		return 1
+	case BuffMaxHP:
+		if sl.X != 0 {
+			return int16(sl.X)
+		}
+		return 1
+	case BuffMaxMP:
+		if sl.Y != 0 {
+			return int16(sl.Y)
+		}
+		if sl.X != 0 {
+			return int16(sl.X)
+		}
+		return 1
+	case BuffMagicGuard, BuffBooster, BuffPowerGuard,
+		BuffHolySymbol, BuffMesoUP, BuffPickPocketMesoUP, BuffMesoGuard,
+		BuffDarkSight, BuffSoulArrow, BuffInvincible, BuffShadowPartner,
+		BuffThaw, BuffWeakness, BuffCurse, BuffComboAttack, BuffCharges, BuffHands,
+		BuffRecovery, BuffMapleWarrior, BuffStance, BuffSharpEyes, BuffManaReflection,
+		BuffShadowClaw, BuffInfinity, BuffHolyShield, BuffHamstring, BuffBlind,
+		BuffConcentrate, BuffMonsterRiding, BuffEchoOfHero, BuffMorph:
+		if bit == BuffStance && sl.Prop != 0 {
+			return int16(sl.Prop)
+		}
+		if bit == BuffShadowClaw {
+			return 0
+		}
+		if sl.X != 0 {
+			return int16(sl.X)
+		}
+		return 1
+	case BuffDragonBlood:
+		if sl.Pad != 0 {
+			return int16(sl.Pad)
+		}
+		return 1
+	case BuffStun:
+		return int16(sl.X)
+	default:
+		return 1
+	}
+}
+
+func (cb *CharacterBuffs) buildSkillBuffValueMap(skillID int32, level byte, bits []int) map[int]int16 {
+	values := make(map[int]int16, len(bits))
+	for _, bit := range uniqueBuffBits(bits) {
+		values[bit] = cb.buffValueForSkillBit(skillID, level, bit)
+	}
+	return values
+}
+
+func (cb *CharacterBuffs) sendSourceForeignApply(sourceID int32, bits []int, delay int16) {
+	if cb == nil || cb.plr == nil || cb.plr.inst == nil || cb.plr.Conn == nil {
+		return
+	}
+	bits = uniqueBuffBits(bits)
+	if len(bits) == 0 {
+		return
+	}
+	if sourceID < 0 {
+		meta, err := nx.GetItem(-sourceID)
+		if err != nil {
+			return
+		}
+		mask, values := buildItemForeignBuffMaskAndValues(meta, bits, sourceID)
+		if len(mask) > 0 {
+			cb.plr.inst.sendExcept(packetPlayerGiveForeignBuff(cb.plr.ID, mask, values, delay), cb.plr.Conn)
+		}
+		return
+	}
+	level, ok := cb.activeSkillLevels[sourceID]
+	if !ok || level == 0 {
+		return
+	}
+	mask, values := cb.buildForeignBuffMaskAndValues(sourceID, level, bits)
+	if len(mask) > 0 {
+		cb.plr.inst.sendExcept(packetPlayerGiveForeignBuff(cb.plr.ID, mask, values, delay), cb.plr.Conn)
+	}
+}
+
+func (cb *CharacterBuffs) sendSourceApply(sourceID int32, bits []int, delay int16) {
+	if cb == nil || cb.plr == nil {
+		return
+	}
+	bits = uniqueBuffBits(bits)
+	if len(bits) == 0 {
+		return
+	}
+	if sourceID < 0 {
+		meta, err := nx.GetItem(-sourceID)
+		if err != nil {
+			return
+		}
+		mask := buildMaskBytes64(bits)
+		values := buildItemBuffTriplesWireOrder(meta, bits, cb.remainingDurationMs(sourceID), sourceID)
+		cb.plr.Send(packetPlayerGiveBuff(mask, values, delay, 0))
+		cb.sendSourceForeignApply(sourceID, bits, delay)
+		return
+	}
+	level, ok := cb.activeSkillLevels[sourceID]
+	if !ok || level == 0 {
+		return
+	}
+	mask := buildMaskBytes64(bits)
+	values := cb.buildBuffTriplesWireOrder(sourceID, level, bits, cb.remainingDurationMs(sourceID))
+	cb.plr.Send(packetPlayerGiveBuff(mask, values, delay, cb.localBuffExtra(sourceID, bits)))
+	cb.sendSourceForeignApply(sourceID, bits, delay)
+}
+
 // durationSec is the client-visible remaining time in seconds. Source ID is encoded as -Item.ID.
 func (cb *CharacterBuffs) AddItemBuff(meta nx.Item, sourceID int32) {
 	var durationMs int32 = 0
@@ -601,37 +963,45 @@ func (cb *CharacterBuffs) AddItemBuff(meta nx.Item, sourceID int32) {
 	cb.cureDebuffs(meta)
 
 	bits := make([]int, 0, 6)
-	if meta.ACC > 0 {
+	if meta.ACC != 0 {
 		bits = append(bits, BuffAccuracy)
 	}
-	if meta.EVA > 0 {
+	if meta.EVA != 0 {
 		bits = append(bits, BuffAvoidability)
 	}
-	if meta.Speed > 0 {
+	if meta.Speed != 0 {
 		bits = append(bits, BuffSpeed)
 	}
-	if meta.Jump > 0 {
+	if meta.Jump != 0 {
 		bits = append(bits, BuffJump)
 	}
-	if meta.MAD > 0 {
+	if meta.MAD != 0 {
 		bits = append(bits, BuffMagicAttack)
 	}
-	if meta.MDD > 0 {
+	if meta.MDD != 0 {
 		bits = append(bits, BuffMagicDefense)
 	}
-	if meta.PAD > 0 {
+	if meta.PAD != 0 {
 		bits = append(bits, BuffWeaponAttack)
 	}
-	if meta.PDD > 0 {
+	if meta.PDD != 0 {
 		bits = append(bits, BuffWeaponDefense)
+	}
+	if meta.Thaw != 0 {
+		bits = append(bits, BuffThaw)
+	}
+	if meta.Morph != 0 {
+		bits = append(bits, BuffMorph)
 	}
 	if len(bits) == 0 {
 		return
 	}
 
 	if meta.Time > 0 {
-		durationMs = int32(meta.Time)
+		durationMs = meta.Time
 	}
+	sourceID = -sourceID
+	cb.registerSourceBits(sourceID, bits, buildItemBuffValueMap(meta, bits))
 
 	maskBytes := buildMaskBytes64(bits)
 	values := buildItemBuffTriplesWireOrder(meta, bits, durationMs, sourceID)
@@ -640,6 +1010,7 @@ func (cb *CharacterBuffs) AddItemBuff(meta nx.Item, sourceID int32) {
 	const extra byte = 0
 	const delay int16 = 0
 	cb.plr.Send(packetPlayerGiveBuff(maskBytes, values, 0, extra))
+	cb.sendSourceForeignApply(sourceID, bits, delay)
 
 	m := make([]byte, len(maskBytes))
 	copy(m, maskBytes)
@@ -652,6 +1023,8 @@ func (cb *CharacterBuffs) AddItemBuff(meta nx.Item, sourceID int32) {
 		exp := time.Now().Add(time.Duration(durationMs) * time.Millisecond).UnixMilli()
 		cb.expireAt[sourceID] = exp
 		cb.scheduleExpiryLocked(sourceID, time.Duration(durationMs)*time.Millisecond)
+	} else {
+		delete(cb.expireAt, sourceID)
 	}
 }
 
@@ -752,29 +1125,35 @@ func (cb *CharacterBuffs) AddItemBuffFromCC(itemID int32, expiresAtMs int64) {
 
 	// Re-derive bits like AddItemBuff
 	bits := make([]int, 0, 8)
-	if meta.ACC > 0 {
+	if meta.ACC != 0 {
 		bits = append(bits, BuffAccuracy)
 	}
-	if meta.EVA > 0 {
+	if meta.EVA != 0 {
 		bits = append(bits, BuffAvoidability)
 	}
-	if meta.Speed > 0 {
+	if meta.Speed != 0 {
 		bits = append(bits, BuffSpeed)
 	}
-	if meta.Jump > 0 {
+	if meta.Jump != 0 {
 		bits = append(bits, BuffJump)
 	}
-	if meta.MAD > 0 {
+	if meta.MAD != 0 {
 		bits = append(bits, BuffMagicAttack)
 	}
-	if meta.MDD > 0 {
+	if meta.MDD != 0 {
 		bits = append(bits, BuffMagicDefense)
 	}
-	if meta.PAD > 0 {
+	if meta.PAD != 0 {
 		bits = append(bits, BuffWeaponAttack)
 	}
-	if meta.PDD > 0 {
+	if meta.PDD != 0 {
 		bits = append(bits, BuffWeaponDefense)
+	}
+	if meta.Thaw != 0 {
+		bits = append(bits, BuffThaw)
+	}
+	if meta.Morph != 0 {
+		bits = append(bits, BuffMorph)
 	}
 	if len(bits) == 0 {
 		return
@@ -794,9 +1173,11 @@ func (cb *CharacterBuffs) AddItemBuffFromCC(itemID int32, expiresAtMs int64) {
 	maskBytes := buildMaskBytes64(bits)
 	sourceID := -itemID
 	values := buildItemBuffTriplesWireOrder(meta, bits, remainMs, sourceID)
+	cb.registerSourceBits(sourceID, bits, buildItemBuffValueMap(meta, bits))
 
 	// Send packets
 	cb.plr.Send(packetPlayerGiveBuff(maskBytes, values, 0, 0))
+	cb.sendSourceForeignApply(sourceID, bits, 0)
 
 	// Track in memory and set timer
 	m := make([]byte, len(maskBytes))
@@ -917,6 +1298,9 @@ func (cb *CharacterBuffs) AddMobDebuff(skillID, level byte, durationSec int16) {
 	}
 
 	// Track the debuff with expiry using the packed rValue as the key
+	cb.registerSourceBits(rValue, bits, map[int]int16{
+		bits[0]: mobSkillX,
+	})
 	if durationSec > 0 {
 		expiresAtMs := time.Now().Add(time.Duration(durationSec) * time.Second).UnixMilli()
 		cb.expireAt[rValue] = expiresAtMs
@@ -977,6 +1361,7 @@ func (cb *CharacterBuffs) AddBuffFromCC(charId, skillID int32, expiresAtMs int64
 	}
 
 	cb.activeSkillLevels[skillID] = level
+	cb.registerSourceBits(skillID, bits, cb.buildSkillBuffValueMap(skillID, level, bits))
 
 	if expiresAtMs > 0 {
 		cb.expireAt[skillID] = expiresAtMs
@@ -1229,6 +1614,8 @@ func (cb *CharacterBuffs) expireBuffNow(skillID int32) {
 	if cb == nil || cb.plr == nil {
 		return
 	}
+	affectedBits := cb.bitsForSource(skillID)
+	ownedBitsBefore := cb.bitsOwnedBySource(skillID)
 	if t, ok := cb.expireTimers[skillID]; ok && t != nil {
 		t.Stop()
 		delete(cb.expireTimers, skillID)
@@ -1264,31 +1651,44 @@ func (cb *CharacterBuffs) expireBuffNow(skillID int32) {
 
 	}
 
-	bits, ok := skillBuffBits[skillID]
-	if !ok || len(bits) == 0 {
-		if skillID < 0 {
-			if mask, ok2 := cb.itemMasks[skillID]; ok2 {
-				cb.plr.Send(packetPlayerCancelBuff(mask))
-				delete(cb.itemMasks, skillID)
+	delete(cb.sourceBitValues, skillID)
+	delete(cb.sourceAppliedAt, skillID)
+	cb.recomputeActiveBits(affectedBits)
+
+	resumedBySource := make(map[int32][]int)
+	cancelBits := make([]int, 0, len(ownedBitsBefore))
+	for _, bit := range ownedBitsBefore {
+		state, ok := cb.activeBitStates[bit]
+		if !ok {
+			cancelBits = append(cancelBits, bit)
+			continue
+		}
+		if state.sourceID != skillID {
+			resumedBySource[state.sourceID] = append(resumedBySource[state.sourceID], bit)
+		}
+	}
+	if len(cancelBits) > 0 {
+		maskBytes := buildMaskBytes64(cancelBits)
+		cb.plr.Send(packetPlayerCancelBuff(maskBytes))
+		if cb.plr.inst != nil {
+			if fmask := buildForeignCancelMask(cancelBits); len(fmask) > 0 {
+				cb.plr.inst.sendExcept(packetPlayerCancelForeignBuff(cb.plr.ID, fmask), cb.plr.Conn)
 			}
 		}
 	}
-
-	maskBytes := buildMaskBytes64(bits)
-
-	cb.plr.Send(packetPlayerCancelBuff(maskBytes))
-	if cb.plr.inst != nil {
-		if fmask := buildForeignCancelMask(bits); len(fmask) > 0 {
-			cb.plr.inst.sendExcept(packetPlayerCancelForeignBuff(cb.plr.ID, fmask), cb.plr.Conn)
-		}
+	for sourceID, bits := range resumedBySource {
+		cb.sendSourceApply(sourceID, bits, 0)
 	}
 
 	delete(cb.activeSkillLevels, skillID)
+	delete(cb.itemMasks, skillID)
 
 	baseSkillID := skillID & 0xFFFF
 	if baseSkillID >= 100 && baseSkillID <= 200 {
 		delete(skillBuffBits, skillID)
 	}
+
+	cb.plr.recalculateTotalStats()
 }
 
 func (cb *CharacterBuffs) check(skillID int32) {

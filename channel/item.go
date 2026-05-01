@@ -86,7 +86,7 @@ type Item struct {
 	speed        int16
 	jump         int16
 	attackSpeed  int16
-	buffTime     int16
+	buffTime     int32
 	stand        byte // TODO: Investigate this, it doesn't appear to be saved or used anywhere
 
 	weaponType byte
@@ -706,40 +706,64 @@ func (v Item) bytes(shortSlot, storage bool) []byte {
 	return p
 }
 
-// Use applies stat changes for items
-func (v Item) use(plr *Player) {
+func isSupportedConsumeUseItem(nxData nx.Item) bool {
+	return nxData.HP != 0 || nxData.MP != 0 || nxData.HPR != 0 || nxData.MPR != 0 ||
+		nxData.Poison != 0 || nxData.Weakness != 0 || nxData.Curse != 0 || nxData.Darkness != 0 || nxData.Seal != 0 ||
+		nxData.ACC != 0 || nxData.EVA != 0 || nxData.Speed != 0 || nxData.Jump != 0 ||
+		nxData.MAD != 0 || nxData.MDD != 0 || nxData.PAD != 0 || nxData.PDD != 0 ||
+		nxData.Thaw != 0 || nxData.Morph != 0
+}
+
+func (v Item) validateConsumeUse(plr *Player) (nx.Item, error) {
+	if plr == nil {
+		return nx.Item{}, fmt.Errorf("player missing")
+	}
 	if plr.hp < 1 {
-		plr.noChange()
-		return
+		return nx.Item{}, fmt.Errorf("player is dead")
 	}
 
-	// Let's use NX data as source of truth for useable items
 	nxData, err := nx.GetItem(v.ID)
 	if err != nil {
-		log.Println("could not load item from nx: ", v.ID)
-		return
+		return nx.Item{}, fmt.Errorf("could not load item from nx: %d", v.ID)
+	}
+	if nxData.InvTabID != constant.InventoryUse {
+		return nx.Item{}, fmt.Errorf("item %d is not a use item", v.ID)
+	}
+	if nxData.MoveTo != 0 {
+		return nx.Item{}, fmt.Errorf("item %d requires dedicated portal-scroll handling", v.ID)
+	}
+	if len(nxData.SpawnMobs) > 0 {
+		return nx.Item{}, fmt.Errorf("item %d requires dedicated summon handling", v.ID)
+	}
+	if !isSupportedConsumeUseItem(nxData) {
+		return nx.Item{}, fmt.Errorf("unsupported consume effect for item %d", v.ID)
 	}
 
-	if nxData.HP > 0 {
+	return nxData, nil
+}
+
+// applyConsumeUse applies validated consume-item effects.
+func (v Item) applyConsumeUse(plr *Player, nxData nx.Item) {
+	if nxData.HP != 0 {
 		plr.giveHP(nxData.HP)
 	}
-	if nxData.MP > 0 {
+	if nxData.MP != 0 {
 		plr.giveMP(nxData.MP)
 	}
 
-	if nxData.HPR > 0 {
+	if nxData.HPR != 0 {
 		base := int(plr.effectiveMaxHP())
 		hpAmt := int(math.Floor(float64(base) * float64(nxData.HPR) / 100.0))
-		if hpAmt < 1 {
+		if hpAmt < 1 && nxData.HPR > 0 {
 			hpAmt = 1
 		}
 		plr.giveHP(int16(hpAmt))
 	}
 
-	if nxData.MPR > 0 {
+	if nxData.MPR != 0 {
 		base := int(plr.effectiveMaxMP())
 		mpAmt := int(math.Floor(float64(base) * float64(nxData.MPR) / 100.0))
-		if mpAmt < 1 {
+		if mpAmt < 1 && nxData.MPR > 0 {
 			mpAmt = 1
 		}
 		plr.giveMP(int16(mpAmt))

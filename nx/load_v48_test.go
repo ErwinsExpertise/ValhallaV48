@@ -22,6 +22,25 @@ func TestLoadV48DirectorySmoke(t *testing.T) {
 		t.Fatalf("GetItem(2000000): empty name")
 	}
 
+	cider, err := GetItem(2022002)
+	if err != nil {
+		t.Fatalf("GetItem(2022002): %v", err)
+	}
+	if cider.Time != 180000 {
+		t.Fatalf("GetItem(2022002): expected 180000ms duration, got %d", cider.Time)
+	}
+	if cider.PAD != 20 || cider.ACC != -5 {
+		t.Fatalf("GetItem(2022002): unexpected stat change payload: PAD=%d ACC=%d", cider.PAD, cider.ACC)
+	}
+
+	morph, err := GetItem(2210000)
+	if err != nil {
+		t.Fatalf("GetItem(2210000): %v", err)
+	}
+	if morph.Morph != 1 || morph.Time != 3600000 {
+		t.Fatalf("GetItem(2210000): unexpected morph data: morph=%d time=%d", morph.Morph, morph.Time)
+	}
+
 	field, err := GetMap(100000000)
 	if err != nil {
 		t.Fatalf("GetMap(100000000): %v", err)
