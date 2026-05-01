@@ -44,6 +44,8 @@ func (server *Server) HandleClientPacket(conn mnet.Client, reader mpacket.Reader
 		server.handleLogoutWorld(conn, reader)
 	case opcode.RecvLoginViewAllCharacters:
 		server.handleViewAllCharacters(conn, reader)
+	case opcode.RecvLoginViewAllCharacterSelect:
+		server.handleViewAllCharacterSelect(conn, reader)
 	case opcode.RecvLoginUnknown14:
 		server.handleLoginUnknown14(conn, reader)
 	case opcode.RecvLoginWorldSelect:
@@ -442,6 +444,7 @@ func (server *Server) handleWorldSelect(conn mnet.Client, reader mpacket.Reader)
 	log.Printf("world %d selected", worldID)
 	conn.SetWorldID(worldID)
 	sess.worldID = worldID
+	sess.viewAll = false
 	reader.ReadByte() // ?
 
 	var warning, population byte = 0, 0
@@ -480,6 +483,7 @@ func (server *Server) handleChannelSelect(conn mnet.Client, reader mpacket.Reade
 		return
 	}
 	sess.channelID = conn.GetChannelID()
+	sess.viewAll = false
 
 	if server.worlds[selectedWorld].Channels[conn.GetChannelID()].MaxPop == 0 {
 		conn.Send(packetLoginReturnFromChannel())
@@ -504,6 +508,7 @@ func (server *Server) handleLogoutWorld(conn mnet.Client, reader mpacket.Reader)
 	conn.SetChannelID(0)
 	sess.worldID = 0
 	sess.channelID = 0
+	sess.viewAll = false
 	sess.stage = sessionStageAwaitWorldSelect
 	conn.Send(packetLoginReturnFromChannel())
 }
@@ -516,8 +521,18 @@ func (server *Server) handleViewAllCharacters(conn mnet.Client, reader mpacket.R
 	}
 
 	charactersByWorld := getCharactersFromAccountAllWorlds(conn.GetAccountID())
+	for worldID := range charactersByWorld {
+		if !server.validWorld(worldID) {
+			delete(charactersByWorld, worldID)
+		}
+	}
 	if len(charactersByWorld) == 0 {
-		conn.Send(packetLoginViewAllCharactersEmpty())
+		summary := packetLoginViewAllCharactersSummary(1, 0)
+		world := packetLoginViewAllCharactersWorld(conn.GetWorldID(), nil)
+		conn.Send(summary)
+		conn.Send(world)
+		sess.viewAll = true
+		sess.stage = sessionStageAwaitCharacterSelect
 		return
 	}
 
@@ -529,15 +544,36 @@ func (server *Server) handleViewAllCharacters(conn mnet.Client, reader mpacket.R
 	}
 	sort.Ints(worldIDs)
 
-	conn.Send(packetLoginViewAllCharactersSummary(len(worldIDs), totalCharacters))
+	summary := packetLoginViewAllCharactersSummary(len(worldIDs), totalCharacters)
+	conn.Send(summary)
 	for _, worldID := range worldIDs {
-		conn.Send(packetLoginViewAllCharactersWorld(byte(worldID), charactersByWorld[byte(worldID)]))
+		chars := charactersByWorld[byte(worldID)]
+		packet := packetLoginViewAllCharactersWorld(byte(worldID), chars)
+		conn.Send(packet)
 	}
+	sess.viewAll = true
 	sess.stage = sessionStageAwaitCharacterSelect
 }
 
 func (server *Server) handleLoginUnknown14(conn mnet.Client, reader mpacket.Reader) {
 	// v48 emits this around unsupported view-all/close flows; ignore instead of treating it as a fatal unknown packet.
+}
+
+func (server *Server) handleViewAllCharacterSelect(conn mnet.Client, reader mpacket.Reader) {
+	charID := reader.ReadInt32()
+
+	// View-all select carries extra client metadata after the character id.
+	if len(reader.GetRestAsBytes()) >= 4 {
+		reader.Skip(4)
+	}
+	if len(reader.GetRestAsBytes()) >= 2 {
+		macLen := reader.ReadInt16()
+		if macLen > 0 && len(reader.GetRestAsBytes()) >= int(macLen) {
+			reader.Skip(int(macLen))
+		}
+	}
+
+	server.handleSelectCharacterID(conn, charID)
 }
 
 func (server *Server) handleNameCheck(conn mnet.Client, reader mpacket.Reader) {
@@ -766,20 +802,23 @@ func (server *Server) handleDeleteCharacter(conn mnet.Client, reader mpacket.Rea
 }
 
 func (server *Server) handleSelectCharacter(conn mnet.Client, reader mpacket.Reader) {
+	server.handleSelectCharacterID(conn, reader.ReadInt32())
+}
+
+func (server *Server) handleSelectCharacterID(conn mnet.Client, charID int32) {
 	sess := server.sessionFor(conn)
 	if sess.stage != sessionStageAwaitCharacterSelect {
 		_ = conn.Close()
 		return
 	}
 
-	charID := reader.ReadInt32()
-
 	var charWorldID byte
+	var previousChannelID int8
 	var channelID int8
 	var migrationID int8
 	var inCashShop bool
 
-	err := common.DB.QueryRow("SELECT worldID, channelID, migrationID, inCashShop FROM characters where accountID=? AND id=?", conn.GetAccountID(), charID).Scan(&charWorldID, &channelID, &migrationID, &inCashShop)
+	err := common.DB.QueryRow("SELECT worldID, previousChannelID, channelID, migrationID, inCashShop FROM characters where accountID=? AND id=?", conn.GetAccountID(), charID).Scan(&charWorldID, &previousChannelID, &channelID, &migrationID, &inCashShop)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			conn.Send(packetLoginReturnFromChannel())
@@ -795,24 +834,49 @@ func (server *Server) handleSelectCharacter(conn mnet.Client, reader mpacket.Rea
 		return
 	}
 
-	if charWorldID != conn.GetWorldID() || migrationID != -1 || inCashShop || channelID != -1 {
-		conn.Send(packetLoginReturnFromChannel())
-		return
+	targetWorldID := conn.GetWorldID()
+	if sess.viewAll {
+		targetWorldID = charWorldID
 	}
-	if !server.validChannel(conn.GetWorldID(), conn.GetChannelID()) {
+
+	if charWorldID != targetWorldID || migrationID != -1 || inCashShop || channelID != -1 {
 		conn.Send(packetLoginReturnFromChannel())
 		return
 	}
 
-	channel := server.worlds[conn.GetWorldID()].Channels[conn.GetChannelID()]
-	_, err = common.DB.Exec("UPDATE characters SET migrationID=? WHERE id=?", conn.GetChannelID(), charID)
+	targetChannelID := conn.GetChannelID()
+	if !server.validChannel(targetWorldID, targetChannelID) || (sess.viewAll && sess.worldID != targetWorldID) {
+		if previousChannelID >= 0 && server.validChannel(targetWorldID, byte(previousChannelID)) {
+			targetChannelID = byte(previousChannelID)
+		} else {
+			fallbackChannelID, ok := server.firstAvailableChannel(targetWorldID)
+			if !ok {
+				conn.Send(packetLoginReturnFromChannel())
+				return
+			}
+			targetChannelID = fallbackChannelID
+		}
+	}
+
+	if !server.validChannel(targetWorldID, targetChannelID) {
+		conn.Send(packetLoginReturnFromChannel())
+		return
+	}
+
+	conn.SetWorldID(targetWorldID)
+	conn.SetChannelID(targetChannelID)
+	sess.worldID = targetWorldID
+	sess.channelID = targetChannelID
+
+	channel := server.worlds[targetWorldID].Channels[targetChannelID]
+	_, err = common.DB.Exec("UPDATE characters SET migrationID=? WHERE id=?", targetChannelID, charID)
 
 	if err != nil {
 		log.Println(err)
 		return
 	}
 
-	pending, err := common.CreatePendingMigration(conn.GetAccountID(), charID, conn.GetWorldID(), common.MigrationTypeChannel, int(conn.GetChannelID()), clientRemoteIP(conn), 30*time.Second)
+	pending, err := common.CreatePendingMigration(conn.GetAccountID(), charID, targetWorldID, common.MigrationTypeChannel, int(targetChannelID), clientRemoteIP(conn), 30*time.Second)
 	if err != nil {
 		log.Println("failed to create pending migration", err)
 		conn.Send(packetLoginReturnFromChannel())
@@ -820,6 +884,7 @@ func (server *Server) handleSelectCharacter(conn mnet.Client, reader mpacket.Rea
 	}
 
 	server.migrating[conn] = true
+	sess.viewAll = false
 	sess.stage = sessionStageMigrating
 	sess.migrationChar = charID
 	log.Printf("[LOGIN] migration created account=%d char=%d world=%d channel=%d nonce=%s ip=%s", pending.AccountID, pending.CharacterID, pending.WorldID, pending.DestinationID, pending.Nonce, pending.ClientIP)

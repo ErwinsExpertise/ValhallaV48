@@ -103,7 +103,7 @@ func packetLoginDisplayCharacters(characters []player) mpacket.Packet {
 		pac.WriteByte(byte(count))
 
 		for _, c := range characters[:count] {
-			loginWritePlayerCharacter(&pac, c.id, c)
+			loginWriteNormalCharacter(&pac, c.id, c)
 		}
 	} else {
 		pac.WriteByte(0)
@@ -132,7 +132,8 @@ func packetLoginViewAllCharactersWorld(worldID byte, characters []player) mpacke
 	pac.WriteByte(byte(count))
 
 	for _, c := range characters[:count] {
-		loginWritePlayerCharacter(&pac, c.id, c)
+		loginWriteViewAllCharacter(&pac, c.id, c)
+		pac.WriteByte(0) // No VAC/SPW extra data for this client path.
 	}
 
 	return pac
@@ -140,7 +141,7 @@ func packetLoginViewAllCharactersWorld(worldID byte, characters []player) mpacke
 
 func packetLoginViewAllCharactersEmpty() mpacket.Packet {
 	pac := mpacket.CreateWithOpcode(opcode.SendLoginViewAllChars)
-	pac.WriteByte(4)
+	pac.WriteByte(2)
 	return pac
 }
 
@@ -162,7 +163,7 @@ func packetLoginCreatedCharacter(success bool, char player) mpacket.Packet {
 
 	if success {
 		pac.WriteByte(0x0) // if creation was sucessfull - 0 = good, 1 = bad
-		loginWritePlayerCharacter(&pac, char.id, char)
+		loginWriteNormalCharacter(&pac, char.id, char)
 	} else {
 		pac.WriteByte(0x1)
 	}
@@ -185,7 +186,33 @@ func packetLoginDeleteCharacter(charID int32, deleted bool, hacking bool) mpacke
 	return pac
 }
 
-func loginWritePlayerCharacter(pac *mpacket.Packet, pos int32, char player) {
+func loginWriteNormalCharacter(pac *mpacket.Packet, pos int32, char player) {
+	loginWriteNormalCharacterBase(pac, pos, char)
+	pac.WriteInt32(0) // if character is selected and which one
+	pac.WriteByte(1)  // Rankings
+	pac.WriteInt32(1) // world ranking position
+	pac.WriteInt32(2) // increase / decrease amount
+	pac.WriteInt32(3) // class ranking position
+	pac.WriteInt32(4) // increase / decrease amount
+}
+
+func loginWriteViewAllCharacter(pac *mpacket.Packet, pos int32, char player) {
+	loginWriteViewAllCharacterBase(pac, pos, char)
+}
+
+func loginWriteNormalCharacterBase(pac *mpacket.Packet, pos int32, char player) {
+	writeCharacterSharedBase(pac, pos, char)
+}
+
+func loginWriteViewAllCharacterBase(pac *mpacket.Packet, pos int32, char player) {
+	writeCharacterSharedBaseWithDisplay(pac, pos, char, char.displayBytesViewAll())
+}
+
+func writeCharacterSharedBase(pac *mpacket.Packet, pos int32, char player) {
+	writeCharacterSharedBaseWithDisplay(pac, pos, char, char.displayBytes())
+}
+
+func writeCharacterSharedBaseWithDisplay(pac *mpacket.Packet, pos int32, char player, display []byte) {
 	pac.WriteInt32(pos)
 
 	name := char.name
@@ -226,14 +253,7 @@ func loginWritePlayerCharacter(pac *mpacket.Packet, pos int32, char player) {
 	pac.WriteInt32(char.mapID) // map id
 	pac.WriteByte(char.mapPos) // map
 
-	pac.WriteBytes(char.displayBytes())
-
-	pac.WriteInt32(0) // if character is selected and which one
-	pac.WriteByte(1)  // Rankings
-	pac.WriteInt32(1) // world ranking position
-	pac.WriteInt32(2) // increase / decrease amount
-	pac.WriteInt32(3) // class ranking position
-	pac.WriteInt32(4) // increase / decrease amount
+	pac.WriteBytes(display)
 }
 
 /*

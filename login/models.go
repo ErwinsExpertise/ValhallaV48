@@ -46,6 +46,14 @@ type player struct {
 }
 
 func (d player) displayBytes() []byte {
+	return d.displayBytesWithTrailingValue(false)
+}
+
+func (d player) displayBytesViewAll() []byte {
+	return d.displayBytesWithTrailingValue(true)
+}
+
+func (d player) displayBytesWithTrailingValue(includeTrailingValue bool) []byte {
 	pkt := mpacket.NewPacket()
 	pkt.WriteByte(d.gender)
 	pkt.WriteByte(d.skin)
@@ -76,6 +84,9 @@ func (d player) displayBytes() []byte {
 	pkt.WriteByte(0xFF)
 	pkt.WriteByte(0xFF)
 	pkt.WriteInt32(cashWeapon)
+	if includeTrailingValue {
+		pkt.WriteInt32(0)
+	}
 
 	return pkt
 }
@@ -108,6 +119,7 @@ func getCharactersFromAccountWorldID(accountID int32, worldID byte) []player {
 
 	if err != nil {
 		log.Println(err)
+		return c
 	}
 
 	defer chars.Close()
@@ -133,13 +145,29 @@ func getCharactersFromAccountWorldID(accountID int32, worldID byte) []player {
 
 func getCharactersFromAccountAllWorlds(accountID int32) map[byte][]player {
 	result := make(map[byte][]player)
+	worldRows, err := common.DB.Query("SELECT DISTINCT worldID FROM characters WHERE accountID=? ORDER BY worldID ASC", accountID)
+	if err != nil {
+		log.Println(err)
+		return result
+	}
+	defer worldRows.Close()
 
-	for worldID := 0; worldID < 255; worldID++ {
-		chars := getCharactersFromAccountWorldID(accountID, byte(worldID))
+	for worldRows.Next() {
+		var worldID byte
+		if err := worldRows.Scan(&worldID); err != nil {
+			log.Println(err)
+			continue
+		}
+
+		chars := getCharactersFromAccountWorldID(accountID, worldID)
 		if len(chars) == 0 {
 			continue
 		}
-		result[byte(worldID)] = chars
+		result[worldID] = chars
+	}
+
+	if err := worldRows.Err(); err != nil {
+		log.Println(err)
 	}
 
 	return result

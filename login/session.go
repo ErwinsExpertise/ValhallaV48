@@ -27,6 +27,7 @@ type session struct {
 	accountID     int32
 	worldID       byte
 	channelID     byte
+	viewAll       bool
 	onlineMarked  bool
 	migrationChar int32
 }
@@ -69,4 +70,18 @@ func (server *Server) validChannel(worldID, channelID byte) bool {
 		return false
 	}
 	return int(channelID) >= 0 && int(channelID) < len(server.worlds[worldID].Channels)
+}
+
+func (server *Server) firstAvailableChannel(worldID byte) (byte, bool) {
+	if !server.validWorld(worldID) {
+		return 0, false
+	}
+
+	for i, ch := range server.worlds[worldID].Channels {
+		if ch.Port != 0 && len(ch.IP) == 4 {
+			return byte(i), true
+		}
+	}
+
+	return 0, false
 }
