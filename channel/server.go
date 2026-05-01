@@ -53,6 +53,8 @@ type Server struct {
 	autoBan            bool
 	ac                 *anticheat.AntiCheat
 	avatarMegaphoneSeq uint64
+	merchantShops      map[int64]*merchantRoom
+	merchantByChar     map[int32]*merchantRoom
 }
 
 // Initialise the server
@@ -168,6 +170,9 @@ func (server *Server) Initialise(work chan func(), dbuser, dbpassword, dbaddress
 	server.parties = make(map[int32]*party)
 	server.guilds = make(map[int32]*guild)
 	server.events = make(map[int32]*event)
+	server.merchantShops = make(map[int64]*merchantRoom)
+	server.merchantByChar = make(map[int32]*merchantRoom)
+	server.loadMerchants()
 
 	// Initialize anti-cheat
 	server.ac = anticheat.New(common.DB, server.dispatch)
@@ -181,6 +186,7 @@ func (server *Server) Initialise(work chan func(), dbuser, dbpassword, dbaddress
 	go scheduleMuLungTransport(server)
 	go scheduleSubway(server)
 	go scheduleHeliosElevator(server)
+	go scheduleMerchantExpiry(server)
 }
 
 func (server *Server) loadScripts() {

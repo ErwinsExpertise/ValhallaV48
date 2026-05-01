@@ -1639,8 +1639,10 @@ func (m *scriptMapWrapper) GetMapID() int32 {
 }
 
 type npcChatController struct {
-	npcID int32
-	conn  mnet.Client
+	npcID  int32
+	conn   mnet.Client
+	plr    *Player
+	server *Server
 
 	goods [][]int32
 
@@ -1869,6 +1871,8 @@ func createNpcChatController(npcID int32, conn mnet.Client, program *goja.Progra
 	ctrl := &npcChatController{
 		npcID:   npcID,
 		conn:    conn,
+		plr:     plr,
+		server:  server,
 		vm:      goja.New(),
 		program: program,
 	}
@@ -2058,6 +2062,15 @@ func (ctrl *npcChatController) SendStorage(npcID int32) {
 
 		ctrl.conn.Send(packetNpcStorageShow(npcID, storageMesos, storageSlots, allItems))
 		ctrl.vm.Interrupt("SendStorage")
+	}
+}
+
+func (ctrl *npcChatController) SendStoreBank(npcID int32) {
+	if ctrl.stateTracker.performInterrupt() {
+		ctrl.plr.storeBankNpcID = npcID
+		if ctrl.server.tryMerchantBanker(ctrl.plr) {
+			ctrl.vm.Interrupt("SendStoreBank")
+		}
 	}
 }
 

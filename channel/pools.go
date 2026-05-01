@@ -977,6 +977,10 @@ func (pool *roomPool) playerShowRooms(plr *Player) {
 
 			plr.Send(packetMapShowGameBox(display))
 		}
+
+		if shop, ok := r.(*merchantRoom); ok && shop.npcSpawnID != 0 {
+			plr.Send(packetEmployeeEnterField(shop))
+		}
 	}
 }
 
@@ -1078,6 +1082,11 @@ func (pool *roomPool) removePlayer(plr *Player) {
 			_ = pool.removeRoom(v.id())
 		} else {
 			pool.updateGameBox(r)
+		}
+	case *merchantRoom:
+		v.removePlayer(plr)
+		if r.closed() {
+			_ = pool.removeRoom(v.id())
 		}
 
 	case gameRoomer:

@@ -226,6 +226,81 @@ CREATE TABLE `items` (
   CONSTRAINT `items_ibfk_5` FOREIGN KEY (`characterID`) REFERENCES `characters` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 
+DROP TABLE IF EXISTS `merchant_shops`;
+CREATE TABLE `merchant_shops` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `characterID` int(11) NOT NULL,
+  `accountID` int(10) unsigned NOT NULL,
+  `worldID` tinyint unsigned NOT NULL DEFAULT '0',
+  `channelID` tinyint unsigned NOT NULL DEFAULT '0',
+  `mapID` int(11) NOT NULL,
+  `roomID` int(11) NOT NULL,
+  `npcSpawnID` int(11) NOT NULL DEFAULT '0',
+  `npcTemplateID` int(11) NOT NULL,
+  `ownerName` varchar(13) NOT NULL,
+  `title` varchar(50) NOT NULL,
+  `description` varchar(100) NOT NULL DEFAULT '',
+  `ownerAvatar` mediumblob,
+  `permitItemID` int(11) NOT NULL,
+  `permitCashID` bigint(20) DEFAULT NULL,
+  `permitCashSN` int(11) DEFAULT NULL,
+  `slotCount` tinyint unsigned NOT NULL DEFAULT '16',
+  `x` smallint NOT NULL,
+  `y` smallint NOT NULL,
+  `foothold` smallint NOT NULL DEFAULT '0',
+  `pendingMesos` int(11) NOT NULL DEFAULT '0',
+  `state` tinyint unsigned NOT NULL DEFAULT '1',
+  `createdAt` bigint NOT NULL,
+  `expiresAt` bigint NOT NULL,
+  `closedAt` bigint NOT NULL DEFAULT '0',
+  `lastTouchedAt` bigint NOT NULL DEFAULT '0',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uniq_merchant_character` (`characterID`),
+  UNIQUE KEY `uniq_merchant_room` (`roomID`),
+  KEY `idx_merchant_active_map` (`state`,`channelID`,`mapID`,`expiresAt`),
+  CONSTRAINT `merchant_shops_ibfk_character` FOREIGN KEY (`characterID`) REFERENCES `characters` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `merchant_shops_ibfk_account` FOREIGN KEY (`accountID`) REFERENCES `accounts` (`accountID`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+
+DROP TABLE IF EXISTS `merchant_items`;
+CREATE TABLE `merchant_items` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `shopID` bigint NOT NULL,
+  `displayOrder` int(11) NOT NULL DEFAULT '0',
+  `inventoryID` int(11) NOT NULL,
+  `itemID` int(11) NOT NULL,
+  `amount` int(11) NOT NULL DEFAULT '1',
+  `flag` tinyint(4) NOT NULL DEFAULT '0',
+  `upgradeSlots` tinyint(4) NOT NULL DEFAULT '0',
+  `level` tinyint(4) NOT NULL DEFAULT '0',
+  `str` smallint(6) NOT NULL DEFAULT '0',
+  `dex` smallint(6) NOT NULL DEFAULT '0',
+  `intt` smallint(6) NOT NULL DEFAULT '0',
+  `luk` smallint(6) NOT NULL DEFAULT '0',
+  `hp` smallint(6) NOT NULL DEFAULT '0',
+  `mp` smallint(6) NOT NULL DEFAULT '0',
+  `watk` smallint(6) NOT NULL DEFAULT '0',
+  `matk` smallint(6) NOT NULL DEFAULT '0',
+  `wdef` smallint(6) NOT NULL DEFAULT '0',
+  `mdef` smallint(6) NOT NULL DEFAULT '0',
+  `accuracy` smallint(6) NOT NULL DEFAULT '0',
+  `avoid` smallint(6) NOT NULL DEFAULT '0',
+  `hands` smallint(6) NOT NULL DEFAULT '0',
+  `speed` smallint(6) NOT NULL DEFAULT '0',
+  `jump` smallint(6) NOT NULL DEFAULT '0',
+  `expireTime` bigint(20) NOT NULL DEFAULT '0',
+  `creatorName` tinytext NOT NULL,
+  `cashID` bigint(20) DEFAULT NULL,
+  `cashSN` int(11) DEFAULT NULL,
+  `ringID` int(11) DEFAULT NULL,
+  `bundles` smallint(6) NOT NULL DEFAULT '1',
+  `bundleAmount` smallint(6) NOT NULL DEFAULT '1',
+  `price` int(11) NOT NULL DEFAULT '0',
+  PRIMARY KEY (`id`),
+  KEY `idx_merchant_items_shop` (`shopID`,`displayOrder`),
+  CONSTRAINT `merchant_items_ibfk_shop` FOREIGN KEY (`shopID`) REFERENCES `merchant_shops` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+
 DROP TABLE IF EXISTS `marriages`;
 CREATE TABLE `marriages` (
   `id` int(11) NOT NULL AUTO_INCREMENT,

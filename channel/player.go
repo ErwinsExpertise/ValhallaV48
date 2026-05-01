@@ -418,6 +418,10 @@ type Player struct {
 
 	chalkboardText   string
 	chalkboardActive bool
+	pendingMerchant  merchantPermitState
+	storeBankShopID  int64
+	storeBankNpcID   int32
+	storeBankOpen    bool
 
 	expCouponItemID     int32
 	expCouponExpiresAt  int64

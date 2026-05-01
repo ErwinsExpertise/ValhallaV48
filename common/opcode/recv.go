@@ -35,6 +35,8 @@ const (
 	RecvChannelNpcDialogueContinue  int16 = 0x2F
 	RecvChannelNpcShop              int16 = 0x30
 	RecvChannelNpcStorage           int16 = 0x31
+	RecvChannelEntrustedShop        int16 = 0x32
+	RecvChannelStoreBank            int16 = 0x33
 	RecvChannelInvMoveItem          int16 = 0x37
 	RecvChannelInvUseItem           int16 = 0x38
 	// Empty v48 client packet emitted from the local timed regen/sit loop.
@@ -49,6 +51,7 @@ const (
 	RecvChannelAddSkillPoint     int16 = 0x45
 	RecvChannelSpecialSkill      int16 = 0x46
 	RecvChannelRequestBuffCancel int16 = 0x47
+	RecvChannelPrepareSkill      int16 = 0x48
 	RecvChannelPlayerDropMesos   int16 = 0x49
 	RecvChannelPlayerFame        int16 = 0x4A
 	RecvChannelCharacterInfo     int16 = 0x4C

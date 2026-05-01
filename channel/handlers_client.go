@@ -119,6 +119,8 @@ func (server *Server) HandleClientPacket(conn mnet.Client, reader mpacket.Reader
 		server.npcChatContinue(conn, reader)
 	case opcode.RecvChannelNpcShop:
 		server.npcShop(conn, reader)
+	case opcode.RecvChannelEntrustedShop:
+		server.playerEntrustedShop(conn, reader)
 	case opcode.RecvChannelInvMoveItem:
 		server.playerMoveInventoryItem(conn, reader)
 	case opcode.RecvChannelPlayerDropMesos:
@@ -186,6 +188,8 @@ func (server *Server) HandleClientPacket(conn mnet.Client, reader mpacket.Reader
 		server.playerHitReactor(conn, reader)
 	case opcode.RecvChannelNpcStorage:
 		server.playerUseStorage(conn, reader)
+	case opcode.RecvChannelStoreBank:
+		server.playerUseStoreBank(conn, reader)
 	case opcode.RecvChannelMessenger:
 		server.playerHandleMessenger(conn, reader)
 	case opcode.RecvChannelPetSpawn:
@@ -1860,6 +1864,44 @@ func (server *Server) playerUseCash(conn mnet.Client, reader mpacket.Reader) {
 
 }
 
+func (server *Server) playerEntrustedShop(conn mnet.Client, reader mpacket.Reader) {
+	plr, err := server.players.GetFromConn(conn)
+	if err != nil {
+		return
+	}
+	mode := reader.ReadByte()
+	if mode != 0 {
+		plr.Send(packetEntrustedShopResult(merchantCheckResultFailed))
+		return
+	}
+
+	cashID := reader.ReadInt64()
+	item, _, err := plr.GetItemByCashID(constant.InventoryCash, cashID)
+	if err != nil {
+		plr.Send(packetEntrustedShopResult(merchantCheckResultFailed))
+		return
+	}
+	if item.ID/10000 != 503 {
+		plr.Send(packetEntrustedShopResult(merchantCheckResultFailed))
+		return
+	}
+	if active, ok := server.merchantByChar[plr.ID]; ok && active != nil {
+		plr.Send(packetEntrustedShopOpenElsewhere(active.mapID, plr.ChannelID))
+		return
+	}
+	if shopID, _, _, err := merchantLoadRetrieval(plr.ID); err == nil && shopID != 0 {
+		plr.Send(packetEntrustedShopResult(merchantCheckResultFredrick))
+		return
+	}
+	if err := server.primeMerchantPermit(plr, item); err != nil {
+		log.Printf("merchant check failed: char=%d map=%d err=%v", plr.ID, plr.mapID, err)
+		plr.Send(packetEntrustedShopResult(merchantCheckResultFailed))
+		return
+	}
+
+	plr.Send(packetEntrustedShopResult(merchantCheckResultSuccess))
+}
+
 func (server Server) playerPickupItem(conn mnet.Client, reader mpacket.Reader) {
 	_ = reader.ReadByte()  // mode/unknown
 	_ = reader.ReadInt32() // leading tick/unknown int
@@ -3530,6 +3572,10 @@ func (server Server) roomWindow(conn mnet.Client, reader mpacket.Reader) {
 	if err != nil {
 		return
 	}
+	if plr.storeBankOpen {
+		server.handleStoreBankWindow(plr, &reader)
+		return
+	}
 
 	field, ok := server.fields[plr.mapID]
 
@@ -3543,8 +3589,19 @@ func (server Server) roomWindow(conn mnet.Client, reader mpacket.Reader) {
 	if err != nil {
 		return
 	}
-
 	operation := reader.ReadByte()
+	logMerchantRoom := func(string) {}
+	currentRoom, _ := pool.getPlayerRoom(plr.ID)
+	if shop, ok := currentRoom.(*merchantRoom); ok {
+		if server.handleMerchantRoomOperation(plr, pool, shop, operation, &reader, logMerchantRoom) {
+			return
+		}
+	} else {
+		switch operation {
+		case merchantReqSilent27, merchantReqPutItem, merchantReqBuyItem, merchantReqTakeItemBack, merchantReqGoOut, merchantReqArrangeItem, merchantReqWithdrawAll, merchantReqWithdrawCash:
+			return
+		}
+	}
 
 	switch operation {
 	case constant.MiniRoomCreate:
@@ -3625,6 +3682,15 @@ func (server Server) roomWindow(conn mnet.Client, reader mpacket.Reader) {
 				if err != nil {
 					log.Println(err)
 				}
+			}
+		case constant.MiniRoomTypeEntrustedShop:
+			title := reader.ReadString(reader.ReadInt16())
+			_ = reader.ReadBool()
+			_ = reader.ReadInt16()
+			_ = reader.ReadInt32()
+
+			if _, err := server.createMerchant(plr, title); err != nil {
+				plr.Send(packetPlayerNoChange())
 			}
 		default:
 			log.Println("Unknown room type", roomType)
@@ -3708,6 +3774,19 @@ func (server Server) roomWindow(conn mnet.Client, reader mpacket.Reader) {
 		if shop, valid := r.(*shopRoom); valid {
 			shop.open = true
 			pool.updateGameBox(r)
+		} else if shop, valid := r.(*merchantRoom); valid {
+			shop.mu.Lock()
+			alreadyVisible := shop.npcSpawnID != 0
+			shop.npcSpawnID = shop.ownerPlayerID
+			shop.mu.Unlock()
+			if _, err := common.DB.Exec("UPDATE merchant_shops SET npcSpawnID=?, lastTouchedAt=? WHERE id=?", shop.ownerPlayerID, time.Now().UnixMilli(), shop.shopID); err != nil {
+				log.Printf("merchant: open update failed shop=%d err=%v", shop.shopID, err)
+			}
+			if !alreadyVisible {
+				inst.send(packetEmployeeEnterField(shop))
+			} else {
+				inst.send(packetEmployeeMiniRoomBalloon(shop))
+			}
 		}
 
 	case constant.MiniRoomLeave:
@@ -3750,6 +3829,13 @@ func (server Server) roomWindow(conn mnet.Client, reader mpacket.Reader) {
 
 			if room.closed() {
 				room.closeShop(constant.MiniRoomClosed)
+				if err := pool.removeRoom(room.roomID); err != nil {
+					log.Println(err)
+				}
+			}
+		case *merchantRoom:
+			room.removePlayer(plr)
+			if room.closed() {
 				if err := pool.removeRoom(room.roomID); err != nil {
 					log.Println(err)
 				}
@@ -4018,6 +4104,7 @@ func (server Server) roomWindow(conn mnet.Client, reader mpacket.Reader) {
 			}
 		}
 	case constant.MiniRoomAddShopItem:
+		logMerchantRoom("add-shop-item")
 		invType := reader.ReadByte()
 		invSlot := reader.ReadInt16()
 		bundles := reader.ReadInt16()
@@ -4028,25 +4115,32 @@ func (server Server) roomWindow(conn mnet.Client, reader mpacket.Reader) {
 		if err != nil {
 			return
 		}
-		shop, valid := r.(*shopRoom)
-		if !valid || shop.ownerID() != plr.ID {
-			return
-		}
-
 		item, err := plr.getItem(invType, invSlot)
 		if err != nil {
 			plr.Send(packetPlayerNoChange())
 			return
 		}
 
-		if shop.addItem(item, bundles, bundleAmount, price) {
-			shop.send(packetRoomShopRefresh(shop))
-		} else {
+		success := false
+		switch shop := r.(type) {
+		case *shopRoom:
+			if shop.ownerID() != plr.ID {
+				return
+			}
+			success = shop.addItem(item, bundles, bundleAmount, price)
+			if success {
+				shop.send(packetRoomShopRefresh(shop))
+			}
+		default:
+			return
+		}
+
+		if !success {
 			plr.Send(packetShopItemResult(constant.PlayerShopNotEnoughInStock))
 		}
 
-		plr.Send(packetPlayerNoChange())
 	case constant.MiniRoomBuyShopItem:
+		logMerchantRoom("buy-shop-item")
 		shopSlot := reader.ReadByte()
 		quantity := reader.ReadInt16()
 
@@ -4056,58 +4150,237 @@ func (server Server) roomWindow(conn mnet.Client, reader mpacket.Reader) {
 			return
 		}
 
-		shop, valid := r.(*shopRoom)
-		if !valid {
-			return
-		}
-
-		if shop.ownerID() == plr.ID {
-			return
-		}
-
-		if !shop.checkOpen() {
-			// This shouldn't be necessary, but we do it anyways just in-case :)
-			return
-		}
-
-		errMsg, bought := shop.buyItem(shopSlot, quantity, plr.ID)
-
-		if bought && errMsg == 0 {
-			shop.sendToOwner(packetRoomShopSoldItem(shopSlot, quantity, plr.Name))
-			shop.send(packetRoomShopRefresh(shop))
-
-			if len(shop.items) == 0 {
-				shop.closeShop(constant.MiniRoomClosed)
-				if err := pool.removeRoom(shop.id()); err != nil {
-					log.Println(err)
-				}
+		switch shop := r.(type) {
+		case *shopRoom:
+			if shop.ownerID() == plr.ID {
 				return
 			}
-		} else {
-			plr.Send(packetShopItemResult(errMsg))
+
+			if !shop.checkOpen() {
+				return
+			}
+
+			errMsg, bought := shop.buyItem(shopSlot, quantity, plr.ID)
+			if bought && errMsg == 0 {
+				shop.sendToOwner(packetRoomShopSoldItem(shopSlot, quantity, plr.Name))
+				shop.send(packetRoomShopRefresh(shop))
+
+				if len(shop.items) == 0 {
+					shop.closeShop(constant.MiniRoomClosed)
+					if err := pool.removeRoom(shop.id()); err != nil {
+						log.Println(err)
+					}
+					return
+				}
+			} else {
+				plr.Send(packetShopItemResult(errMsg))
+			}
+		default:
+			return
 		}
 
 	case constant.MiniRoomMoveItemShopToInv:
+		logMerchantRoom("move-item-shop-to-inv")
 		shopSlot := byte(reader.ReadInt16())
 
 		r, err := pool.getPlayerRoom(plr.ID)
 		if err != nil {
 			return
 		}
-		shop, valid := r.(*shopRoom)
-		if !valid || shop.ownerID() != plr.ID {
+		switch shop := r.(type) {
+		case *shopRoom:
+			if shop.ownerID() != plr.ID {
+				return
+			}
+			if remove := shop.removeItem(shopSlot); remove {
+				shop.send(packetRoomShopRemoveItem(byte(len(shop.items)), int16(shopSlot)))
+			} else {
+				plr.Send(packetShopItemResult(constant.PlayerShopNotEnoughInStock))
+			}
+		default:
 			return
-		}
-
-		if remove := shop.removeItem(shopSlot); remove {
-			shop.send(packetRoomShopRemoveItem(byte(len(shop.items)), int16(shopSlot)))
-		} else {
-			plr.Send(packetShopItemResult(constant.PlayerShopNotEnoughInStock))
 		}
 
 	default:
 		log.Println("Unknown room operation", operation)
 	}
+}
+
+func (server *Server) handleMerchantRoomOperation(plr *Player, pool roomPool, shop *merchantRoom, operation byte, reader *mpacket.Reader, logf func(string)) bool {
+	switch operation {
+	case merchantReqPutItem:
+		logf("entrusted-put-item")
+		invType := reader.ReadByte()
+		invSlot := reader.ReadInt16()
+		bundles := reader.ReadInt16()
+		bundleAmount := reader.ReadInt16()
+		price := reader.ReadInt32()
+		item, err := plr.getItem(invType, invSlot)
+		if err != nil {
+			plr.Send(packetPlayerNoChange())
+			return true
+		}
+		if shop.ownerID() != plr.ID {
+			return true
+		}
+		if shop.addItem(plr, item, bundles, bundleAmount, price) {
+			pkt := packetMerchantItemListUpdate(shop.pendingMesos, shop.items)
+			plr.Send(pkt)
+		} else {
+			plr.Send(packetShopItemResult(constant.PlayerShopNotEnoughInStock))
+			plr.Send(packetPlayerNoChange())
+		}
+		return true
+
+	case merchantReqBuyItem:
+		logf("entrusted-buy-item")
+		shopSlot := reader.ReadByte()
+		quantity := reader.ReadInt16()
+		errMsg, bought := shop.buyItem(plr, shopSlot, quantity)
+		if bought && errMsg == 0 {
+			if len(shop.items) == 0 {
+				_ = shop.autoCloseSoldOut(server, constant.MiniRoomClosed)
+			} else {
+				shop.send(packetMerchantItemListUpdate(shop.pendingMesos, shop.items))
+			}
+		} else {
+			plr.Send(packetShopItemResult(errMsg))
+		}
+		return true
+
+	case merchantReqSilent27:
+		logf("entrusted-silent-27")
+		return true
+
+	case merchantReqTakeItemBack:
+		logf("entrusted-take-item-back")
+		shopSlot := byte(reader.ReadInt16())
+		if shop.ownerID() != plr.ID {
+			return true
+		}
+		if remove := shop.removeItem(plr, shopSlot); remove {
+			plr.Send(packetMerchantItemListUpdate(shop.pendingMesos, shop.items))
+		} else {
+			plr.Send(packetShopItemResult(constant.PlayerShopNotEnoughInStock))
+		}
+		return true
+
+	case merchantReqGoOut:
+		logf("entrusted-go-out")
+		shop.removePlayer(plr)
+		return true
+
+	case merchantReqArrangeItem:
+		logf("entrusted-arrange-item")
+		if shop.ownerID() == plr.ID {
+			_ = shop.withdrawMoneyNoPacket(plr)
+			plr.Send(packetMerchantArrangeResult(shop.pendingMesos))
+		}
+		return true
+
+	case merchantReqWithdrawAll:
+		logf("entrusted-withdraw-all")
+		if shop.ownerID() == plr.ID {
+			if !shop.withdrawMoneyNoPacket(plr) {
+				plr.Send(packetMerchantWithdrawAllResult(1))
+				return true
+			}
+			if shop.closeAndBank(server, plr, constant.MiniRoomClosed) {
+				plr.Send(packetMerchantWithdrawAllResult(0))
+			}
+		}
+		return true
+
+	case merchantReqWithdrawCash:
+		logf("entrusted-withdraw-cash")
+		if shop.ownerID() == plr.ID {
+			if shop.withdrawMoney(plr) {
+				plr.Send(packetMerchantWithdrawMoney())
+			}
+		}
+		return true
+	}
+
+	return false
+}
+
+func (server *Server) handleStoreBankWindow(plr *Player, reader *mpacket.Reader) {
+	if plr == nil {
+		return
+	}
+	action := reader.ReadByte()
+	switch action {
+	case storeBankReqOpenPreview:
+		shopID, mesos, closedAt, _, err := merchantLoadRetrievalRecord(plr.ID)
+		if err != nil || shopID == 0 || shopID != plr.storeBankShopID {
+			plr.Send(packetStoreBankStatus(0, 0, true))
+			return
+		}
+		days, fee := merchantStoreBankFee(closedAt, mesos)
+		plr.Send(packetStoreBankFee(days, fee))
+
+	case storeBankReqRetrieve:
+		shopID, mesos, closedAt, items, err := merchantLoadRetrievalRecord(plr.ID)
+		if err != nil || shopID == 0 || shopID != plr.storeBankShopID {
+			plr.Send(packetStoreBankStatus(0, 0, true))
+			return
+		}
+		_, fee := merchantStoreBankFee(closedAt, mesos)
+		if fee > mesos {
+			plr.Send(packetStoreBankResult(storeBankResultNoServiceFee))
+			return
+		}
+		withdrawMesos := mesos - fee
+		if int64(plr.mesos)+int64(withdrawMesos) > math.MaxInt32 {
+			plr.Send(packetStoreBankResult(storeBankResultTooMuchMeso))
+			return
+		}
+		if !canReceiveMerchantItems(plr, items) {
+			plr.Send(packetStoreBankResult(storeBankResultFullInv))
+			return
+		}
+		for _, si := range items {
+			if si == nil {
+				continue
+			}
+			give := si.item
+			if give.isRechargeable() {
+				give.amount = si.bundleAmount
+			} else {
+				give.amount = si.bundles * si.bundleAmount
+			}
+			if _, err := plr.GiveItem(give); err != nil {
+				plr.Send(packetStoreBankResult(storeBankResultFullInv))
+				return
+			}
+		}
+		if withdrawMesos > 0 {
+			plr.giveMesos(withdrawMesos)
+		}
+		if _, err := common.DB.Exec("DELETE FROM merchant_shops WHERE id=?", shopID); err != nil {
+			log.Printf("merchant: storebank delete failed shop=%d err=%v", shopID, err)
+		}
+		plr.storeBankShopID = 0
+		plr.storeBankOpen = false
+		plr.Send(packetStoreBankResult(storeBankResultSuccess))
+
+	case storeBankReqClose:
+		plr.storeBankShopID = 0
+		plr.storeBankNpcID = 0
+		plr.storeBankOpen = false
+		plr.Send(packetStoreBankForceClose())
+	}
+}
+
+func (server *Server) playerUseStoreBank(conn mnet.Client, reader mpacket.Reader) {
+	plr, err := server.players.GetFromConn(conn)
+	if err != nil {
+		return
+	}
+	if !plr.storeBankOpen {
+		return
+	}
+	server.handleStoreBankWindow(plr, &reader)
 }
 
 func (server *Server) guildManagement(conn mnet.Client, reader mpacket.Reader) {

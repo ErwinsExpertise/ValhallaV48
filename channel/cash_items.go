@@ -390,6 +390,15 @@ func (server *Server) handleCashItemUse(plr *Player, reader mpacket.Reader) {
 		}
 	}
 	ctx.useType = itemType
+	if rawType == merchantCashUseType {
+		if err := server.primeMerchantPermit(plr, item); err != nil {
+			log.Printf("cash use merchant permit failed: player=%s err=%v %s", plr.Name, err, ctx.logFields())
+			plr.Send(packetPlayerNoChange())
+			return
+		}
+		plr.Send(packetPlayerNoChange())
+		return
+	}
 	if itemType == 0 {
 		log.Printf("cash use rejected type: player=%s %s", plr.Name, ctx.logFields())
 		plr.Send(packetMessageRedText("This cash item category is not supported."))

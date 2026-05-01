@@ -1112,6 +1112,7 @@ func (inst *fieldInstance) stopFieldTimer() {
 // Responsible for handling the removing of mystic doors, disappearence of loot, ships coming and going
 func (inst *fieldInstance) fieldUpdate(t time.Time) {
 	inst.lifePool.update(t)
+	inst.updateMerchantBalloons()
 	inst.dropPool.update(t)
 	inst.mistPool.update(t)
 	inst.applyMapDamage(t)
