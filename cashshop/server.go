@@ -21,7 +21,7 @@ type Server struct {
 	world     mnet.Server
 	ip        []byte
 	port      int16
-	migrating []mnet.Client
+	migrating map[mnet.Client]bool
 	players   channel.Players
 	channels  [20]internal.Channel
 }
@@ -31,10 +31,12 @@ func (server *Server) Initialise(work chan func(), dbuser, dbpassword, dbaddress
 	server.dispatch = work
 	server.id = 50
 	server.players = channel.NewPlayers()
+	server.migrating = make(map[mnet.Client]bool)
 
 	if err := common.ConnectToDB(dbuser, dbpassword, dbaddress, dbport, dbdatabase); err != nil {
 		log.Fatal(err)
 	}
+	common.CleanupExpiredPendingMigrations()
 	log.Println("Connected to database")
 
 	log.Println("Initialised game state")
@@ -67,6 +69,10 @@ func (server *Server) ClientDisconnected(conn mnet.Client) {
 	}
 
 	accountID := conn.GetAccountID()
+	expectedMigration := server.migrating[conn]
+	if expectedMigration {
+		delete(server.migrating, conn)
+	}
 	if storage := conn.GetCashShopStorage(); storage != nil {
 		if cashStorage, ok := storage.(*CashShopStorage); ok {
 			log.Printf("Saving cash shop storage for account %d on disconnect\n", accountID)
@@ -82,19 +88,17 @@ func (server *Server) ClientDisconnected(conn mnet.Client) {
 		log.Println(remPlrErr)
 	}
 
-	if idx := func() int {
-		for i, v := range server.migrating {
-			if v == conn {
-				return i
-			}
-		}
-		return -1
-	}(); idx > -1 {
-		server.migrating = append(server.migrating[:idx], server.migrating[idx+1:]...)
+	if expectedMigration {
+		conn.SetCashShopStorage(nil)
+		return
 	}
 
+	common.DeletePendingMigrationsForAccount(conn.GetAccountID())
 	if _, dbErr := common.DB.Exec("UPDATE accounts SET isLogedIn=0 WHERE accountID=?", conn.GetAccountID()); dbErr != nil {
 		log.Println("Unable to complete logout for ", conn.GetAccountID())
+	}
+	if _, dbErr := common.DB.Exec("UPDATE characters SET channelID=-1, inCashShop=0, migrationID=-1 WHERE ID=?", plr.ID); dbErr != nil {
+		log.Println("Unable to clear cash shop state for ", plr.ID)
 	}
 
 	server.world.Send(internal.PacketChannelPlayerDisconnect(plr.ID, plr.Name, 0))

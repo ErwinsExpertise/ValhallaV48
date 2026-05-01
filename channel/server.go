@@ -34,7 +34,7 @@ type Server struct {
 	ip                 []byte
 	port               int16
 	maxPop             int16
-	migrating          []mnet.Client
+	migrating          map[mnet.Client]bool
 	players            Players
 	channels           [20]internal.Channel
 	cashShop           internal.CashShop
@@ -64,8 +64,10 @@ func (server *Server) Initialise(work chan func(), dbuser, dbpassword, dbaddress
 	}
 	log.Println("Connected to database")
 	ensureCharacterRateCouponColumns()
+	common.CleanupExpiredPendingMigrations()
 
 	server.fields = make(map[int32]*field)
+	server.migrating = make(map[mnet.Client]bool)
 
 	// Default rates (world may override later)
 	server.rates = rates{
@@ -318,6 +320,11 @@ func (server *Server) ClientDisconnected(conn mnet.Client) {
 		plr.Logout()
 	}
 
+	expectedMigration := server.migrating[conn]
+	if expectedMigration {
+		delete(server.migrating, conn)
+	}
+
 	if _, ok := server.npcChat[conn]; ok {
 		delete(server.npcChat, conn)
 		server.updateNPCInteractionMetric(-1)
@@ -327,26 +334,19 @@ func (server *Server) ClientDisconnected(conn mnet.Client) {
 		log.Println(remPlrErr)
 	}
 
-	if idx := func() int {
-		for i, v := range server.migrating {
-			if v == conn {
-				return i
-			}
-		}
-		return -1
-	}(); idx > -1 {
-		server.migrating = append(server.migrating[:idx], server.migrating[idx+1:]...)
-	}
-
 	var guildID int32 = 0
 	if plr.guild != nil {
 		guildID = plr.guild.id
+	}
+	if expectedMigration {
+		return
 	}
 	server.world.Send(internal.PacketChannelPlayerDisconnect(plr.ID, plr.Name, guildID))
 
 	if _, dbErr := common.DB.Exec("UPDATE characters SET channelID=? WHERE ID=?", -1, plr.ID); dbErr != nil {
 		log.Println(dbErr)
 	}
+	common.DeletePendingMigrationsForAccount(conn.GetAccountID())
 	if _, dbErr := common.DB.Exec("UPDATE accounts SET isLogedIn=0 WHERE accountID=?", conn.GetAccountID()); dbErr != nil {
 		log.Println("Unable to complete logout for ", conn.GetAccountID())
 	}

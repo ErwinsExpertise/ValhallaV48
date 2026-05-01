@@ -3,6 +3,7 @@ package cashshop
 import (
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/Hucaru/Valhalla/channel"
 	"github.com/Hucaru/Valhalla/common"
@@ -35,6 +36,12 @@ func (server *Server) HandleClientPacket(conn mnet.Client, reader mpacket.Reader
 
 func (server *Server) handlePlayerConnect(conn mnet.Client, reader mpacket.Reader) {
 	charID := reader.ReadInt32()
+	clientIP := common.RemoteIPFromConn(conn)
+	pending, err := common.ConsumePendingMigration(charID, common.MigrationTypeCashShop, 50, clientIP)
+	if err != nil {
+		log.Println("cashshop:playerConnect pending migration validation failed:", err)
+		return
+	}
 
 	// Fetch channelID, migrationID and accountID in a single query
 	var (
@@ -42,7 +49,7 @@ func (server *Server) handlePlayerConnect(conn mnet.Client, reader mpacket.Reade
 		channelID   int8
 		accountID   int32
 	)
-	err := common.DB.QueryRow(
+	err = common.DB.QueryRow(
 		"SELECT channelID, migrationID, accountID FROM characters WHERE ID=?",
 		charID,
 	).Scan(&channelID, &migrationID, &accountID)
@@ -51,8 +58,9 @@ func (server *Server) handlePlayerConnect(conn mnet.Client, reader mpacket.Reade
 		return
 	}
 
-	if migrationID != 50 {
+	if migrationID != 50 || accountID != pending.AccountID {
 		log.Println("cashshop:playerConnect: invalid migrationID:", migrationID)
+		common.DeletePendingMigrationForCharacter(charID)
 		return
 	}
 
@@ -85,7 +93,8 @@ func (server *Server) handlePlayerConnect(conn mnet.Client, reader mpacket.Reade
 		log.Println("Failed to load cash shop storage for account", accountID, ":", err)
 	}
 
-	server.world.Send(internal.PacketChannelPlayerConnected(plr.ID, plr.Name, server.id, false, 0, 0))
+	server.world.Send(internal.PacketChannelPlayerConnected(plr.ID, plr.Name, 0xFF, false, 0, 0))
+	log.Printf("[CASHSHOP] consumed migration account=%d char=%d ip=%s", pending.AccountID, pending.CharacterID, clientIP)
 
 	plr.Send(packetCashShopSet(&plr))
 
@@ -172,11 +181,28 @@ func (server *Server) leaveCashShopToChannel(conn mnet.Client, reader mpacket.Re
 	if prevChanID >= 0 && int(prevChanID) < len(server.channels) && server.channels[byte(prevChanID)].Port != 0 {
 		targetChan = byte(prevChanID)
 	}
+	server.migrating[conn] = true
 
 	if _, err := common.DB.Exec("UPDATE characters SET migrationID=?, inCashShop=0 WHERE ID=?", targetChan, plr.ID); err != nil {
+		delete(server.migrating, conn)
 		log.Println("Failed to set migrationID:", err)
 		return
 	}
+
+	var worldID byte
+	if err := common.DB.QueryRow("SELECT worldID FROM characters WHERE ID=?", plr.ID).Scan(&worldID); err != nil {
+		delete(server.migrating, conn)
+		log.Println("cashshop: failed to fetch worldID:", err)
+		return
+	}
+
+	pending, err := common.CreatePendingMigration(conn.GetAccountID(), plr.ID, worldID, common.MigrationTypeChannel, int(targetChan), common.RemoteIPFromConn(conn), 30*time.Second)
+	if err != nil {
+		delete(server.migrating, conn)
+		log.Println("cashshop: failed to create pending migration:", err)
+		return
+	}
+	log.Printf("[CASHSHOP] created migration account=%d char=%d targetChannel=%d nonce=%s ip=%s", pending.AccountID, pending.CharacterID, pending.DestinationID, pending.Nonce, pending.ClientIP)
 
 	var ip []byte
 	var port int16
@@ -205,6 +231,7 @@ func (server *Server) leaveCashShopToChannel(conn mnet.Client, reader mpacket.Re
 		}
 
 		if !found {
+			delete(server.migrating, conn)
 			log.Println("No valid fallback channels available")
 			return
 		}

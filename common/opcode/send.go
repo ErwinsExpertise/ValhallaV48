@@ -2,6 +2,7 @@ package opcode
 
 const (
 	SendLoginResponse         int16 = 1
+	SendLoginViewAllChars     int16 = 2
 	SendLoginWorldMeta        int16 = 3
 	SendLoginPinOperation     int16 = 6
 	SendLoginWorldList        int16 = 10

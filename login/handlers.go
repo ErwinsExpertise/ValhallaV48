@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/Hucaru/Valhalla/common"
 	"github.com/Hucaru/Valhalla/common/opcode"
@@ -19,17 +21,31 @@ import (
 
 // HandleClientPacket data
 func (server *Server) HandleClientPacket(conn mnet.Client, reader mpacket.Reader) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[LOGIN] panic handling client packet from %s: %v", conn, r)
+		}
+	}()
+
 	op := reader.ReadInt16()
 
 	switch op {
 	case opcode.RecvLoginRequest:
 		server.handleLoginRequest(conn, reader)
+	case opcode.RecvLoginWorldInfoRequest:
+		server.handleWorldInfoRequest(conn, reader)
 	case opcode.RecvLoginEULA:
 		server.handleEULA(conn, reader)
 	case opcode.RecvLoginCheckLogin:
 		server.handleGoodLogin(conn, reader)
 	case opcode.RecvLoginRegisterPin:
 		server.handlePinRegistration(conn, reader)
+	case opcode.RecvLoginLogoutWorld:
+		server.handleLogoutWorld(conn, reader)
+	case opcode.RecvLoginViewAllCharacters:
+		server.handleViewAllCharacters(conn, reader)
+	case opcode.RecvLoginUnknown14:
+		server.handleLoginUnknown14(conn, reader)
 	case opcode.RecvLoginWorldSelect:
 		server.handleWorldSelect(conn, reader)
 	case opcode.RecvLoginChannelSelect:
@@ -51,7 +67,23 @@ func (server *Server) HandleClientPacket(conn mnet.Client, reader mpacket.Reader
 	}
 }
 
+func (server *Server) sendWorldList(conn mnet.Client) {
+	for i := range server.worlds {
+		if server.worlds[i].Conn == nil {
+			continue
+		}
+		conn.Send(packetLoginWorldListing(byte(i), server.worlds[i]))
+	}
+	conn.Send(packetLoginEndWorldList())
+}
+
 func (server *Server) handleLoginRequest(conn mnet.Client, reader mpacket.Reader) {
+	sess := server.sessionFor(conn)
+	if sess.stage != sessionStageAwaitLogin {
+		_ = conn.Close()
+		return
+	}
+
 	username := reader.ReadString(reader.ReadInt16())
 	password := reader.ReadString(reader.ReadInt16())
 
@@ -60,12 +92,7 @@ func (server *Server) handleLoginRequest(conn mnet.Client, reader mpacket.Reader
 	hwidBytes := reader.ReadBytes(4)
 	hwid := strings.ToUpper(hex.EncodeToString(hwidBytes))
 
-	ip := ""
-	if host, _, err := net.SplitHostPort(conn.String()); err == nil {
-		ip = host
-	} else {
-		ip = conn.String()
-	}
+	ip := clientRemoteIP(conn)
 
 	var accountID int32
 	var user string
@@ -159,7 +186,13 @@ func (server *Server) handleLoginRequest(conn mnet.Client, reader mpacket.Reader
 
 		result = constant.LoginResultInvalidPassword
 	} else if isLogedIn {
-		result = constant.LoginResultAlreadyOnline
+		active, reconcileErr := common.ReconcileAccountLoginState(accountID)
+		if reconcileErr != nil {
+			log.Println(reconcileErr)
+			result = constant.LoginResultSystemError
+		} else if active {
+			result = constant.LoginResultAlreadyOnline
+		}
 	} else if isBanned > 0 {
 		result = constant.LoginResultBanned
 	} else if eula == 0 {
@@ -171,6 +204,8 @@ func (server *Server) handleLoginRequest(conn mnet.Client, reader mpacket.Reader
 	// verify email = 21, eula = 23
 
 	if result <= constant.LoginResultSuccess || result == constant.LoginResultEULA {
+		sess.username = username
+		sess.accountID = accountID
 		conn.SetGender(gender)
 		conn.SetAdminLevel(adminLevel)
 		conn.SetAccountID(accountID)
@@ -195,12 +230,24 @@ func (server *Server) handleLoginRequest(conn mnet.Client, reader mpacket.Reader
 				)
 			}
 		}
+
+		if result == constant.LoginResultEULA {
+			sess.stage = sessionStageAwaitEULA
+		} else {
+			sess.stage = sessionStageAwaitPin
+		}
 	}
 
 	conn.Send(packetLoginResponse(result, accountID, gender, adminLevel > 0, username, isBanned))
 }
 
 func (server *Server) handleEULA(conn mnet.Client, reader mpacket.Reader) {
+	sess := server.sessionFor(conn)
+	if sess.stage != sessionStageAwaitEULA {
+		_ = conn.Close()
+		return
+	}
+
 	accept := false
 	if len(reader.GetRestAsBytes()) > 0 {
 		accept = reader.ReadByte() != 0
@@ -242,10 +289,17 @@ func (server *Server) handleEULA(conn mnet.Client, reader mpacket.Reader) {
 
 	conn.SetGender(gender)
 	conn.SetAdminLevel(adminLevel)
+	sess.stage = sessionStageAwaitPin
 	conn.Send(packetLoginResponse(constant.LoginResultSuccess, accountID, gender, adminLevel > 0, username, isBanned))
 }
 
 func (server *Server) handlePinRegistration(conn mnet.Client, reader mpacket.Reader) {
+	sess := server.sessionFor(conn)
+	if sess.stage != sessionStageAwaitPinRegistration {
+		_ = conn.Close()
+		return
+	}
+
 	if !server.withPin {
 		conn.Send(packetCancelPin())
 		return
@@ -261,6 +315,17 @@ func (server *Server) handlePinRegistration(conn mnet.Client, reader mpacket.Rea
 
 	accountID := conn.GetAccountID()
 	pin := string(reader.GetRestAsBytes())
+	if len(pin) != 4 {
+		conn.Send(packetRegisterPin())
+		return
+	}
+	for _, ch := range pin {
+		if ch < '0' || ch > '9' {
+			conn.Send(packetRegisterPin())
+			return
+		}
+	}
+
 	hashedPin, pinSaltValue, err := makeStoredCredential(pin)
 	if err != nil {
 		log.Println("handlePinRegistration failed to hash pin for accountID:", accountID, err)
@@ -272,11 +337,18 @@ func (server *Server) handlePinRegistration(conn mnet.Client, reader mpacket.Rea
 		log.Println("handlePinRegistration database pin update issue for accountID:", accountID, err)
 	}
 
+	sess.stage = sessionStageAwaitPin
 	conn.Send(packetRequestPin())
 
 }
 
 func (server *Server) handleGoodLogin(conn mnet.Client, reader mpacket.Reader) {
+	sess := server.sessionFor(conn)
+	if sess.stage != sessionStageAwaitPin {
+		_ = conn.Close()
+		return
+	}
+
 	server.migrating[conn] = false
 	accountID := conn.GetAccountID()
 
@@ -297,6 +369,7 @@ func (server *Server) handleGoodLogin(conn mnet.Client, reader mpacket.Reader) {
 
 		if b1 == 1 && b2 == 1 { // First attempt, request for pin
 			if len(pinDB) == 0 {
+				sess.stage = sessionStageAwaitPinRegistration
 				conn.Send(packetRegisterPin())
 			} else {
 				conn.Send(packetRequestPin())
@@ -310,6 +383,7 @@ func (server *Server) handleGoodLogin(conn mnet.Client, reader mpacket.Reader) {
 				conn.Send(packetRequestPinAfterFailure())
 
 			} else if b1 == 2 { // Changing pin request
+				sess.stage = sessionStageAwaitPinRegistration
 				conn.Send(packetRegisterPin())
 
 			} else { // Authenticated successfully
@@ -333,20 +407,41 @@ func (server *Server) handleGoodLogin(conn mnet.Client, reader mpacket.Reader) {
 	} else {
 		log.Println("User", accountID, "has logged in from", conn)
 	}
+	sess.onlineMarked = true
+	sess.stage = sessionStageAwaitWorldSelect
 
-	const maxNumberOfWorlds = 14
+	server.sendWorldList(conn)
+}
 
-	for i := len(server.worlds) - 1; i > -1; i-- {
-		conn.Send(packetLoginWorldListing(byte(i), server.worlds[i]))
+func (server *Server) handleWorldInfoRequest(conn mnet.Client, reader mpacket.Reader) {
+	sess := server.sessionFor(conn)
+	if !sess.onlineMarked {
+		_ = conn.Close()
+		return
 	}
 
-	conn.Send(packetLoginEndWorldList())
+	if sess.stage < sessionStageAwaitWorldSelect {
+		sess.stage = sessionStageAwaitWorldSelect
+	}
+	server.sendWorldList(conn)
 }
 
 func (server *Server) handleWorldSelect(conn mnet.Client, reader mpacket.Reader) {
+	sess := server.sessionFor(conn)
+	if sess.stage != sessionStageAwaitWorldSelect {
+		_ = conn.Close()
+		return
+	}
+
 	worldID := reader.ReadByte()
+	if !server.validWorld(worldID) {
+		conn.Send(packetLoginReturnFromChannel())
+		return
+	}
+
 	log.Printf("world %d selected", worldID)
 	conn.SetWorldID(worldID)
+	sess.worldID = worldID
 	reader.ReadByte() // ?
 
 	var warning, population byte = 0, 0
@@ -368,11 +463,23 @@ func (server *Server) handleWorldSelect(conn mnet.Client, reader mpacket.Reader)
 	}
 
 	conn.Send(packetLoginWorldInfo(warning, population)) // hard coded for now
+	sess.stage = sessionStageAwaitChannelSelect
 }
 
 func (server *Server) handleChannelSelect(conn mnet.Client, reader mpacket.Reader) {
+	sess := server.sessionFor(conn)
+	if sess.stage != sessionStageAwaitChannelSelect {
+		_ = conn.Close()
+		return
+	}
+
 	selectedWorld := reader.ReadByte()   // world
 	conn.SetChannelID(reader.ReadByte()) // Channel
+	if selectedWorld != conn.GetWorldID() || !server.validChannel(selectedWorld, conn.GetChannelID()) {
+		conn.Send(packetLoginReturnFromChannel())
+		return
+	}
+	sess.channelID = conn.GetChannelID()
 
 	if server.worlds[selectedWorld].Channels[conn.GetChannelID()].MaxPop == 0 {
 		conn.Send(packetLoginReturnFromChannel())
@@ -382,10 +489,63 @@ func (server *Server) handleChannelSelect(conn mnet.Client, reader mpacket.Reade
 	if selectedWorld == conn.GetWorldID() {
 		characters := getCharactersFromAccountWorldID(conn.GetAccountID(), conn.GetWorldID())
 		conn.Send(packetLoginDisplayCharacters(characters))
+		sess.stage = sessionStageAwaitCharacterSelect
 	}
 }
 
+func (server *Server) handleLogoutWorld(conn mnet.Client, reader mpacket.Reader) {
+	sess := server.sessionFor(conn)
+	if !sess.onlineMarked {
+		_ = conn.Close()
+		return
+	}
+
+	conn.SetWorldID(0)
+	conn.SetChannelID(0)
+	sess.worldID = 0
+	sess.channelID = 0
+	sess.stage = sessionStageAwaitWorldSelect
+	conn.Send(packetLoginReturnFromChannel())
+}
+
+func (server *Server) handleViewAllCharacters(conn mnet.Client, reader mpacket.Reader) {
+	sess := server.sessionFor(conn)
+	if !sess.onlineMarked || sess.stage < sessionStageAwaitWorldSelect {
+		_ = conn.Close()
+		return
+	}
+
+	charactersByWorld := getCharactersFromAccountAllWorlds(conn.GetAccountID())
+	if len(charactersByWorld) == 0 {
+		conn.Send(packetLoginViewAllCharactersEmpty())
+		return
+	}
+
+	totalCharacters := 0
+	worldIDs := make([]int, 0, len(charactersByWorld))
+	for worldID, characters := range charactersByWorld {
+		totalCharacters += len(characters)
+		worldIDs = append(worldIDs, int(worldID))
+	}
+	sort.Ints(worldIDs)
+
+	conn.Send(packetLoginViewAllCharactersSummary(len(worldIDs), totalCharacters))
+	for _, worldID := range worldIDs {
+		conn.Send(packetLoginViewAllCharactersWorld(byte(worldID), charactersByWorld[byte(worldID)]))
+	}
+	sess.stage = sessionStageAwaitCharacterSelect
+}
+
+func (server *Server) handleLoginUnknown14(conn mnet.Client, reader mpacket.Reader) {
+	// v48 emits this around unsupported view-all/close flows; ignore instead of treating it as a fatal unknown packet.
+}
+
 func (server *Server) handleNameCheck(conn mnet.Client, reader mpacket.Reader) {
+	if server.sessionFor(conn).stage != sessionStageAwaitCharacterSelect {
+		_ = conn.Close()
+		return
+	}
+
 	newCharName := reader.ReadString(reader.ReadInt16())
 
 	var nameFound int
@@ -402,6 +562,11 @@ func (server *Server) handleNameCheck(conn mnet.Client, reader mpacket.Reader) {
 }
 
 func (server *Server) handleNewCharacter(conn mnet.Client, reader mpacket.Reader) {
+	if server.sessionFor(conn).stage != sessionStageAwaitCharacterSelect {
+		_ = conn.Close()
+		return
+	}
+
 	name := reader.ReadString(reader.ReadInt16())
 	face := reader.ReadInt32()
 	hair := reader.ReadInt32()
@@ -425,9 +590,14 @@ func (server *Server) handleNewCharacter(conn mnet.Client, reader mpacket.Reader
 	// Add str, dex, int, luk validation (check to see if client generates a constant sum)
 
 	var counter int
+	var accountCharCount int
 
 	err := common.DB.QueryRow("SELECT count(*) FROM characters where name=? and worldID=?", name, conn.GetWorldID()).Scan(&counter)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		log.Println(err)
+		return
+	}
+	if err := common.DB.QueryRow("SELECT count(*) FROM characters WHERE accountID=? AND worldID=?", conn.GetAccountID(), conn.GetWorldID()).Scan(&accountCharCount); err != nil {
 		log.Println(err)
 		return
 	}
@@ -452,7 +622,7 @@ func (server *Server) handleNewCharacter(conn mnet.Client, reader mpacket.Reader
 
 	valid := inSlice(face, allowedEyes) && inSlice(hair, allowedHair) && inSlice(hairColour, allowedHairColour) &&
 		inSlice(bottom, allowedBottom) && inSlice(top, allowedTop) && inSlice(shoes, allowedShoes) &&
-		inSlice(weapon, allowedWeapons) && inSlice(skin, allowedSkinColour) && (counter == 0)
+		inSlice(weapon, allowedWeapons) && inSlice(skin, allowedSkinColour) && (counter == 0) && accountCharCount < 4
 
 	newCharacter := player{}
 
@@ -536,6 +706,11 @@ func (server *Server) handleNewCharacter(conn mnet.Client, reader mpacket.Reader
 }
 
 func (server *Server) handleDeleteCharacter(conn mnet.Client, reader mpacket.Reader) {
+	if server.sessionFor(conn).stage != sessionStageAwaitCharacterSelect {
+		_ = conn.Close()
+		return
+	}
+
 	dob := reader.ReadInt32()
 	charID := reader.ReadInt32()
 
@@ -579,20 +754,37 @@ func (server *Server) handleDeleteCharacter(conn mnet.Client, reader mpacket.Rea
 		deleted = true
 	}
 
-	for _, v := range server.worlds {
-		v.Conn.Send(internal.PacketLoginDeletedCharacter(charID))
+	if deleted {
+		for _, v := range server.worlds {
+			if v.Conn != nil {
+				v.Conn.Send(internal.PacketLoginDeletedCharacter(charID))
+			}
+		}
 	}
 
 	conn.Send(packetLoginDeleteCharacter(charID, deleted, hacking))
 }
 
 func (server *Server) handleSelectCharacter(conn mnet.Client, reader mpacket.Reader) {
+	sess := server.sessionFor(conn)
+	if sess.stage != sessionStageAwaitCharacterSelect {
+		_ = conn.Close()
+		return
+	}
+
 	charID := reader.ReadInt32()
 
-	var charCount int
+	var charWorldID byte
+	var channelID int8
+	var migrationID int8
+	var inCashShop bool
 
-	err := common.DB.QueryRow("SELECT count(*) FROM characters where accountID=? AND id=?", conn.GetAccountID(), charID).Scan(&charCount)
+	err := common.DB.QueryRow("SELECT worldID, channelID, migrationID, inCashShop FROM characters where accountID=? AND id=?", conn.GetAccountID(), charID).Scan(&charWorldID, &channelID, &migrationID, &inCashShop)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			conn.Send(packetLoginReturnFromChannel())
+			return
+		}
 		log.Println(err)
 		if server.ac != nil {
 			err = server.ac.IssueBan(0, 24, "Attempted to select character not associated with account", conn.String(), conn.GetHWID())
@@ -603,19 +795,36 @@ func (server *Server) handleSelectCharacter(conn mnet.Client, reader mpacket.Rea
 		return
 	}
 
-	if charCount == 1 {
-		channel := server.worlds[conn.GetWorldID()].Channels[conn.GetChannelID()]
-		_, err := common.DB.Exec("UPDATE characters SET migrationID=? WHERE id=?", conn.GetChannelID(), charID)
-
-		if err != nil {
-			log.Println(err)
-			return
-		}
-
-		server.migrating[conn] = true
-
-		conn.Send(packetLoginMigrateClient(channel.IP, channel.Port, charID))
+	if charWorldID != conn.GetWorldID() || migrationID != -1 || inCashShop || channelID != -1 {
+		conn.Send(packetLoginReturnFromChannel())
+		return
 	}
+	if !server.validChannel(conn.GetWorldID(), conn.GetChannelID()) {
+		conn.Send(packetLoginReturnFromChannel())
+		return
+	}
+
+	channel := server.worlds[conn.GetWorldID()].Channels[conn.GetChannelID()]
+	_, err = common.DB.Exec("UPDATE characters SET migrationID=? WHERE id=?", conn.GetChannelID(), charID)
+
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	pending, err := common.CreatePendingMigration(conn.GetAccountID(), charID, conn.GetWorldID(), common.MigrationTypeChannel, int(conn.GetChannelID()), clientRemoteIP(conn), 30*time.Second)
+	if err != nil {
+		log.Println("failed to create pending migration", err)
+		conn.Send(packetLoginReturnFromChannel())
+		return
+	}
+
+	server.migrating[conn] = true
+	sess.stage = sessionStageMigrating
+	sess.migrationChar = charID
+	log.Printf("[LOGIN] migration created account=%d char=%d world=%d channel=%d nonce=%s ip=%s", pending.AccountID, pending.CharacterID, pending.WorldID, pending.DestinationID, pending.Nonce, pending.ClientIP)
+
+	conn.Send(packetLoginMigrateClient(channel.IP, channel.Port, charID))
 }
 
 func (server *Server) addCharacterItem(characterID int64, itemID int32, slot int32, creatorName string) {
@@ -628,6 +837,10 @@ func (server *Server) addCharacterItem(characterID int64, itemID int32, slot int
 }
 
 func (server *Server) handleReturnToLoginScreen(conn mnet.Client, reader mpacket.Reader) {
+	sess := server.sessionFor(conn)
+	if sess.onlineMarked {
+		sess.stage = sessionStageAwaitWorldSelect
+	}
 	conn.Send(packetLoginReturnFromChannel())
 }
 

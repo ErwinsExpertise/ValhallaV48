@@ -218,6 +218,13 @@ func (server *Server) HandleClientPacket(conn mnet.Client, reader mpacket.Reader
 
 func (server *Server) playerConnect(conn mnet.Client, reader mpacket.Reader) {
 	charID := reader.ReadInt32()
+	clientIP := common.RemoteIPFromConn(conn)
+
+	pending, err := common.ConsumePendingMigration(charID, common.MigrationTypeChannel, int(server.id), clientIP)
+	if err != nil {
+		log.Println("playerConnect pending migration validation failed:", err)
+		return
+	}
 
 	// Fetch channelID, migrationID and accountID in a single query
 	var (
@@ -225,7 +232,7 @@ func (server *Server) playerConnect(conn mnet.Client, reader mpacket.Reader) {
 		channelID   int8
 		accountID   int32
 	)
-	err := common.DB.QueryRow(
+	err = common.DB.QueryRow(
 		"SELECT channelID, migrationID, accountID FROM characters WHERE ID=?",
 		charID,
 	).Scan(&channelID, &migrationID, &accountID)
@@ -234,8 +241,9 @@ func (server *Server) playerConnect(conn mnet.Client, reader mpacket.Reader) {
 		return
 	}
 
-	if migrationID != server.id {
+	if migrationID != server.id || accountID != pending.AccountID {
 		// Not for this server; silently ignore to avoid leaking info
+		common.DeletePendingMigrationForCharacter(charID)
 		return
 	}
 
@@ -371,12 +379,13 @@ func (server *Server) playerConnect(conn mnet.Client, reader mpacket.Reader) {
 		guildIDValue = guildID.Int32
 	}
 	server.world.Send(internal.PacketChannelPlayerConnected(plr.ID, plr.Name, server.id, channelID > -1, newPlr.mapID, guildIDValue))
+	log.Printf("[CHANNEL %d] consumed migration account=%d char=%d ip=%s", server.id, pending.AccountID, pending.CharacterID, clientIP)
 }
 
 func (server *Server) playerChangeChannel(conn mnet.Client, reader mpacket.Reader) {
 	id := reader.ReadByte()
 
-	server.migrating = append(server.migrating, conn)
+	server.migrating[conn] = true
 	player, err := server.players.GetFromConn(conn)
 	if err != nil {
 		log.Println("Unable to get Player from connection", conn)
@@ -394,12 +403,22 @@ func (server *Server) playerChangeChannel(conn mnet.Client, reader mpacket.Reade
 
 	if int(id) < len(server.channels) {
 		if server.channels[id].Port == 0 {
+			delete(server.migrating, conn)
 			conn.Send(packetCannotChangeChannel())
 		} else {
 			if _, err := common.DB.Exec("UPDATE characters SET migrationID=? WHERE ID=?", id, player.ID); err != nil {
+				delete(server.migrating, conn)
 				log.Println(err)
 				return
 			}
+
+			pending, err := common.CreatePendingMigration(player.accountID, player.ID, player.worldID, common.MigrationTypeChannel, int(id), common.RemoteIPFromConn(conn), 30*time.Second)
+			if err != nil {
+				delete(server.migrating, conn)
+				log.Println("playerChangeChannel pending migration create failed:", err)
+				return
+			}
+			log.Printf("[CHANNEL %d] created migration account=%d char=%d targetChannel=%d nonce=%s ip=%s", server.id, pending.AccountID, pending.CharacterID, id, pending.Nonce, pending.ClientIP)
 
 			conn.Send(packetChangeChannel(server.channels[id].IP, server.channels[id].Port))
 		}
@@ -928,7 +947,7 @@ func validateSkillWithJob(jobID int16, baseSkillID int32) bool {
 }
 
 func (server *Server) playerEnterCashShop(conn mnet.Client, reader mpacket.Reader) {
-	server.migrating = append(server.migrating, conn)
+	server.migrating[conn] = true
 	player, err := server.players.GetFromConn(conn)
 	if err != nil {
 		log.Println("Unable to get Player from connection", conn)
@@ -942,12 +961,22 @@ func (server *Server) playerEnterCashShop(conn mnet.Client, reader mpacket.Reade
 
 	if len(server.cashShop.IP) == 4 && server.cashShop.Port != 0 {
 		if _, err := common.DB.Exec("UPDATE characters SET migrationID=?, previousChannelID=?, inCashShop=1 WHERE ID=?", 50, server.id, player.ID); err != nil {
+			delete(server.migrating, conn)
 			log.Println(err)
 			return
 		}
 
+		pending, err := common.CreatePendingMigration(player.accountID, player.ID, player.worldID, common.MigrationTypeCashShop, 50, common.RemoteIPFromConn(conn), 30*time.Second)
+		if err != nil {
+			delete(server.migrating, conn)
+			log.Println("playerEnterCashShop pending migration create failed:", err)
+			return
+		}
+		log.Printf("[CHANNEL %d] created cashshop migration account=%d char=%d nonce=%s ip=%s", server.id, pending.AccountID, pending.CharacterID, pending.Nonce, pending.ClientIP)
+
 		conn.Send(packetChangeChannel(server.cashShop.IP, server.cashShop.Port))
 	} else {
+		delete(server.migrating, conn)
 		conn.Send(packetCannotEnterCashShop())
 	}
 }

@@ -2,11 +2,15 @@ package opcode
 
 const (
 	RecvLoginRequest               int16 = 1
+	RecvLoginWorldInfoRequest      int16 = 3
 	RecvLoginCheckLogin            int16 = 8
 	RecvLoginChannelSelect         int16 = 4
 	RecvLoginWorldSelect           int16 = 5
 	RecvLoginEULA                  int16 = 6
 	RecvLoginRegisterPin           int16 = 9
+	RecvLoginLogoutWorld           int16 = 11
+	RecvLoginViewAllCharacters     int16 = 12
+	RecvLoginUnknown14             int16 = 14
 	RecvLoginSelectCharacter       int16 = 15
 	RecvLoginNameCheck             int16 = 17
 	RecvLoginNewCharacter          int16 = 21

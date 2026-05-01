@@ -127,6 +127,25 @@ CREATE TABLE `characters` (
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 
 
+DROP TABLE IF EXISTS `pending_migrations`;
+CREATE TABLE `pending_migrations` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `accountID` int(10) unsigned NOT NULL,
+  `characterID` int(11) NOT NULL,
+  `worldID` tinyint unsigned NOT NULL DEFAULT '0',
+  `destinationType` varchar(16) NOT NULL,
+  `destinationID` int(11) NOT NULL,
+  `clientIP` varchar(45) NOT NULL DEFAULT '',
+  `nonce` varchar(32) NOT NULL,
+  `createdAt` bigint NOT NULL,
+  `expiresAt` bigint NOT NULL,
+  `consumedAt` bigint NOT NULL DEFAULT '0',
+  PRIMARY KEY (`id`),
+  KEY `idx_pending_migration_lookup` (`characterID`,`destinationType`,`destinationID`,`consumedAt`,`expiresAt`),
+  KEY `idx_pending_migration_account` (`accountID`)
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+
+
 DROP TABLE IF EXISTS `guilds`;
 CREATE TABLE `guilds` (
   `id` int(11) NOT NULL AUTO_INCREMENT,

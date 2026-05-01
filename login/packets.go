@@ -95,16 +95,52 @@ func packetLoginDisplayCharacters(characters []player) mpacket.Packet {
 	pac := mpacket.CreateWithOpcode(opcode.SendLoginCharacterData)
 	pac.WriteByte(0) // ?
 
-	if len(characters) < 4 && len(characters) > 0 {
-		pac.WriteByte(byte(len(characters)))
+	if len(characters) > 0 {
+		count := len(characters)
+		if count > 4 {
+			count = 4
+		}
+		pac.WriteByte(byte(count))
 
-		for _, c := range characters {
+		for _, c := range characters[:count] {
 			loginWritePlayerCharacter(&pac, c.id, c)
 		}
 	} else {
 		pac.WriteByte(0)
 	}
 
+	return pac
+}
+
+func packetLoginViewAllCharactersSummary(worldCount, totalCharacters int) mpacket.Packet {
+	pac := mpacket.CreateWithOpcode(opcode.SendLoginViewAllChars)
+	pac.WriteByte(1)
+	pac.WriteInt32(int32(worldCount))
+	pac.WriteInt32(int32(totalCharacters))
+	return pac
+}
+
+func packetLoginViewAllCharactersWorld(worldID byte, characters []player) mpacket.Packet {
+	pac := mpacket.CreateWithOpcode(opcode.SendLoginViewAllChars)
+	pac.WriteByte(0)
+	pac.WriteByte(worldID)
+
+	count := len(characters)
+	if count > 4 {
+		count = 4
+	}
+	pac.WriteByte(byte(count))
+
+	for _, c := range characters[:count] {
+		loginWritePlayerCharacter(&pac, c.id, c)
+	}
+
+	return pac
+}
+
+func packetLoginViewAllCharactersEmpty() mpacket.Packet {
+	pac := mpacket.CreateWithOpcode(opcode.SendLoginViewAllChars)
+	pac.WriteByte(4)
 	return pac
 }
 

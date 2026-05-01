@@ -104,7 +104,7 @@ func getCharactersFromAccountWorldID(accountID int32, worldID byte) []player {
 	filter := "id,accountID,worldID,name,gender,skin,hair,face,level,job,str,dex,intt," +
 		"luk,hp,maxHP,mp,maxMP,ap,sp,exp,fame,mapID,mapPos"
 
-	chars, err := common.DB.Query("SELECT "+filter+" FROM characters WHERE accountID=? AND worldID=?", accountID, worldID)
+	chars, err := common.DB.Query("SELECT "+filter+" FROM characters WHERE accountID=? AND worldID=? ORDER BY id ASC", accountID, worldID)
 
 	if err != nil {
 		log.Println(err)
@@ -129,6 +129,20 @@ func getCharactersFromAccountWorldID(accountID int32, worldID byte) []player {
 	}
 
 	return c
+}
+
+func getCharactersFromAccountAllWorlds(accountID int32) map[byte][]player {
+	result := make(map[byte][]player)
+
+	for worldID := 0; worldID < 255; worldID++ {
+		chars := getCharactersFromAccountWorldID(accountID, byte(worldID))
+		if len(chars) == 0 {
+			continue
+		}
+		result[byte(worldID)] = chars
+	}
+
+	return result
 }
 
 func loadPlayerFromID(id int32) player {
@@ -248,7 +262,8 @@ func loadEquipsFromDb(charID int32) []item {
 	row, err := common.DB.Query("SELECT "+filter+" FROM items WHERE characterID=?", charID)
 
 	if err != nil {
-		panic(err)
+		log.Println(err)
+		return nil
 	}
 
 	equip := []item{}
