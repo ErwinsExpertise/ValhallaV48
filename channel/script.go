@@ -501,7 +501,22 @@ func (ctrl *scriptPlayerWrapper) PartyMembersOnMapCount() int {
 
 	count := 0
 	for _, v := range ctrl.plr.party.players {
-		if v != nil && v.mapID == ctrl.plr.mapID {
+		if v != nil && v.mapID == ctrl.plr.mapID && v.inst != nil && ctrl.plr.inst != nil && v.inst.id == ctrl.plr.inst.id {
+			count++
+		}
+	}
+
+	return count
+}
+
+func (ctrl *scriptPlayerWrapper) PartyMembersCount() int {
+	if !ctrl.InParty() {
+		return 0
+	}
+
+	count := 0
+	for _, id := range ctrl.plr.party.PlayerID {
+		if id != 0 {
 			count++
 		}
 	}
@@ -664,6 +679,18 @@ func (ctrl *scriptPlayerWrapper) PartyGiveExp(val int32) {
 
 	for _, plr := range ctrl.plr.party.players {
 		if plr != nil {
+			plr.giveEXP(val, false, false)
+		}
+	}
+}
+
+func (ctrl *scriptPlayerWrapper) EventGiveExp(val int32) {
+	if ctrl.plr == nil || ctrl.plr.event == nil {
+		return
+	}
+
+	for _, id := range ctrl.plr.event.playerIDs {
+		if plr, err := ctrl.server.players.GetFromID(id); err == nil {
 			plr.giveEXP(val, false, false)
 		}
 	}
@@ -1170,6 +1197,57 @@ func (ctrl *scriptPlayerWrapper) StartPartyQuest(name string, instID int) {
 
 	event, err := createEvent(ctrl.plr.party.ID, instID, ids, ctrl.server, program)
 
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	ctrl.server.events[ctrl.plr.party.ID] = event
+	event.start()
+}
+
+func (ctrl *scriptPlayerWrapper) StartPartyQuestAt(name string, mapID int32, instID int) {
+	if ctrl.plr.party == nil {
+		return
+	}
+
+	if _, ok := ctrl.server.events[ctrl.plr.party.ID]; ok {
+		return
+	}
+
+	field, ok := ctrl.server.fields[mapID]
+	if !ok {
+		return
+	}
+
+	if instID <= 0 {
+		instID = field.createInstance(&ctrl.server.rates, ctrl.server)
+	} else {
+		if _, err := ensureFieldInstance(field, instID, &ctrl.server.rates, ctrl.server); err != nil {
+			return
+		}
+	}
+
+	program, ok := ctrl.server.eventScriptStore.scripts[name]
+	if !ok {
+		return
+	}
+
+	ids := make([]int32, 0, constant.MaxPartySize)
+
+	for i, id := range ctrl.plr.party.PlayerID {
+		if ctrl.plr.mapID == ctrl.plr.party.MapID[i] && ctrl.plr.party.players[i] != nil && ctrl.plr.inst != nil && ctrl.plr.party.players[i].inst != nil {
+			if ctrl.plr.inst.id == ctrl.plr.party.players[i].inst.id {
+				ids = append(ids, id)
+			}
+		}
+	}
+
+	if len(ids) == 0 {
+		return
+	}
+
+	event, err := createEvent(ctrl.plr.party.ID, instID, ids, ctrl.server, program)
 	if err != nil {
 		log.Println(err)
 		return

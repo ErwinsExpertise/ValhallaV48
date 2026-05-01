@@ -228,11 +228,11 @@ func (e *event) Finished() {
 }
 
 func (e *event) Players() []scriptPlayerWrapper {
-	r := make([]scriptPlayerWrapper, len(e.playerIDs))
+	r := make([]scriptPlayerWrapper, 0, len(e.playerIDs))
 
-	for index, id := range e.playerIDs {
+	for _, id := range e.playerIDs {
 		if plr, err := e.server.players.GetFromID(id); err == nil {
-			r[index] = scriptPlayerWrapper{plr: plr, server: e.server}
+			r = append(r, scriptPlayerWrapper{plr: plr, server: e.server})
 		}
 	}
 
