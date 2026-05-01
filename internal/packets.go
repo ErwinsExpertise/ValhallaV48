@@ -544,3 +544,18 @@ func PacketChatMegaphone(chrName, msg string, whisper bool) mpacket.Packet {
 
 	return p
 }
+
+func PacketChatAvatarMegaphone(itemID int32, chrName string, lines [4]string, channelID byte, whisper bool, avatarLook []byte) mpacket.Packet {
+	p := mpacket.CreateInternal(opcode.ChannelPlayerChatEvent)
+	p.WriteByte(OpChatAvatarMegaphone)
+	p.WriteInt32(itemID)
+	p.WriteString(chrName)
+	for _, line := range lines {
+		p.WriteString(line)
+	}
+	p.WriteByte(channelID)
+	p.WriteBool(whisper)
+	p.WriteBytes(avatarLook)
+
+	return p
+}

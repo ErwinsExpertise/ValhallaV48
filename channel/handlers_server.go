@@ -449,6 +449,18 @@ func (server Server) handleChatEvent(conn mnet.Server, reader mpacket.Reader) {
 
 		// Broadcast to all players on this channel
 		server.players.broadcast(packetMessageBroadcastSuper(fromName, msg, server.id, whisper))
+	case internal.OpChatAvatarMegaphone:
+		itemID := reader.ReadInt32()
+		fromName := reader.ReadString(reader.ReadInt16())
+		var lines [4]string
+		for i := 0; i < len(lines); i++ {
+			lines[i] = reader.ReadString(reader.ReadInt16())
+		}
+		channelID := reader.ReadByte()
+		whisper := reader.ReadBool()
+		avatarLook := reader.GetRestAsBytes()
+		server.players.broadcast(packetAvatarMegaphone(itemID, fromName, lines, channelID, whisper, avatarLook))
+		server.scheduleAvatarMegaphoneClear()
 	default:
 		log.Println("Unknown chat event type:", op)
 	}

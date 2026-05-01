@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Hucaru/Valhalla/common/opcode"
 	"github.com/Hucaru/Valhalla/constant"
 	"github.com/Hucaru/Valhalla/internal"
 	"github.com/Hucaru/Valhalla/mpacket"
@@ -13,33 +14,35 @@ import (
 )
 
 const (
-	cashItemTypeSpeakerChannel = 12
-	cashItemTypeSpeakerWorld   = 13
-	cashItemTypeWeather        = 14
-	cashItemTypePetNameTag     = 15
-	cashItemTypeMessageBox     = 16
-	cashItemTypeSendMemo       = 19
-	cashItemTypeMapTransfer    = 20
-	cashItemTypeAPReset        = 21
-	cashItemTypeSPReset        = 22
-	cashItemTypeItemNameTag    = 23
-	cashItemTypePetSkill       = 26
-	cashItemTypeShopScanner    = 27
-	cashItemTypeChalkboard     = 28
-	cashItemTypePetFood        = 30
-	cashItemTypeMorph          = 31
-	cashItemTypeParcel         = 34
-	cashItemTypeMapleTV        = 40
-	cashItemTypeMapleSoleTV    = 41
-	cashItemTypeMapleLoveTV    = 42
-	cashItemTypeMegaTV         = 43
-	cashItemTypeMegaSoleTV     = 44
-	cashItemTypeMegaLoveTV     = 45
-	cashItemTypeNameChange     = 46
-	cashItemTypeTransferWorld  = 50
-	cashItemTypeUnsupported    = 0
-	cashItemTypeExpCoupon      = 100
-	cashItemTypeDropCoupon     = 101
+	cashItemTypeSpeakerChannel  = 12
+	cashItemTypeSpeakerWorld    = 13
+	cashItemTypeWeather         = 14
+	cashItemTypePetNameTag      = 15
+	cashItemTypeMessageBox      = 16
+	cashItemTypeSendMemo        = 19
+	cashItemTypeMapTransfer     = 20
+	cashItemTypeAPReset         = 21
+	cashItemTypeSPReset         = 22
+	cashItemTypeItemNameTag     = 23
+	cashItemTypePetSkill        = 26
+	cashItemTypeShopScanner     = 27
+	cashItemTypeChalkboard      = 28
+	cashItemTypePetFood         = 30
+	cashItemTypeMorph           = 31
+	cashItemTypeParcel          = 34
+	cashItemTypeMoneyPocket     = 17
+	cashItemTypeAvatarMegaphone = 36
+	cashItemTypeMapleTV         = 40
+	cashItemTypeMapleSoleTV     = 41
+	cashItemTypeMapleLoveTV     = 42
+	cashItemTypeMegaTV          = 43
+	cashItemTypeMegaSoleTV      = 44
+	cashItemTypeMegaLoveTV      = 45
+	cashItemTypeNameChange      = 46
+	cashItemTypeTransferWorld   = 50
+	cashItemTypeUnsupported     = 0
+	cashItemTypeExpCoupon       = 100
+	cashItemTypeDropCoupon      = 101
 
 	mapTransferResultDeleteSlot     = 2
 	mapTransferResultAddSlot        = 3
@@ -53,7 +56,16 @@ const (
 	petNameMaxLength                = 12
 	channelMegaphoneMaxDisplayChars = 80
 	worldMegaphoneMaxChars          = 60
+	avatarMegaphoneMaxLineChars     = 32
+	avatarMegaphoneDisplayDuration  = 10 * time.Second
 )
+
+type cashAvatarMegaphonePayload struct {
+	itemID     int32
+	lines      [4]string
+	whisper    bool
+	avatarLook []byte
+}
 
 func cashItemUseType(itemID int32) int {
 	itemType := cashSlotItemType(itemID)
@@ -78,11 +90,138 @@ func cashItemUseType(itemID int32) int {
 		return itemType
 	}
 
-	if itemType == 30 || itemType == 31 || itemType == 34 {
+	if itemType == 30 || itemType == 31 || itemType == 34 || itemType == 36 {
 		return itemType
 	}
 
 	return 0
+}
+
+type cashUseContext struct {
+	rawPacket      []byte
+	slot           int16
+	itemID         int32
+	rawType        int
+	useType        int
+	invType        byte
+	slotItemID     int32
+	slotItemAmount int16
+	slotCash       bool
+	slotCashID     int64
+	nxItem         nx.Item
+	handler        string
+	extra          string
+}
+
+func (ctx cashUseContext) packetHex() string {
+	if len(ctx.rawPacket) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("% X", ctx.rawPacket)
+}
+
+func (ctx cashUseContext) logFields() string {
+	return fmt.Sprintf("raw=%s slot=%d itemID=%d rawType=%d useType=%d invType=%d slotItemID=%d slotItemAmount=%d slotCash=%t slotCashID=%d nxName=%q nxCash=%t nxPath=%q handler=%s extra=%s",
+		ctx.packetHex(),
+		ctx.slot,
+		ctx.itemID,
+		ctx.rawType,
+		ctx.useType,
+		ctx.invType,
+		ctx.slotItemID,
+		ctx.slotItemAmount,
+		ctx.slotCash,
+		ctx.slotCashID,
+		ctx.nxItem.Name,
+		ctx.nxItem.Cash,
+		ctx.nxItem.Path,
+		ctx.handler,
+		ctx.extra,
+	)
+}
+
+func validateCashUseInventoryItem(plr *Player, slot int16, itemID int32) (Item, error) {
+	item, err := plr.getItem(constant.InventoryCash, slot)
+	if err != nil {
+		return item, fmt.Errorf("invalid slot: %w", err)
+	}
+	if item.ID != itemID {
+		return item, fmt.Errorf("slot item mismatch want=%d have=%d", itemID, item.ID)
+	}
+	if !item.cash {
+		return item, fmt.Errorf("slot item is not marked cash")
+	}
+	if item.amount <= 0 {
+		return item, fmt.Errorf("slot item has no quantity")
+	}
+	return item, nil
+}
+
+func decodeAvatarMegaphoneLook(reader *mpacket.Reader) []byte {
+	look := mpacket.NewPacket()
+	look.WriteByte(reader.ReadByte())
+	look.WriteByte(reader.ReadByte())
+	look.WriteInt32(reader.ReadInt32())
+	look.WriteByte(reader.ReadByte())
+	look.WriteInt32(reader.ReadInt32())
+
+	for {
+		slot := reader.ReadByte()
+		look.WriteByte(slot)
+		if slot == 0xFF {
+			break
+		}
+		look.WriteInt32(reader.ReadInt32())
+	}
+
+	for {
+		slot := reader.ReadByte()
+		look.WriteByte(slot)
+		if slot == 0xFF {
+			break
+		}
+		look.WriteInt32(reader.ReadInt32())
+	}
+
+	look.WriteInt32(reader.ReadInt32())
+	look.WriteInt32(reader.ReadInt32())
+	return look
+}
+
+func packetAvatarMegaphone(itemID int32, chrName string, lines [4]string, channelID byte, whisper bool, avatarLook []byte) mpacket.Packet {
+	p := mpacket.CreateWithOpcode(opcode.SendChannelAvatarMegaphone)
+	p.WriteInt32(itemID)
+	p.WriteString(chrName)
+	for _, line := range lines {
+		p.WriteString(line)
+	}
+	p.WriteInt32(int32(channelID))
+	p.WriteBool(whisper)
+	p.WriteBytes(avatarLook)
+	return p
+}
+
+func packetClearAvatarMegaphone() mpacket.Packet {
+	return mpacket.CreateWithOpcode(opcode.SendChannelClearAvatarMegaphone)
+}
+
+func (server *Server) scheduleAvatarMegaphoneClear() {
+	if server == nil {
+		return
+	}
+	server.avatarMegaphoneSeq++
+	seq := server.avatarMegaphoneSeq
+	time.AfterFunc(avatarMegaphoneDisplayDuration, func() {
+		select {
+		case server.dispatch <- func() {
+			if server.avatarMegaphoneSeq != seq {
+				return
+			}
+			server.players.broadcast(packetClearAvatarMegaphone())
+		}:
+		default:
+		}
+	})
 }
 
 func cashSlotItemType(itemID int32) int {
@@ -215,18 +354,28 @@ func cashSlotItemType(itemID int32) int {
 }
 
 func (server *Server) handleCashItemUse(plr *Player, reader mpacket.Reader) {
+	rawPacket := append([]byte(nil), reader.GetBuffer()...)
 	slot := reader.ReadInt16()
 	itemID := reader.ReadInt32()
-
-	item, err := plr.getItem(constant.InventoryCash, slot)
-	if err != nil {
-		log.Printf("cash use invalid slot: player=%s slot=%d itemID=%d err=%v", plr.Name, slot, itemID, err)
-		plr.Send(packetPlayerNoChange())
-		return
+	rawType := cashSlotItemType(itemID)
+	ctx := cashUseContext{
+		rawPacket: rawPacket,
+		slot:      slot,
+		itemID:    itemID,
+		rawType:   rawType,
+		invType:   constant.InventoryCash,
+	}
+	if meta, err := nx.GetItem(itemID); err == nil {
+		ctx.nxItem = meta
 	}
 
-	if item.ID != itemID || !item.cash || item.cashID == 0 {
-		log.Printf("cash use invalid item: player=%s slot=%d want=%d have=%d cash=%t cashID=%d", plr.Name, slot, itemID, item.ID, item.cash, item.cashID)
+	item, err := validateCashUseInventoryItem(plr, slot, itemID)
+	ctx.slotItemID = item.ID
+	ctx.slotItemAmount = item.amount
+	ctx.slotCash = item.cash
+	ctx.slotCashID = item.cashID
+	if err != nil {
+		log.Printf("cash use invalid item: player=%s err=%v %s", plr.Name, err, ctx.logFields())
 		plr.Send(packetPlayerNoChange())
 		return
 	}
@@ -240,29 +389,34 @@ func (server *Server) handleCashItemUse(plr *Player, reader mpacket.Reader) {
 			itemType = cashItemTypeDropCoupon
 		}
 	}
+	ctx.useType = itemType
 	if itemType == 0 {
-		log.Printf("cash use rejected type: player=%s itemID=%d rawType=%d", plr.Name, itemID, cashSlotItemType(itemID))
+		log.Printf("cash use rejected type: player=%s %s", plr.Name, ctx.logFields())
+		plr.Send(packetMessageRedText("This cash item category is not supported."))
 		plr.Send(packetPlayerNoChange())
 		return
 	}
 
 	supported := map[int]bool{
-		cashItemTypeSpeakerChannel: true,
-		cashItemTypeSpeakerWorld:   true,
-		cashItemTypeWeather:        true,
-		cashItemTypePetNameTag:     true,
-		cashItemTypeMessageBox:     true,
-		cashItemTypeMapTransfer:    true,
-		cashItemTypeAPReset:        true,
-		cashItemTypeSPReset:        true,
-		cashItemTypeItemNameTag:    true,
-		cashItemTypeChalkboard:     true,
-		cashItemTypeExpCoupon:      true,
-		cashItemTypeDropCoupon:     true,
+		cashItemTypeSpeakerChannel:  true,
+		cashItemTypeSpeakerWorld:    true,
+		cashItemTypeMoneyPocket:     true,
+		cashItemTypeWeather:         true,
+		cashItemTypePetNameTag:      true,
+		cashItemTypeMessageBox:      true,
+		cashItemTypeMapTransfer:     true,
+		cashItemTypeAPReset:         true,
+		cashItemTypeSPReset:         true,
+		cashItemTypeItemNameTag:     true,
+		cashItemTypeChalkboard:      true,
+		cashItemTypeExpCoupon:       true,
+		cashItemTypeDropCoupon:      true,
+		cashItemTypeAvatarMegaphone: true,
 	}
 
 	if !supported[itemType] {
-		log.Printf("cash use unsupported category: player=%s itemID=%d type=%d", plr.Name, itemID, itemType)
+		log.Printf("cash use unsupported category: player=%s %s", plr.Name, ctx.logFields())
+		plr.Send(packetMessageRedText("This cash item category is not supported."))
 		plr.Send(packetPlayerNoChange())
 		return
 	}
@@ -270,46 +424,64 @@ func (server *Server) handleCashItemUse(plr *Player, reader mpacket.Reader) {
 	var apply func() error
 	switch itemType {
 	case cashItemTypeSpeakerChannel:
+		ctx.handler = "speaker_channel"
 		apply, err = server.prepareCashSpeakerChannel(plr, reader)
 	case cashItemTypeSpeakerWorld:
+		ctx.handler = "speaker_world"
 		apply, err = server.prepareCashSpeakerWorld(plr, reader)
+	case cashItemTypeMoneyPocket:
+		ctx.handler = "money_pocket"
+		apply, err = server.prepareCashMoneyPocket(plr, itemID)
 	case cashItemTypeWeather:
+		ctx.handler = "weather"
 		apply, err = server.prepareCashWeather(plr, itemID, reader)
 	case cashItemTypePetNameTag:
+		ctx.handler = "pet_name_tag"
 		apply, err = server.prepareCashPetNameTag(plr, reader)
 	case cashItemTypeMessageBox:
+		ctx.handler = "message_box"
 		apply, err = server.prepareCashMessageBox(plr, itemID, reader)
 	case cashItemTypeMapTransfer:
+		ctx.handler = "teleport_rock"
 		apply, err = server.prepareCashTeleportRock(plr, itemID, reader)
 	case cashItemTypeAPReset:
+		ctx.handler = "ap_reset"
 		apply, err = server.prepareCashAPReset(plr, reader)
 	case cashItemTypeSPReset:
+		ctx.handler = "sp_reset"
 		apply, err = server.prepareCashSPReset(plr, itemID, reader)
 	case cashItemTypeItemNameTag:
+		ctx.handler = "item_name_tag"
 		apply, err = server.prepareCashItemNameTag(plr, reader)
 	case cashItemTypeChalkboard:
+		ctx.handler = "chalkboard"
 		apply, err = server.prepareCashChalkboard(plr, reader)
 	case cashItemTypeExpCoupon:
+		ctx.handler = "exp_coupon"
 		apply, err = server.prepareCashExpCoupon(plr, itemID)
 	case cashItemTypeDropCoupon:
+		ctx.handler = "drop_coupon"
 		apply, err = server.prepareCashDropCoupon(plr, itemID)
+	case cashItemTypeAvatarMegaphone:
+		ctx.handler = "avatar_megaphone"
+		apply, err = server.prepareCashAvatarMegaphone(plr, itemID, reader, &ctx)
 	}
 
 	if err != nil {
-		log.Printf("cash use validation failed: player=%s itemID=%d type=%d err=%v", plr.Name, itemID, itemType, err)
+		log.Printf("cash use validation failed: player=%s err=%v %s", plr.Name, err, ctx.logFields())
 		plr.Send(packetPlayerNoChange())
 		return
 	}
 
 	removed, takeErr := plr.takeItem(itemID, slot, 1, constant.InventoryCash)
 	if takeErr != nil {
-		log.Printf("cash use consume failed: player=%s itemID=%d slot=%d err=%v", plr.Name, itemID, slot, takeErr)
+		log.Printf("cash use consume failed: player=%s err=%v %s", plr.Name, takeErr, ctx.logFields())
 		plr.Send(packetPlayerNoChange())
 		return
 	}
 
 	if err := apply(); err != nil {
-		log.Printf("cash use apply failed: player=%s itemID=%d type=%d err=%v", plr.Name, itemID, itemType, err)
+		log.Printf("cash use apply failed: player=%s err=%v %s", plr.Name, err, ctx.logFields())
 		if _, rollbackErr := plr.GiveItem(removed); rollbackErr != nil {
 			log.Printf("cash use rollback failed: player=%s itemID=%d err=%v", plr.Name, itemID, rollbackErr)
 		}
@@ -321,6 +493,9 @@ func (server *Server) handleCashItemUse(plr *Player, reader mpacket.Reader) {
 }
 
 func (server *Server) prepareCashSpeakerChannel(plr *Player, reader mpacket.Reader) (func() error, error) {
+	if plr.level <= 10 {
+		return nil, fmt.Errorf("channel megaphone requires level 11")
+	}
 	msg := strings.TrimSpace(reader.ReadString(reader.ReadInt16()))
 	if msg == "" {
 		return nil, fmt.Errorf("empty channel megaphone message")
@@ -335,6 +510,9 @@ func (server *Server) prepareCashSpeakerChannel(plr *Player, reader mpacket.Read
 }
 
 func (server *Server) prepareCashSpeakerWorld(plr *Player, reader mpacket.Reader) (func() error, error) {
+	if plr.level <= 10 {
+		return nil, fmt.Errorf("world megaphone requires level 11")
+	}
 	msg := strings.TrimSpace(reader.ReadString(reader.ReadInt16()))
 	if msg == "" {
 		return nil, fmt.Errorf("empty world megaphone message")
@@ -345,6 +523,47 @@ func (server *Server) prepareCashSpeakerWorld(plr *Player, reader mpacket.Reader
 	whisper := reader.ReadBool()
 	return func() error {
 		server.world.Send(internal.PacketChatMegaphone(plr.Name, msg, whisper))
+		return nil
+	}, nil
+}
+
+func (server *Server) prepareCashMoneyPocket(plr *Player, itemID int32) (func() error, error) {
+	item, err := nx.GetItem(itemID)
+	if err != nil {
+		return nil, err
+	}
+	if item.Meso <= 0 {
+		return nil, fmt.Errorf("money pocket has no meso payload")
+	}
+	amount := int32(item.Meso)
+	return func() error {
+		plr.giveMesos(amount)
+		plr.Send(packetMessageMesosChangeChat(amount))
+		return nil
+	}, nil
+}
+
+func (server *Server) prepareCashAvatarMegaphone(plr *Player, itemID int32, reader mpacket.Reader, ctx *cashUseContext) (func() error, error) {
+	if plr.level <= 10 {
+		return nil, fmt.Errorf("avatar megaphone requires level 11")
+	}
+	payload := cashAvatarMegaphonePayload{itemID: itemID}
+	lineLog := make([]string, 0, 4)
+	for i := 0; i < 4; i++ {
+		line := strings.TrimSpace(reader.ReadString(reader.ReadInt16()))
+		if len(line) > avatarMegaphoneMaxLineChars {
+			return nil, fmt.Errorf("avatar megaphone line %d too long", i+1)
+		}
+		payload.lines[i] = line
+		lineLog = append(lineLog, line)
+	}
+	payload.whisper = reader.ReadBool()
+	payload.avatarLook = decodeAvatarMegaphoneLook(&reader)
+	if ctx != nil {
+		ctx.extra = fmt.Sprintf("lines=%q whisper=%t clientAvatarBytes=%d", lineLog, payload.whisper, len(payload.avatarLook))
+	}
+	return func() error {
+		server.world.Send(internal.PacketChatAvatarMegaphone(itemID, plr.Name, payload.lines, server.id, payload.whisper, plr.avatarLookBytes()))
 		return nil
 	}, nil
 }

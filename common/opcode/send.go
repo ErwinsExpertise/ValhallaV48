@@ -33,6 +33,8 @@ const (
 	SendChannelGuildInfo               int16 = 0x35
 	SendChannelTownPortal              int16 = 0x36
 	SendChannelBroadcastMessage        int16 = 0x37
+	SendChannelAvatarMegaphone         int16 = 0x42
+	SendChannelClearAvatarMegaphone    int16 = 0x43
 	SendChannelWarpToMap               int16 = 0x49
 	SendChannelSetCashShop             int16 = 0x4A
 	SendChannelPortalClosed            int16 = 0x4D

@@ -52,6 +52,7 @@ type Server struct {
 	rates              rates
 	autoBan            bool
 	ac                 *anticheat.AntiCheat
+	avatarMegaphoneSeq uint64
 }
 
 // Initialise the server
