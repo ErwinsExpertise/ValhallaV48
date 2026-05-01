@@ -340,6 +340,8 @@ CREATE TABLE IF NOT EXISTS account_storage_items (
     jump         SMALLINT(6) NOT NULL DEFAULT 0,
     expireTime   BIGINT(20) NOT NULL DEFAULT 0,
     creatorName  TINYTEXT NULL,
+    cashID       BIGINT(20) DEFAULT NULL,
+    cashSN       INT(11) DEFAULT NULL,
     ringID       INT(11) DEFAULT NULL,
     PRIMARY KEY (id),
     KEY idx_storage_account (accountID),
@@ -347,7 +349,17 @@ CREATE TABLE IF NOT EXISTS account_storage_items (
     CONSTRAINT fk_storage_items_account
     FOREIGN KEY (accountID) REFERENCES accounts(accountID)
     ON DELETE CASCADE ON UPDATE CASCADE
-    ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+
+CREATE TABLE IF NOT EXISTS cashshop_wishlist (
+    characterID INT(11) NOT NULL,
+    slot        TINYINT(3) UNSIGNED NOT NULL,
+    sn          INT(11) NOT NULL,
+    PRIMARY KEY (characterID, slot),
+    CONSTRAINT cashshop_wishlist_fk_character
+        FOREIGN KEY (characterID) REFERENCES characters(id)
+        ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 
 CREATE TABLE IF NOT EXISTS account_cashshop_storage (
     accountID   INT(10) UNSIGNED NOT NULL,

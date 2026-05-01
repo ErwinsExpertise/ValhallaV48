@@ -84,5 +84,6 @@ const (
 	RecvChannelPlayerPickup      int16 = 0x8E
 	RecvChannelReactorHit        int16 = 0x91
 	RecvChannelBoatMap           int16 = 0x9B
+	RecvCashShopCashRequest      int16 = 0x9F
 	RecvCashShopOperation        int16 = 0xA0
 )

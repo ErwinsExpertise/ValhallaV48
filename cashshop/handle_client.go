@@ -1,6 +1,7 @@
 package cashshop
 
 import (
+	"fmt"
 	"log"
 
 	"github.com/Hucaru/Valhalla/channel"
@@ -20,6 +21,8 @@ func (server *Server) HandleClientPacket(conn mnet.Client, reader mpacket.Reader
 	case opcode.RecvPing:
 	case opcode.RecvClientMigrate:
 		server.handlePlayerConnect(conn, reader)
+	case opcode.RecvCashShopCashRequest:
+		server.handleCashRequest(conn, reader)
 	case opcode.RecvCashShopOperation:
 		server.handleCashShopOperation(conn, reader)
 	case opcode.RecvChannelUserPortal:
@@ -91,8 +94,67 @@ func (server *Server) handlePlayerConnect(conn mnet.Client, reader mpacket.Reade
 		plr.Send(packetCashShopLoadLocker(storage, accountID, plr.ID))
 	}
 
-	plr.Send(packetCashShopWishList(nil, false))
+	wishlist, wishErr := loadWishList(plr.ID)
+	if wishErr != nil {
+		log.Printf("Failed to load cash shop wishlist for character %d: %v", plr.ID, wishErr)
+		wishlist = make([]int32, 10)
+	}
+	plr.Send(packetCashShopWishList(wishlist, false))
 	plr.Send(packetCashShopUpdateAmounts(plr.GetNX(), plr.GetMaplePoints(), 0))
+}
+
+func decodeCashShopGiftRequest(reader *mpacket.Reader) (byte, string, string, int32, error) {
+	currencySel := reader.ReadByte()
+	if len(reader.GetRestAsBytes()) < 2 {
+		return 0, "", "", 0, fmt.Errorf("missing recipient length")
+	}
+
+	recipientLen := reader.ReadInt16()
+	recipient := reader.ReadString(recipientLen)
+	if recipient == "" {
+		return 0, "", "", 0, fmt.Errorf("missing recipient")
+	}
+
+	message := ""
+	if len(reader.GetRestAsBytes()) > 4 {
+		messageLen := reader.ReadInt16()
+		message = reader.ReadString(messageLen)
+	}
+	if len(reader.GetRestAsBytes()) < 4 {
+		return 0, "", "", 0, fmt.Errorf("missing SN")
+	}
+
+	return currencySel, recipient, message, reader.ReadInt32(), nil
+}
+
+func decodeCashShopSlotIncreaseRequest(reader *mpacket.Reader) (byte, byte, int16, int32, error) {
+	currencySel := reader.ReadByte()
+	commodityRequest := reader.ReadByte()
+
+	if commodityRequest == 0 {
+		if len(reader.GetRestAsBytes()) < 1 {
+			return 0, 0, 0, 0, fmt.Errorf("missing inventory type")
+		}
+		invType := reader.ReadByte()
+		return currencySel, invType, 4, 4000, nil
+	}
+
+	if len(reader.GetRestAsBytes()) < 4 {
+		return 0, 0, 0, 0, fmt.Errorf("missing slot increase commodity sn")
+	}
+
+	sn := reader.ReadInt32()
+	commodity, ok := nx.GetCommodity(sn)
+	if !ok || commodity.ItemID == 0 || commodity.OnSale == 0 || commodity.Price <= 0 {
+		return 0, 0, 0, 0, fmt.Errorf("invalid slot increase commodity")
+	}
+
+	invType := byte((commodity.ItemID / 1000) % 10)
+	if invType < constant.InventoryEquip || invType > constant.InventoryCash {
+		return 0, 0, 0, 0, fmt.Errorf("invalid slot increase inventory type %d", invType)
+	}
+
+	return currencySel, invType, 4, commodity.Price, nil
 }
 
 func (server *Server) leaveCashShopToChannel(conn mnet.Client, reader mpacket.Reader) {
@@ -155,6 +217,18 @@ func (server *Server) leaveCashShopToChannel(conn mnet.Client, reader mpacket.Re
 	conn.Send(p)
 }
 
+func (server *Server) handleCashRequest(conn mnet.Client, reader mpacket.Reader) {
+	plr, err := server.players.GetFromConn(conn)
+	if err != nil {
+		return
+	}
+
+	plrNX := plr.GetNX()
+	plrMaplePoints := plr.GetMaplePoints()
+
+	plr.Send(packetCashShopUpdateAmounts(plrNX, plrMaplePoints, 0))
+}
+
 func (server *Server) handleCashShopOperation(conn mnet.Client, reader mpacket.Reader) {
 	plr, err := server.players.GetFromConn(conn)
 	if err != nil {
@@ -182,12 +256,6 @@ func (server *Server) handleCashShopOperation(conn mnet.Client, reader mpacket.R
 			return
 		}
 
-		// Determine quantity
-		count := int16(1)
-		if commodity.Count > 0 {
-			count = int16(commodity.Count)
-		}
-
 		// Check funds
 		price := commodity.Price
 		switch currencySel {
@@ -206,7 +274,7 @@ func (server *Server) handleCashShopOperation(conn mnet.Client, reader mpacket.R
 			return
 		}
 
-		newItem, e := channel.CreateItemFromID(commodity.ItemID, count)
+		newItem, e := channel.CreateCashItemFromCommodity(commodity)
 		if e != nil {
 			plr.Send(packetCashShopError(opcode.SendCashShopBuyFailed, constant.CashShopErrorUnknown))
 			return
@@ -257,6 +325,11 @@ func (server *Server) handleCashShopOperation(conn mnet.Client, reader mpacket.R
 		}
 
 	case opcode.RecvCashShopBuyPackage, opcode.RecvCashShopGiftPackage:
+		if sub == opcode.RecvCashShopGiftPackage {
+			plr.Send(packetCashShopError(opcode.SendCashShopGiftFailed, constant.CashShopErrorUnknown))
+			return
+		}
+
 		currencySel := reader.ReadByte()
 		pkgSN := reader.ReadInt32()
 
@@ -289,49 +362,71 @@ func (server *Server) handleCashShopOperation(conn mnet.Client, reader mpacket.R
 			return
 		}
 
-		itemsToGive := make([]channel.Item, 0, len(pkgItems))
-		for _, entry := range pkgItems {
-			var itemID int32
-			count := int16(1)
-
-			if itCommodity, ok := nx.GetCommodity(entry); ok && itCommodity.ItemID != 0 {
-				itemID = itCommodity.ItemID
-				if itCommodity.Count > 0 {
-					count = int16(itCommodity.Count)
-				}
-			} else {
-				// CashPackage.img can list raw item IDs instead of SNs
-				itemID = entry
-				if snByItem, ok := nx.GetCommoditySNByItemID(itemID); ok {
-					if itCommodity, ok := nx.GetCommodity(snByItem); ok && itCommodity.Count > 0 {
-						count = int16(itCommodity.Count)
-					}
-				}
-			}
-
-			if itemID == 0 {
-				plr.Send(packetCashShopError(opcode.SendCashShopBuyFailed, constant.CashShopErrorOutOfStock))
-				return
-			}
-
-			newItem, e := channel.CreateItemFromID(itemID, count)
-			if e != nil {
-				plr.Send(packetCashShopError(opcode.SendCashShopBuyFailed, constant.CashShopErrorUnknown))
-				return
-			}
-			itemsToGive = append(itemsToGive, newItem)
-		}
-
-		if !plr.CanReceiveItems(itemsToGive) {
-			plr.Send(packetCashShopError(opcode.SendCashShopBuyFailed, constant.CashShopErrorCheckFullInventory))
+		storage, storageErr := server.GetOrLoadStorage(conn)
+		if storageErr != nil {
+			log.Println("Failed to get cash shop storage:", storageErr)
+			plr.Send(packetCashShopError(opcode.SendCashShopBuyFailed, constant.CashShopErrorUnknown))
 			return
 		}
 
-		for _, it := range itemsToGive {
-			if _, err := plr.GiveItem(it); err != nil {
-				plr.Send(packetCashShopError(opcode.SendCashShopBuyFailed, constant.CashShopErrorCheckFullInventory))
+		itemsToAdd := make([]channel.Item, 0, len(pkgItems))
+		for _, entry := range pkgItems {
+			var (
+				item      channel.Item
+				itemID    int32
+				createErr error
+			)
+
+			if itCommodity, ok := nx.GetCommodity(entry); ok && itCommodity.ItemID != 0 {
+				item, createErr = channel.CreateCashItemFromCommodity(itCommodity)
+			} else {
+				// CashPackage.img can list raw item IDs instead of SNs.
+				itemID = entry
+				if snByItem, ok := nx.GetCommoditySNByItemID(itemID); ok {
+					if itCommodity, ok := nx.GetCommodity(snByItem); ok {
+						item, createErr = channel.CreateCashItemFromCommodity(itCommodity)
+					}
+				}
+				if item.ID == 0 && createErr == nil {
+					item, createErr = channel.CreateItemFromID(itemID, 1)
+					item.EnsureCashMetadata(0, 0)
+				}
+			}
+
+			if createErr != nil || item.ID == 0 {
+				plr.Send(packetCashShopError(opcode.SendCashShopBuyFailed, constant.CashShopErrorOutOfStock))
 				return
 			}
+			itemsToAdd = append(itemsToAdd, item)
+		}
+
+		freeSlots := 0
+		for i := range storage.items {
+			if storage.items[i].ID == 0 {
+				freeSlots++
+			}
+		}
+		if freeSlots < len(itemsToAdd) {
+			plr.Send(packetCashShopError(opcode.SendCashShopBuyFailed, constant.CashShopErrorExceededNumberOfCashItems))
+			return
+		}
+
+		addedItems := make([]channel.Item, 0, len(itemsToAdd))
+		for _, it := range itemsToAdd {
+			slotIdx, added := storage.addItem(it, it.GetCashSN())
+			if !added {
+				plr.Send(packetCashShopError(opcode.SendCashShopBuyFailed, constant.CashShopErrorExceededNumberOfCashItems))
+				return
+			}
+			if addedItem, ok := storage.getItemBySlot(int16(slotIdx + 1)); ok {
+				addedItems = append(addedItems, *addedItem)
+			}
+		}
+
+		if saveErr := storage.save(); saveErr != nil {
+			log.Println("Failed to save cash shop storage:", saveErr)
+			plr.Send(packetCashShopError(opcode.SendCashShopBuyFailed, constant.CashShopErrorUnknown))
+			return
 		}
 
 		switch currencySel {
@@ -344,14 +439,100 @@ func (server *Server) handleCashShopOperation(conn mnet.Client, reader mpacket.R
 		}
 
 		plr.Send(packetCashShopUpdateAmounts(plrNX, plrMaplePoints, 0))
+		for _, it := range addedItems {
+			plr.Send(packetCashShopBuyDone(it, conn.GetAccountID(), plr.ID))
+		}
 
 	case opcode.RecvCashShopGiftItem:
-	case opcode.RecvCashShopUpdateWishlist:
-	case opcode.RecvCashShopIncreaseSlots:
-		currencySel := reader.ReadByte()
-		invType := reader.ReadByte()
+		currencySel, recipientName, _, sn, decodeErr := decodeCashShopGiftRequest(&reader)
+		if decodeErr != nil {
+			plr.Send(packetCashShopError(opcode.SendCashShopGiftFailed, constant.CashShopErrorUnknown))
+			return
+		}
 
-		price := int32(4000)
+		if currencySel != constant.CashShopNX {
+			plr.Send(packetCashShopError(opcode.SendCashShopGiftFailed, constant.CashShopErrorNotEnoughCash))
+			return
+		}
+
+		commodity, ok := nx.GetCommodity(sn)
+		if !ok || commodity.ItemID == 0 || commodity.OnSale == 0 || commodity.Price <= 0 {
+			plr.Send(packetCashShopError(opcode.SendCashShopGiftFailed, constant.CashShopErrorOutOfStock))
+			return
+		}
+
+		if plrNX < commodity.Price {
+			plr.Send(packetCashShopError(opcode.SendCashShopGiftFailed, constant.CashShopErrorNotEnoughCash))
+			return
+		}
+
+		giftItem, createErr := channel.CreateCashItemFromCommodity(commodity)
+		if createErr != nil {
+			plr.Send(packetCashShopError(opcode.SendCashShopGiftFailed, constant.CashShopErrorUnknown))
+			return
+		}
+
+		var recipientCharacterID int32
+		var recipientAccountID int32
+		var recipientGender int
+		queryErr := common.DB.QueryRow(`
+			SELECT ID, accountID, gender
+			FROM characters
+			WHERE BINARY name=? AND worldID=?`, recipientName, conn.GetWorldID()).Scan(&recipientCharacterID, &recipientAccountID, &recipientGender)
+		if queryErr != nil || recipientCharacterID == 0 || recipientAccountID == 0 || recipientCharacterID == plr.ID {
+			plr.Send(packetCashShopError(opcode.SendCashShopGiftFailed, constant.CashShopErrorIneligibleRecipientNameOrGender))
+			return
+		}
+		if commodity.Gender != 2 && commodity.Gender != int32(recipientGender) {
+			plr.Send(packetCashShopError(opcode.SendCashShopGiftFailed, constant.CashShopErrorIneligibleRecipientNameOrGender))
+			return
+		}
+
+		if err := giftCashItemToAccount(recipientAccountID, giftItem); err != nil {
+			log.Printf("giftCashItemToAccount failed sender=%d recipient=%s account=%d err=%v", plr.ID, recipientName, recipientAccountID, err)
+			plr.Send(packetCashShopError(opcode.SendCashShopGiftFailed, constant.CashShopErrorExceededNumberOfCashItems))
+			return
+		}
+		if recipient, err := server.players.GetFromID(recipientCharacterID); err == nil && recipient != nil {
+			if refreshed, loadErr := LoadStorageByAccountID(recipientAccountID); loadErr != nil {
+				log.Printf("cash gift locker refresh failed recipient=%d account=%d err=%v", recipientCharacterID, recipientAccountID, loadErr)
+			} else {
+				recipient.Conn.SetCashShopStorage(refreshed)
+				recipient.Send(packetCashShopLoadLocker(refreshed, recipientAccountID, recipientCharacterID))
+			}
+		}
+
+		plrNX -= commodity.Price
+		plr.SetNX(plrNX)
+		plr.Send(packetCashShopUpdateAmounts(plrNX, plrMaplePoints, 0))
+		plr.Send(packetCashShopGiftDone(recipientName, giftItem, commodity.Price))
+
+	case opcode.RecvCashShopUpdateWishlist:
+		wishlist := make([]int32, 10)
+		for i := range wishlist {
+			wishlist[i] = reader.ReadInt32()
+			if wishlist[i] == 0 {
+				continue
+			}
+			if _, ok := nx.GetCommodity(wishlist[i]); !ok {
+				plr.Send(packetCashShopError(opcode.SendCashShopUpdateWishFailed, constant.CashShopErrorOutOfStock))
+				return
+			}
+		}
+		if err := saveWishList(plr.ID, wishlist); err != nil {
+			log.Printf("saveWishList failed characterID=%d err=%v", plr.ID, err)
+			plr.Send(packetCashShopError(opcode.SendCashShopUpdateWishFailed, constant.CashShopErrorUnknown))
+			return
+		}
+		plr.Send(packetCashShopWishList(wishlist, true))
+
+	case opcode.RecvCashShopIncreaseSlots:
+		currencySel, invType, delta, price, decodeErr := decodeCashShopSlotIncreaseRequest(&reader)
+		if decodeErr != nil {
+			log.Printf("cashshop slot increase decode failed player=%d err=%v", plr.ID, decodeErr)
+			plr.Send(packetCashShopError(opcode.SendCashShopIncSlotCountFailed, constant.CashShopErrorUnknown))
+			return
+		}
 
 		switch currencySel {
 		case constant.CashShopNX:
@@ -359,7 +540,7 @@ func (server *Server) handleCashShopOperation(conn mnet.Client, reader mpacket.R
 				plr.Send(packetCashShopError(opcode.SendCashShopIncSlotCountFailed, constant.CashShopErrorNotEnoughCash))
 				return
 			}
-			if err := plr.IncreaseSlotSize(invType, 4); err != nil {
+			if err := plr.IncreaseSlotSize(invType, byte(delta)); err != nil {
 				plr.Send(packetCashShopError(opcode.SendCashShopIncSlotCountFailed, constant.CashShopErrorUnknown))
 				return
 			}
@@ -370,7 +551,7 @@ func (server *Server) handleCashShopOperation(conn mnet.Client, reader mpacket.R
 				plr.Send(packetCashShopError(opcode.SendCashShopIncSlotCountFailed, constant.CashShopErrorNotEnoughCash))
 				return
 			}
-			if err := plr.IncreaseSlotSize(invType, 4); err != nil {
+			if err := plr.IncreaseSlotSize(invType, byte(delta)); err != nil {
 				plr.Send(packetCashShopError(opcode.SendCashShopIncSlotCountFailed, constant.CashShopErrorUnknown))
 				return
 			}
@@ -381,6 +562,7 @@ func (server *Server) handleCashShopOperation(conn mnet.Client, reader mpacket.R
 			plr.Send(packetCashShopError(opcode.SendCashShopIncSlotCountFailed, constant.CashShopErrorUnknown))
 			return
 		}
+		plr.FlushState()
 
 		plr.Send(packetCashShopIncreaseInv(invType, plr.GetSlotSize(invType)))
 		plr.Send(packetCashShopUpdateAmounts(plrNX, plrMaplePoints, 0))
@@ -423,7 +605,7 @@ func (server *Server) handleCashShopOperation(conn mnet.Client, reader mpacket.R
 		item := *removedItem
 		givenItem, err := plr.GiveItem(item)
 		if err != nil {
-			if _, restored := storage.addItem(item, item.GetCashSN()); !restored {
+			if _, restored := storage.addItemWithCashID(item, item.GetCashSN(), item.GetCashID()); !restored {
 				log.Println("CRITICAL: Restore to storage failed. Item may be lost. player:", plr.ID, "accountID:", conn.GetAccountID(), "itemID:", item.ID)
 			} else {
 				if saveErr := storage.save(); saveErr != nil {

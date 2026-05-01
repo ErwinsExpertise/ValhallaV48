@@ -192,6 +192,16 @@ func packetCashShopBuyDone(csItem channel.Item, accountID, characterID int32) mp
 	return p
 }
 
+func packetCashShopGiftDone(recipient string, csItem channel.Item, price int32) mpacket.Packet {
+	p := mpacket.CreateWithOpcode(opcode.SendChannelCSAction)
+	p.WriteByte(opcode.SendCashShopGiftDone)
+	p.WriteString(recipient)
+	p.WriteInt32(csItem.ID)
+	p.WriteInt16(csItem.GetAmount())
+	p.WriteInt32(price)
+	return p
+}
+
 func packetCashShopWrongCoupon() mpacket.Packet {
 	p := mpacket.CreateWithOpcode(opcode.SendChannelCSAction)
 	p.WriteByte(0x40)

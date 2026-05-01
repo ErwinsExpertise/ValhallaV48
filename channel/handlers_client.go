@@ -940,7 +940,7 @@ func (server *Server) playerEnterCashShop(conn mnet.Client, reader mpacket.Reade
 	server.removeSummonsFromField(player)
 	player.saveBuffSnapshot()
 
-	if len(server.cashShop.IP) > 0 || server.cashShop.Port == 0 {
+	if len(server.cashShop.IP) == 4 && server.cashShop.Port != 0 {
 		if _, err := common.DB.Exec("UPDATE characters SET migrationID=?, previousChannelID=?, inCashShop=1 WHERE ID=?", 50, server.id, player.ID); err != nil {
 			log.Println(err)
 			return

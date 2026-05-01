@@ -113,8 +113,7 @@ func isRechargeableItem(itemID int32) bool {
 	}
 }
 
-// GenerateCashID generates a unique cash ID using crypto/rand
-func GenerateCashID() int64 {
+func generateRandomCashID() int64 {
 	var b [8]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		log.Println("Warning: crypto/rand failed in GenerateCashID")
@@ -126,6 +125,85 @@ func GenerateCashID() int64 {
 
 	cashID := int64(binary.LittleEndian.Uint64(b[:]))
 	return cashID & 0x00FFFFFFFFFFFFFF
+}
+
+func cashIDExists(cashID int64) (bool, error) {
+	const query = `
+		SELECT EXISTS(
+			SELECT 1 FROM items WHERE cashID=?
+			UNION ALL
+			SELECT 1 FROM account_cashshop_storage_items WHERE cashID=?
+			UNION ALL
+			SELECT 1 FROM account_storage_items WHERE cashID=?
+		)`
+
+	var exists bool
+	err := common.DB.QueryRow(query, cashID, cashID, cashID).Scan(&exists)
+	return exists, err
+}
+
+// GenerateCashID generates a unique cash item instance ID.
+func GenerateCashID() int64 {
+	for attempt := 0; attempt < 32; attempt++ {
+		cashID := generateRandomCashID()
+
+		exists, err := cashIDExists(cashID)
+		if err != nil {
+			log.Printf("GenerateCashID uniqueness check failed: %v", err)
+			return cashID
+		}
+		if !exists {
+			return cashID
+		}
+	}
+
+	fallback := generateRandomCashID()
+	log.Printf("GenerateCashID exhausted collision retries, using fallback %d", fallback)
+	return fallback
+}
+
+func cashItemExpireTime(periodDays int32) int64 {
+	if periodDays <= 0 {
+		return neverExpire
+	}
+
+	return time.Now().Add(time.Duration(periodDays)*24*time.Hour).UnixMilli()*10000 + 116444592000000000
+}
+
+func (v *Item) EnsureCashMetadata(sn int32, periodDays int32) {
+	if !v.cash && sn == 0 {
+		return
+	}
+	v.cash = true
+
+	if v.cashID == 0 {
+		v.cashID = GenerateCashID()
+	}
+	if v.cashSN == 0 {
+		if sn != 0 {
+			v.cashSN = sn
+		} else if resolvedSN, ok := nx.GetCommoditySNByItemID(v.ID); ok {
+			v.cashSN = resolvedSN
+		}
+	}
+	if periodDays > 0 {
+		v.expireTime = cashItemExpireTime(periodDays)
+	}
+}
+
+func CreateCashItemFromCommodity(commodity nx.Commodity) (Item, error) {
+	count := int16(1)
+	if commodity.Count > 0 {
+		count = int16(commodity.Count)
+	}
+
+	item, err := CreateItemFromID(commodity.ItemID, count)
+	if err != nil {
+		return Item{}, err
+	}
+
+	item.EnsureCashMetadata(commodity.SN, commodity.Period)
+	return item, nil
 }
 
 func loadInventoryFromDb(charID int32, equipSlots, useSlots, setupSlots, etcSlots, cashSlots byte) ([]Item, []Item, []Item, []Item, []Item) {
@@ -225,9 +303,11 @@ func loadInventoryFromDb(charID int32, equipSlots, useSlots, setupSlots, etcSlot
 
 		if cashIDNullable.Valid {
 			item.cashID = cashIDNullable.Int64
+			item.cash = true
 		}
 		if cashSNNullable.Valid {
 			item.cashSN = cashSNNullable.Int32
+			item.cash = true
 		}
 		if ringIDNullable.Valid {
 			item.ringID = ringIDNullable.Int32
@@ -236,13 +316,14 @@ func loadInventoryFromDb(charID int32, equipSlots, useSlots, setupSlots, etcSlot
 		if nxInfo, err := nx.GetItem(item.ID); err == nil {
 			item.cash = nxInfo.Cash
 
-			if item.cash && item.cashID == 0 {
-				item.cashID = GenerateCashID()
-			}
-
-			if item.cash && item.cashSN == 0 {
-				if sn, ok := nx.GetCommoditySNByItemID(item.ID); ok {
-					item.cashSN = sn
+			if item.cash {
+				originalCashID := item.cashID
+				originalCashSN := item.cashSN
+				item.EnsureCashMetadata(0, 0)
+				if (originalCashID == 0 && item.cashID != 0) || (originalCashSN == 0 && item.cashSN != 0) {
+					if _, saveErr := item.save(charID); saveErr != nil {
+						log.Printf("loadInventoryFromDb: failed to backfill cash metadata charID=%d dbID=%d err=%v", charID, item.dbID, saveErr)
+					}
 				}
 			}
 

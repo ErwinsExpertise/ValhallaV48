@@ -178,8 +178,8 @@ func (server *Server) GetOrLoadStorage(conn mnet.Client) (*CashShopStorage, erro
 	}
 
 	accountID := conn.GetAccountID()
-	storage := NewCashShopStorage(accountID)
-	if err := storage.load(); err != nil {
+	storage, err := LoadStorageByAccountID(accountID)
+	if err != nil {
 		return nil, err
 	}
 

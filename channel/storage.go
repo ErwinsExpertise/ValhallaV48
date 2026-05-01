@@ -3,6 +3,7 @@ package channel
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"sort"
 
 	"github.com/Hucaru/Valhalla/common"
@@ -81,7 +82,7 @@ func (s *storage) load(accountID int32) error {
 			id, itemID, inventoryID, slotNumber, amount,
 			flag, upgradeSlots, level, str, dex, intt, luk, hp, mp,
 			watk, matk, wdef, mdef, accuracy, avoid, hands, speed, jump,
-			expireTime, creatorName, ringID
+			expireTime, creatorName, cashID, cashSN, ringID
 		FROM account_storage_items
 		WHERE accountID=?
 		ORDER BY slotNumber ASC`, accountID)
@@ -91,19 +92,60 @@ func (s *storage) load(accountID int32) error {
 	defer rows.Close()
 
 	for rows.Next() {
-		var it Item
-		var creator sql.NullString
-		var ringID sql.NullInt32
+		var (
+			it      Item
+			creator sql.NullString
+			cashID  sql.NullInt64
+			cashSN  sql.NullInt32
+			ringID  sql.NullInt32
+		)
+		var dbID int64
+		var itemID int32
+		var invID byte
+		var slotID int16
+		var amount int16
+		var flag int16
+		var upgradeSlots byte
+		var scrollLevel byte
+		var str, dex, intt, luk, hp, mp int16
+		var watk, matk, wdef, mdef int16
+		var accuracy, avoid, hands, speed, jump int16
+		var expireTime int64
 		if err := rows.Scan(
-			&it.dbID, &it.ID, &it.invID, &it.slotID, &it.amount,
-			&it.flag, &it.upgradeSlots, &it.scrollLevel, &it.str, &it.dex, &it.intt, &it.luk, &it.hp, &it.mp,
-			&it.watk, &it.matk, &it.wdef, &it.mdef, &it.accuracy, &it.avoid, &it.hands, &it.speed, &it.jump,
-			&it.expireTime, &creator, &ringID,
+			&dbID, &itemID, &invID, &slotID, &amount,
+			&flag, &upgradeSlots, &scrollLevel, &str, &dex, &intt, &luk, &hp, &mp,
+			&watk, &matk, &wdef, &mdef, &accuracy, &avoid, &hands, &speed, &jump,
+			&expireTime, &creator, &cashID, &cashSN, &ringID,
 		); err != nil {
 			continue
 		}
+
+		created, err := CreateItemFromDBValues(
+			itemID, slotID, amount, flag, upgradeSlots, scrollLevel,
+			str, dex, intt, luk, hp, mp, watk, matk, wdef, mdef,
+			accuracy, avoid, hands, speed, jump, expireTime, creator.String,
+		)
+		if err != nil {
+			log.Printf("storage load create item failed accountID=%d itemID=%d err=%v", accountID, itemID, err)
+			continue
+		}
+		it = created
+		it.dbID = dbID
+		it.invID = invID
 		if creator.Valid {
 			it.creatorName = creator.String
+		}
+		if cashID.Valid {
+			it.cashID = cashID.Int64
+		}
+		if cashSN.Valid {
+			it.cashSN = cashSN.Int32
+		}
+		if cashID.Valid || cashSN.Valid {
+			it.cash = true
+		}
+		if it.cash {
+			it.EnsureCashMetadata(0, 0)
 		}
 		if ringID.Valid {
 			it.ringID = ringID.Int32
@@ -156,8 +198,8 @@ func (s *storage) save(accountID int32) (err error) {
 		INSERT INTO account_storage_items(
 			accountID, itemID, inventoryID, slotNumber, amount, flag, upgradeSlots, level,
 			str, dex, intt, luk, hp, mp, watk, matk, wdef, mdef, accuracy, avoid, hands,
-			speed, jump, expireTime, creatorName, ringID
-		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+			speed, jump, expireTime, creatorName, cashID, cashSN, ringID
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 	`
 	stmt, perr := tx.Prepare(ins)
 	if perr != nil {
@@ -184,7 +226,8 @@ func (s *storage) save(accountID int32) (err error) {
 		if _, ierr := stmt.Exec(
 			accountID, it.ID, it.invID, slotNumber, it.amount, it.flag, it.upgradeSlots, it.scrollLevel,
 			it.str, it.dex, it.intt, it.luk, it.hp, it.mp, it.watk, it.matk, it.wdef, it.mdef, it.accuracy, it.avoid, it.hands,
-			it.speed, it.jump, it.expireTime, it.creatorName, sql.NullInt32{Int32: it.ringID, Valid: it.ringID > 0},
+			it.speed, it.jump, it.expireTime, it.creatorName,
+			sql.NullInt64{Int64: it.cashID, Valid: it.cashID != 0}, sql.NullInt32{Int32: it.cashSN, Valid: it.cashSN != 0}, sql.NullInt32{Int32: it.ringID, Valid: it.ringID > 0},
 		); ierr != nil {
 			err = fmt.Errorf("failed inserting item %d (acct %d, slot %d): %w", it.ID, accountID, slotNumber, ierr)
 			return

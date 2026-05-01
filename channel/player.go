@@ -1327,6 +1327,9 @@ func (d *Player) GiveItem(newItem Item) (Item, error) { // TODO: Refactor
 	}
 
 	newItem.dbID = 0
+	if newItem.cash {
+		newItem.EnsureCashMetadata(0, 0)
+	}
 
 	findFirstEmptySlot := func(items []Item, size byte) (int16, error) {
 		slotsUsed := make([]bool, size)
@@ -2184,6 +2187,10 @@ func (d Player) Logout() {
 		log.Printf("Player(%d) logout save failed: %v", d.ID, err)
 	}
 
+}
+
+func (d *Player) FlushState() {
+	flushNow(d)
 }
 
 func (d *Player) Kick() {

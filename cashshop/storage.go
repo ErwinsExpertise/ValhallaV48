@@ -42,6 +42,15 @@ func NewCashShopStorage(accountID int32) *CashShopStorage {
 	}
 }
 
+func LoadStorageByAccountID(accountID int32) (*CashShopStorage, error) {
+	storage := NewCashShopStorage(accountID)
+	if err := storage.load(); err != nil {
+		return nil, err
+	}
+
+	return storage, nil
+}
+
 func (s *CashShopStorage) ensureCapacity() {
 	if s.items == nil || byte(len(s.items)) != s.maxSlots {
 		newArr := make([]channel.Item, s.maxSlots)
@@ -144,10 +153,13 @@ func (s *CashShopStorage) load() error {
 
 		if cashIDNullable.Valid {
 			it.SetCashID(cashIDNullable.Int64)
-		} else {
-			it.SetCashID(channel.GenerateCashID())
 		}
-		it.SetCashSN(sn)
+		if cashIDNullable.Valid || sn != 0 {
+			it.SetCashSN(sn)
+			it.EnsureCashMetadata(sn, 0)
+		} else {
+			it.SetCashSN(sn)
+		}
 		if ringIDNullable.Valid {
 			it.SetRingID(ringIDNullable.Int32)
 		}
@@ -221,8 +233,10 @@ func (s *CashShopStorage) addItem(item channel.Item, sn int32) (int, bool) {
 		if s.items[i].ID != 0 {
 			continue
 		}
-		item.SetCashID(channel.GenerateCashID())
-		item.SetCashSN(sn)
+		item.EnsureCashMetadata(sn, 0)
+		if item.GetCashSN() == 0 && sn != 0 {
+			item.SetCashSN(sn)
+		}
 		s.items[i] = item
 		s.totalSlotsUsed++
 		return i, true
@@ -232,12 +246,17 @@ func (s *CashShopStorage) addItem(item channel.Item, sn int32) (int, bool) {
 
 // addItemWithCashID adds an item with a specific cashID (used when returning from inventory)
 func (s *CashShopStorage) addItemWithCashID(item channel.Item, sn int32, cashID int64) (int, bool) {
+	if cashID != 0 {
+		item.SetCashID(cashID)
+	}
 	for i := 0; i < int(s.maxSlots); i++ {
 		if s.items[i].ID != 0 {
 			continue
 		}
-		item.SetCashID(cashID)
-		item.SetCashSN(sn)
+		item.EnsureCashMetadata(sn, 0)
+		if item.GetCashSN() == 0 && sn != 0 {
+			item.SetCashSN(sn)
+		}
 		s.items[i] = item
 		s.totalSlotsUsed++
 		return i, true
