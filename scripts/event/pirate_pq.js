@@ -71,13 +71,21 @@ function spawnDeckMobs(mapID) {
     }
 }
 
+function resetPQMaps() {
+    for (var i = 0; i < maps.length; i++) {
+        var field = ctrl.getMap(maps[i]);
+        field.reset();
+        field.clearProperties();
+    }
+}
+
 function initStage(mapID) {
     if (mapID === 925100100 && !ctrl.getProperty("stage2Initialized")) {
         var stage2 = ctrl.getMap(925100100);
+        stage2.setMobSpawnEnabled(9300114, false);
         stage2.setMobSpawnEnabled(9300115, false);
         stage2.setMobSpawnEnabled(9300116, false);
-        stage2.removeMobsByID(9300115);
-        stage2.removeMobsByID(9300116);
+        stage2.removeAllMobs();
         ctrl.setProperty("stage2Initialized", true);
         return;
     }
@@ -121,11 +129,7 @@ function checkBossClear() {
 function start() {
     ctrl.setDuration(stageTimers[entryMapID]);
 
-    for (var i = 0; i < maps.length; i++) {
-        var field = ctrl.getMap(maps[i]);
-        field.reset();
-        field.clearProperties();
-    }
+    resetPQMaps();
 
     ctrl.getMap(bossMapID).removeNpcByTemplate(2094001);
 
@@ -162,6 +166,7 @@ function onMapChange(plr, dst) {
 
 function timeout(plr) {
     clearPQItems(plr);
+    resetPQMaps();
     plr.warp(exitMapID);
 }
 
@@ -172,6 +177,7 @@ function playerLeaveEvent(plr) {
 
     if (ctrl.getProperty("completed")) {
         if (ctrl.playerCount() < 1) {
+            resetPQMaps();
             ctrl.finished();
         }
         return;
@@ -183,6 +189,7 @@ function playerLeaveEvent(plr) {
             clearPQItems(players[i]);
             players[i].warp(exitMapID);
         }
+        resetPQMaps();
         ctrl.finished();
     }
 }

@@ -806,6 +806,8 @@ func (pool *lifePool) removeMob(poolID int32, deathType byte) {
 				}
 			}
 		}
+
+		mob.removeController()
 	}
 
 	delete(pool.mobs, poolID)

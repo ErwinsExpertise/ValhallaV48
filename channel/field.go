@@ -16,6 +16,23 @@ import (
 	"github.com/Hucaru/Valhalla/nx"
 )
 
+func writeRemoteGuildBadge(p *mpacket.Packet, g *guild) {
+	if g == nil {
+		p.WriteString("")
+		p.WriteInt16(0)
+		p.WriteByte(0)
+		p.WriteInt16(0)
+		p.WriteByte(0)
+		return
+	}
+
+	p.WriteString(g.name)
+	p.WriteInt16(g.logoBg)
+	p.WriteByte(g.logoBgColour)
+	p.WriteInt16(g.logo)
+	p.WriteByte(g.logoColour)
+}
+
 type foothold struct {
 	id               int16
 	x1, y1, x2, y2   int16
@@ -702,19 +719,30 @@ func (inst *fieldInstance) addPlayer(plr *Player) error {
 	}
 
 	for _, other := range inst.players {
-		other.Send(packetMapPlayerEnter(plr))
-		plr.Send(packetMapPlayerEnter(other))
+		enterPlr := packetMapPlayerEnter(plr)
+		other.Send(enterPlr)
+		if plr.buffs != nil {
+			plr.buffs.sendCurrentRemoteBuffsTo(other)
+		}
+
+		enterOther := packetMapPlayerEnter(other)
+		plr.Send(enterOther)
+		if other.buffs != nil {
+			other.buffs.sendCurrentRemoteBuffsTo(plr)
+		}
 
 		if plr.petCashID != 0 && plr.pet != nil && plr.pet.spawned {
 			plr.pet.pos = plr.pos
 			plr.pet.pos.y -= 15
-			other.Send(packetPetSpawn(plr.ID, plr.pet))
+			petSpawn := packetPetSpawn(plr.ID, plr.pet)
+			other.Send(petSpawn)
 		}
 
 		if other.petCashID != 0 && other.pet != nil && other.pet.spawned {
 			other.pet.pos = other.pos
 			other.pet.pos.y -= 15
-			plr.Send(packetPetSpawn(other.ID, other.pet))
+			petSpawn := packetPetSpawn(other.ID, other.pet)
+			plr.Send(petSpawn)
 		}
 	}
 
@@ -1280,22 +1308,13 @@ func packetMapPlayerEnter(plr *Player) mpacket.Packet {
 	p := mpacket.CreateWithOpcode(opcode.SendChannelCharacterEnterField)
 	p.WriteInt32(plr.ID)
 	p.WriteString(plr.Name)
+	writeRemoteGuildBadge(&p, plr.guild)
 
-	if plr.guild != nil {
-		p.WriteString(plr.guild.name)
-		p.WriteInt16(plr.guild.logoBg)
-		p.WriteByte(plr.guild.logoBgColour)
-		p.WriteInt16(plr.guild.logo)
-		p.WriteByte(plr.guild.logoColour)
-	} else {
-		p.WriteString("")
-		p.WriteInt16(0)
-		p.WriteByte(0)
-		p.WriteInt16(0)
-		p.WriteByte(0)
-	}
-
-	p.WriteUint64(plr.remoteSpawnTempStatMask())
+	// The v48 remote spawn path decodes an 8-byte temp stat mask plus
+	// per-bit payload before AvatarLook. We do not serialize that inline
+	// payload here, so keep the spawn block empty and send remote buff
+	// visuals immediately after spawn with the normal foreign buff packet.
+	p.WriteUint64(0)
 	display := plr.avatarLookBytes()
 	p.WriteBytes(display)
 

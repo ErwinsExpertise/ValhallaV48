@@ -4,84 +4,116 @@ function leavePrompt() {
     }
 }
 
+var STAGE2_IDLE = "0";
+var STAGE2_COMPLETE = "end";
+var stage2Phases = [
+    {
+        activeState: "1",
+        readyState: "2",
+        itemID: 4001120,
+        itemCount: 20,
+        mobID: 9300114,
+        startText: "The pirates will be rushing out here soon. I want you to defeat them and obtain at least #b20 #t4001120##k emblems.",
+        missingText: "I do not think you have gathered up #b20 #t4001120##k emblems, yet.",
+        clearMessage: "Guon has disabled the portal's first seal.",
+        clearText: "I see that you have gathered up all the #b#t4001120##k emblems. Let me know when you are ready to take on more pirates."
+    },
+    {
+        activeState: "3",
+        readyState: "4",
+        itemID: 4001121,
+        itemCount: 20,
+        mobID: 9300115,
+        startText: "Okay, now I want you to find a way to gather #b20 #t4001121##k emblems. And be careful, the pirates are on their way!",
+        missingText: "I do not think you have gathered up #b20 #t4001121##k emblems, yet.",
+        clearMessage: "Guon has disabled the portal's second seal.",
+        clearText: "I see that you have gathered up all the #b#t4001121##k emblems. Let me know when you are ready to take on more pirates."
+    },
+    {
+        activeState: "5",
+        readyState: STAGE2_COMPLETE,
+        itemID: 4001122,
+        itemCount: 20,
+        mobID: 9300116,
+        startText: "You're nearly finished. To open the last seal, you'll need #b20 #t4001122##k emblems. Hurry! The pirates are on their way!",
+        missingText: "I do not think you have gathered up #b20 #t4001122##k emblems, yet.",
+        clearMessage: "Guon has disabled the portal's final seal. Please move to the next spot immediately.",
+        clearText: "I see that you have gathered up all the #b#t4001122##k emblems. Great work defeating these pirates. Now move to the portal located on the very right side of the ship."
+    }
+];
+
+function stage2DisableAllMobs() {
+    for (var i = 0; i < stage2Phases.length; i++) {
+        map.setMobSpawnEnabled(stage2Phases[i].mobID, false);
+    }
+}
+
+function stage2ClearMobs() {
+    stage2DisableAllMobs();
+    map.removeAllMobs();
+}
+
+function stage2StartPhase(phase) {
+    stage2ClearMobs();
+    map.setMobSpawnEnabled(phase.mobID, true);
+    plr.setEventProperty("mobGen", phase.activeState);
+    npc.sendOk(phase.startText);
+}
+
+function stage2CompletePhase(phase) {
+    plr.removeItemsByID(phase.itemID, phase.itemCount);
+    stage2ClearMobs();
+    plr.setEventProperty("mobGen", phase.readyState);
+    map.message(phase.clearMessage);
+    npc.sendOk(phase.clearText);
+}
+
 function stage2Flow() {
     var state = String(plr.getEventProperty("mobGen") || "0");
 
     if (!plr.isPartyLeader()) {
-        if (state === "end") {
-            npc.sendOk("The final seal is gone. Move through the portal on the far right.");
+        if (state === STAGE2_COMPLETE) {
+            npc.sendOk("You have succeeded in unsealing the seal created by Lord Pirate. Please move to the next spot immediately.");
         } else {
-            npc.sendOk("Please ask your party leader to handle the seals on this stage.");
+            npc.sendOk("Watch out! You may see pirates popping up any minute here. That does NOT mean, however, that you can just walk past this area, thanks to Lord Pirate sealing up the portal that sends you to the next stage 3 times!\r\n\r\nTo break the seal, you'll need to acquire the #bPirate Emblem#k, an item that identifies the carrier as a pirate. What you'll need to do is defeat the pirates here, find a way to obtain the #bPirate Emblem#k, and give it to me so I can find a way to disable the seal. Please start this through the leader of your party.");
         }
         return;
     }
 
-    if (state === "0") {
-        npc.sendOk("Lord Pirate sealed the next portal three times. Defeat the pirates and bring me #b20 #t4001120##k first.");
-        plr.setEventProperty("mobGen", "1");
-        map.setMobSpawnEnabled(9300114, true);
-        map.setMobSpawnEnabled(9300115, false);
-        map.setMobSpawnEnabled(9300116, false);
+    if (state === STAGE2_IDLE) {
+        npc.sendNext("Watch out! You may see pirates popping up around here any minute now. Thanks to Lord Pirate sealing up the portal to the next stage 3 times, you cannot just walk past this area!");
+        npc.sendNext("To break the seal, you'll need to acquire the #bPirate Emblem#k, an item that identifies the carrier as a pirate. Place the emblem in front of the seal, and the seal will be automatically disarmed. Please defeat the pirates that appear and collect the emblems they drop. Once you have enough #bPirate emblems#k, hand them to me and I will break the seal for you.");
+        stage2StartPhase(stage2Phases[0]);
         return;
     }
 
-    if (state === "1") {
-        if (!plr.haveItem(4001120, 20)) {
-            npc.sendOk("Bring me #b20 #t4001120##k first.");
+    for (var i = 0; i < stage2Phases.length; i++) {
+        var phase = stage2Phases[i];
+
+        if (state === phase.readyState && phase.readyState !== STAGE2_COMPLETE) {
+            stage2StartPhase(stage2Phases[i + 1]);
             return;
         }
-        plr.removeItemsByID(4001120, 20);
-        map.setMobSpawnEnabled(9300114, false);
-        map.removeMobsByID(9300114);
-        map.message("Guon has disabled the portal's first seal.");
-        plr.setEventProperty("mobGen", "2");
-        npc.sendOk("The first seal is gone. Speak to me again when you are ready for the next wave.");
-        return;
-    }
 
-    if (state === "2") {
-        map.setMobSpawnEnabled(9300115, true);
-        plr.setEventProperty("mobGen", "3");
-        npc.sendOk("Now bring me #b20 #t4001121##k.");
-        return;
-    }
+        if (state !== phase.activeState) {
+            continue;
+        }
 
-    if (state === "3") {
-        if (!plr.haveItem(4001121, 20)) {
-            npc.sendOk("Bring me #b20 #t4001121##k first.");
+        if (!plr.haveItem(phase.itemID, phase.itemCount)) {
+            npc.sendOk(phase.missingText);
             return;
         }
-        plr.removeItemsByID(4001121, 20);
-        map.setMobSpawnEnabled(9300115, false);
-        map.removeMobsByID(9300115);
-        map.message("Guon has disabled the portal's second seal.");
-        plr.setEventProperty("mobGen", "4");
-        npc.sendOk("The second seal is gone. Speak to me again when you are ready for the last wave.");
+
+        stage2CompletePhase(phase);
         return;
     }
 
-    if (state === "4") {
-        map.setMobSpawnEnabled(9300116, true);
-        plr.setEventProperty("mobGen", "5");
-        npc.sendOk("One more time. Bring me #b20 #t4001122##k.");
+    if (state === STAGE2_COMPLETE) {
+        npc.sendOk("You have done everything you could here. Please move on to the next spot immediately.");
         return;
     }
 
-    if (state === "5") {
-        if (!plr.haveItem(4001122, 20)) {
-            npc.sendOk("Bring me #b20 #t4001122##k first.");
-            return;
-        }
-        plr.removeItemsByID(4001122, 20);
-        map.setMobSpawnEnabled(9300116, false);
-        map.removeMobsByID(9300116);
-        map.message("Guon has disabled the final seal. Move to the next stage immediately.");
-        plr.setEventProperty("mobGen", "end");
-        npc.sendOk("The final seal is broken. Hurry to the next portal.");
-        return;
-    }
-
-    npc.sendOk("You have already finished this stage. Move on.");
+    npc.sendOk("You have done everything you could here. Please move on to the next spot immediately.");
 }
 
 function treasureStage(reactorName, introKey, clearKey, mobA, mobB) {

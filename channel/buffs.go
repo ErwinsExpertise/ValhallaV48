@@ -373,12 +373,45 @@ func (cb *CharacterBuffs) broadcastCurrentRemoteBuffs() {
 	if cb == nil || cb.plr == nil || cb.plr.inst == nil || cb.plr.Conn == nil {
 		return
 	}
+	for _, viewer := range cb.plr.inst.players {
+		cb.sendCurrentRemoteBuffsTo(viewer)
+	}
+}
+
+func (cb *CharacterBuffs) sendCurrentRemoteBuffsTo(viewer *Player) {
+	if cb == nil || cb.plr == nil || viewer == nil || viewer.Conn == nil || viewer == cb.plr {
+		return
+	}
 	grouped := make(map[int32][]int)
 	for bit, state := range cb.activeBitStates {
 		grouped[state.sourceID] = append(grouped[state.sourceID], bit)
 	}
 	for sourceID, bits := range grouped {
-		cb.sendSourceForeignApply(sourceID, bits, 0)
+		bits = uniqueBuffBits(bits)
+		if len(bits) == 0 {
+			continue
+		}
+
+		if sourceID < 0 {
+			meta, err := nx.GetItem(-sourceID)
+			if err != nil {
+				continue
+			}
+			mask, values := buildItemForeignBuffMaskAndValues(meta, bits, sourceID)
+			if len(mask) > 0 {
+				viewer.Send(packetPlayerGiveForeignBuff(cb.plr.ID, mask, values, 0))
+			}
+			continue
+		}
+
+		level, ok := cb.activeSkillLevels[sourceID]
+		if !ok || level == 0 {
+			continue
+		}
+		mask, values := cb.buildForeignBuffMaskAndValues(sourceID, level, bits)
+		if len(mask) > 0 {
+			viewer.Send(packetPlayerGiveForeignBuff(cb.plr.ID, mask, values, 0))
+		}
 	}
 }
 
