@@ -393,6 +393,20 @@ func (ctrl *scriptPlayerWrapper) HasWeddingReservation(cathedral bool) bool {
 	return ctrl.server.currentWeddingReservation(ctrl.plr, cathedral) != nil
 }
 
+func (ctrl *scriptPlayerWrapper) HasStoreBankItems() bool {
+	if ctrl.server == nil || ctrl.plr == nil {
+		return false
+	}
+	if active, ok := ctrl.server.merchantByChar[ctrl.plr.ID]; ok && active != nil {
+		return true
+	}
+	shopID, mesos, _, items, err := merchantLoadRetrievalRecord(ctrl.plr.ID)
+	if err != nil || shopID == 0 {
+		return false
+	}
+	return mesos > 0 || len(items) > 0
+}
+
 func (ctrl *scriptPlayerWrapper) WeddingStarted(cathedral bool) bool {
 	res := ctrl.server.currentWeddingReservation(ctrl.plr, cathedral)
 	return res != nil && res.Started
