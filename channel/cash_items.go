@@ -41,8 +41,6 @@ const (
 	cashItemTypeNameChange      = 46
 	cashItemTypeTransferWorld   = 50
 	cashItemTypeUnsupported     = 0
-	cashItemTypeExpCoupon       = 100
-	cashItemTypeDropCoupon      = 101
 
 	mapTransferResultDeleteSlot     = 2
 	mapTransferResultAddSlot        = 3
@@ -355,6 +353,7 @@ func cashSlotItemType(itemID int32) int {
 
 func (server *Server) handleCashItemUse(plr *Player, reader mpacket.Reader) {
 	rawPacket := append([]byte(nil), reader.GetBuffer()...)
+	plr.cleanupExpiredInventoryItems(time.Now(), true)
 	slot := reader.ReadInt16()
 	itemID := reader.ReadInt32()
 	rawType := cashSlotItemType(itemID)
@@ -380,15 +379,13 @@ func (server *Server) handleCashItemUse(plr *Player, reader mpacket.Reader) {
 		return
 	}
 
-	itemType := cashItemUseType(itemID)
-	if itemType == 0 {
-		switch {
-		case isExpCouponItem(itemID):
-			itemType = cashItemTypeExpCoupon
-		case isDropCouponItem(itemID):
-			itemType = cashItemTypeDropCoupon
-		}
+	if isExpCouponItem(itemID) || isDropCouponItem(itemID) {
+		plr.Send(packetMessageRedText("This cash item is activated passively while it remains valid in your inventory."))
+		plr.Send(packetPlayerNoChange())
+		return
 	}
+
+	itemType := cashItemUseType(itemID)
 	ctx.useType = itemType
 	if rawType == merchantCashUseType {
 		if err := server.primeMerchantPermit(plr, item); err != nil {
@@ -418,8 +415,6 @@ func (server *Server) handleCashItemUse(plr *Player, reader mpacket.Reader) {
 		cashItemTypeSPReset:         true,
 		cashItemTypeItemNameTag:     true,
 		cashItemTypeChalkboard:      true,
-		cashItemTypeExpCoupon:       true,
-		cashItemTypeDropCoupon:      true,
 		cashItemTypeAvatarMegaphone: true,
 	}
 
@@ -465,12 +460,6 @@ func (server *Server) handleCashItemUse(plr *Player, reader mpacket.Reader) {
 	case cashItemTypeChalkboard:
 		ctx.handler = "chalkboard"
 		apply, err = server.prepareCashChalkboard(plr, reader)
-	case cashItemTypeExpCoupon:
-		ctx.handler = "exp_coupon"
-		apply, err = server.prepareCashExpCoupon(plr, itemID)
-	case cashItemTypeDropCoupon:
-		ctx.handler = "drop_coupon"
-		apply, err = server.prepareCashDropCoupon(plr, itemID)
 	case cashItemTypeAvatarMegaphone:
 		ctx.handler = "avatar_megaphone"
 		apply, err = server.prepareCashAvatarMegaphone(plr, itemID, reader, &ctx)
@@ -905,38 +894,4 @@ func (server *Server) prepareCashItemNameTag(plr *Player, reader mpacket.Reader)
 		}
 		return nil
 	}, nil
-}
-
-func (server *Server) prepareCashExpCoupon(plr *Player, itemID int32) (func() error, error) {
-	item, err := nx.GetItem(itemID)
-	if err != nil {
-		return nil, err
-	}
-	now := time.Now()
-	return func() error {
-		plr.activateExpCoupon(itemID, now)
-		plr.Send(packetMessageNotice(couponActivationNotice(item.Name, "EXP")))
-		return nil
-	}, nil
-}
-
-func (server *Server) prepareCashDropCoupon(plr *Player, itemID int32) (func() error, error) {
-	item, err := nx.GetItem(itemID)
-	if err != nil {
-		return nil, err
-	}
-	now := time.Now()
-	return func() error {
-		plr.activateDropCoupon(itemID, now)
-		plr.Send(packetMessageNotice(couponActivationNotice(item.Name, "Drop")))
-		return nil
-	}, nil
-}
-
-func couponActivationNotice(itemName, kind string) string {
-	itemName = strings.TrimSpace(itemName)
-	if itemName == "" {
-		return fmt.Sprintf("2x %s coupon is now active.", kind)
-	}
-	return fmt.Sprintf("%s is now active.", itemName)
 }

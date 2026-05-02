@@ -770,9 +770,8 @@ func (server *Server) loadMerchants() {
 	if server == nil {
 		return
 	}
-	now := time.Now().UnixMilli()
-	if _, err := common.DB.Exec("UPDATE merchant_shops SET state=?, closedAt=? WHERE state=? AND expiresAt<=?", merchantStateExpired, now, merchantStateActive, now); err != nil {
-		log.Printf("merchant: expire bootstrap failed: %v", err)
+	if err := server.closeLingeringChannelMerchants(); err != nil {
+		log.Printf("merchant: startup close failed: %v", err)
 	}
 	rows, err := common.DB.Query(`SELECT id, characterID, accountID, worldID, channelID, mapID, roomID, npcSpawnID, npcTemplateID,
 		ownerName, title, description, ownerAvatar, permitItemID, permitCashID, permitCashSN, slotCount,
@@ -825,6 +824,27 @@ func (server *Server) loadMerchants() {
 		inst.send(packetEmployeeEnterField(r))
 		server.registerMerchant(r)
 	}
+}
+
+func (server *Server) closeLingeringChannelMerchants() error {
+	if server == nil || common.DB == nil {
+		return nil
+	}
+
+	now := time.Now().UnixMilli()
+	tx, err := common.DB.Begin()
+	if err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(`UPDATE merchant_shops
+		SET state=?, npcSpawnID=0, closedAt=?, lastTouchedAt=?
+		WHERE state=? AND channelID=?`, merchantStateRetrievable, now, now, merchantStateActive, server.id); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+
+	return tx.Commit()
 }
 
 func merchantLoadItems(shopID int64) ([]*shopItem, error) {

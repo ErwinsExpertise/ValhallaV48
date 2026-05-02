@@ -98,6 +98,7 @@ type Item struct {
 }
 
 const neverExpire int64 = 150842304000000000
+const defaultCashItemPeriodDays int32 = 90
 
 // v48 client bundle decode reads an opaque 8-byte tail only for 207xxxx items.
 // Until the exact semantic fields are recovered, prefer a neutral zeroed blob over
@@ -170,6 +171,23 @@ func cashItemExpireTime(periodDays int32) int64 {
 	return time.Now().Add(time.Duration(periodDays)*24*time.Hour).UnixMilli()*10000 + 116444592000000000
 }
 
+func resolveCashItemPeriodDays(itemID int32, sn int32, periodDays int32) int32 {
+	if periodDays > 0 {
+		return periodDays
+	}
+	if sn != 0 {
+		if commodity, ok := nx.GetCommodity(sn); ok && commodity.Period > 0 {
+			return commodity.Period
+		}
+	}
+	if sn == 0 {
+		if commodity, ok := nx.GetCommodityByItemID(itemID); ok && commodity.Period > 0 {
+			return commodity.Period
+		}
+	}
+	return defaultCashItemPeriodDays
+}
+
 func (v *Item) EnsureCashMetadata(sn int32, periodDays int32) {
 	if !v.cash && sn == 0 {
 		return
@@ -186,8 +204,8 @@ func (v *Item) EnsureCashMetadata(sn int32, periodDays int32) {
 			v.cashSN = resolvedSN
 		}
 	}
-	if periodDays > 0 {
-		v.expireTime = cashItemExpireTime(periodDays)
+	if !v.pet && !itemHasFiniteExpiry(*v) {
+		v.expireTime = cashItemExpireTime(resolveCashItemPeriodDays(v.ID, v.cashSN, periodDays))
 	}
 }
 

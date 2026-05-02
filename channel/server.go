@@ -187,6 +187,7 @@ func (server *Server) Initialise(work chan func(), dbuser, dbpassword, dbaddress
 	go scheduleSubway(server)
 	go scheduleHeliosElevator(server)
 	go scheduleMerchantExpiry(server)
+	go scheduleItemExpiry(server)
 }
 
 func (server *Server) loadScripts() {

@@ -1,42 +1,44 @@
-// Dolphin Taxi - Sharp Unknown / Herb Town / Aquarium routing
+var vipTicket = 4031242;
+var unknownMap = 230030200;
+var unknownPortal = "st00";
+var herbTownMap = 251000100;
 
-if (plr.getMapId() === 230000000) {
-    // In Aqua Road
-    var sel = npc.askSelection("Oceans are all connected to each other. Places you can't reach by foot can be easily reached oversea. How about taking #bDolphin Taxi#k with us today? \r\n\r\n#b#L0#Go to the Sharp Unknown. (Towards Ludibrium/Korean Folk Town)#l\r\n#L1#Go to Herb Town.#l");
-    
-    if (sel === 0) {
-        if (npc.askYesNo("The fare is 1000 mesos. Shall we go?")) {
-            if (plr.mesos() < 1000) {
-                npc.sendOk("You don't have enough mesos.");
-            } else {
-                plr.giveMesos(-1000);
-                plr.warp(230030200);
-            }
-        } else {
-            npc.sendOk("Okay, next time.");
-        }
-    } else if (sel === 1) {
-        if (npc.askYesNo("The fare is 10000 mesos. Shall we go?")) {
-            if (plr.mesos() < 10000) {
-                npc.sendOk("You don't have enough mesos.");
-            } else {
-                plr.giveMesos(-10000);
-                plr.warp(251000100);
-            }
-        } else {
-            npc.sendOk("Okay, next time.");
-        }
-    }
-} else if (plr.getMapId() === 251000100) {
-    // In Herb Town
-    if (npc.askYesNo("Oceans are all connected to each other. Places you can't reach by foot can be easily reached oversea. How about taking #bDolphin Taxi#k with us today? \r\n\r\nThe fare is 10000 mesos. Shall we go to Acuariurm?")) {
-        if (plr.mesos() < 10000) {
-            npc.sendOk("You don't have enough mesos.");
-        } else {
-            plr.giveMesos(-10000);
-            plr.warp(230000000);
-        }
+var beginner = plr.job() === 0;
+var unknownFee = beginner ? 100 : 1000;
+var herbTownFee = beginner ? 1000 : 10000;
+
+var text = "The oceans are all connected to each other. Places you can't reach by foot can be reached quickly by sea. What do you think about taking the #bDolphin Taxi#k today?\r\n#b";
+
+if (plr.haveItem(vipTicket, 1)) {
+    text += "#L0#Use #t4031242# to travel to #m" + unknownMap + "##l\r\n";
+    text += "#L1#Travel to #m" + herbTownMap + "# for #b" + herbTownFee + " mesos#k.#l";
+} else {
+    if (beginner) {
+        text += "#L0#Travel to #m" + unknownMap + "# for #b" + unknownFee + " mesos#k. Apprentices receive a 90% discount.#l\r\n";
     } else {
-        npc.sendOk("Okay, next time.");
+        text += "#L0#Travel to #m" + unknownMap + "# for #b" + unknownFee + " mesos#k.#l\r\n";
+    }
+    text += "#L1#Travel to #m" + herbTownMap + "# for #b" + herbTownFee + " mesos#k.#l";
+}
+
+npc.sendSelection(text + "#k");
+var sel = npc.selection();
+
+if (sel === 0) {
+    if (plr.haveItem(vipTicket, 1)) {
+        plr.gainItem(vipTicket, -1);
+        plr.warpToPortalName(unknownMap, unknownPortal);
+    } else if (plr.mesos() < unknownFee) {
+        npc.sendOk("I don't think you have enough mesos...");
+    } else {
+        plr.takeMesos(unknownFee);
+        plr.warpToPortalName(unknownMap, unknownPortal);
+    }
+} else if (sel === 1) {
+    if (plr.mesos() < herbTownFee) {
+        npc.sendOk("I don't think you have enough mesos...");
+    } else {
+        plr.takeMesos(herbTownFee);
+        plr.warp(herbTownMap);
     }
 }

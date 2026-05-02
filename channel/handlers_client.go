@@ -279,12 +279,16 @@ func (server *Server) playerConnect(conn mnet.Client, reader mpacket.Reader) {
 
 	plr := LoadPlayerFromID(charID, conn)
 	plr.rates = &server.rates
+	expiredItems := plr.cleanupExpiredInventoryItems(time.Now(), false)
 
 	server.players.Add(&plr)
 
 	conn.Send(packetPlayerEnterGame(plr, int32(server.id)))
 	conn.Send(packetFuncKeyMappedInit(plr.funcKeyMap))
 	conn.Send(packetMessageScrollingHeader(server.header))
+	for _, name := range expiredItems {
+		conn.Send(packetMessageRedText(fmt.Sprintf("%s has expired and removed from your inventory", name)))
+	}
 
 	field, ok := server.fields[plr.mapID]
 	if !ok {
@@ -1622,6 +1626,7 @@ func (server Server) playerUseInventoryItem(conn mnet.Client, reader mpacket.Rea
 	if err != nil {
 		return
 	}
+	plr.cleanupExpiredInventoryItems(time.Now(), true)
 
 	_ = reader.ReadInt32() // leading tick/unknown int
 
@@ -1672,6 +1677,7 @@ func (server *Server) playerUseReturnScroll(conn mnet.Client, reader mpacket.Rea
 	if err != nil {
 		return
 	}
+	plr.cleanupExpiredInventoryItems(time.Now(), true)
 
 	// Validate: ensure the Item at the given slot in 'use' inventory matches itemID
 	found := false
@@ -1768,6 +1774,7 @@ func (server *Server) playerUseScroll(conn mnet.Client, reader mpacket.Reader) {
 	if err != nil {
 		return
 	}
+	plr.cleanupExpiredInventoryItems(time.Now(), true)
 
 	tick := reader.ReadInt32() // leading tick/unknown int
 

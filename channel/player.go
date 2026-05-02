@@ -2639,7 +2639,6 @@ func LoadPlayerFromID(id int32, conn mnet.Client) Player {
 
 	// Initialize the per-Player buff manager so handlers can call plr.addBuff(...)
 	NewCharacterBuffs(&c)
-	c.cleanupExpiredRateCoupons(time.Now())
 
 	c.storageInventory = new(storage)
 

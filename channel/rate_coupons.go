@@ -11,8 +11,6 @@ import (
 	"github.com/Hucaru/Valhalla/nx"
 )
 
-const rateCouponDuration = 24 * time.Hour
-
 var pacificLocation = func() *time.Location {
 	loc, err := time.LoadLocation("America/Los_Angeles")
 	if err != nil {
@@ -50,64 +48,41 @@ func ensureCharacterColumn(name, ddl string) {
 }
 
 func isExpCouponItem(itemID int32) bool {
-	return itemID >= 5211004 && itemID <= 5211046
+	return itemID >= 5211000 && itemID <= 5211046
 }
 
 func isDropCouponItem(itemID int32) bool {
-	return itemID >= 5360000 && itemID <= 5360013
-}
-
-func (p *Player) activateExpCoupon(itemID int32, now time.Time) {
-	p.expCouponItemID = itemID
-	p.expCouponExpiresAt = now.Add(rateCouponDuration).UnixMilli()
-	p.MarkDirty(DirtyRateCoupons, 300*time.Millisecond)
-}
-
-func (p *Player) activateDropCoupon(itemID int32, now time.Time) {
-	p.dropCouponItemID = itemID
-	p.dropCouponExpiresAt = now.Add(rateCouponDuration).UnixMilli()
-	p.MarkDirty(DirtyRateCoupons, 300*time.Millisecond)
-}
-
-func (p *Player) cleanupExpiredRateCoupons(now time.Time) {
-	changed := false
-	if p.expCouponItemID != 0 && (p.expCouponExpiresAt == 0 || now.UnixMilli() >= p.expCouponExpiresAt) {
-		p.expCouponItemID = 0
-		p.expCouponExpiresAt = 0
-		changed = true
-	}
-	if p.dropCouponItemID != 0 && (p.dropCouponExpiresAt == 0 || now.UnixMilli() >= p.dropCouponExpiresAt) {
-		p.dropCouponItemID = 0
-		p.dropCouponExpiresAt = 0
-		changed = true
-	}
-	if changed {
-		p.MarkDirty(DirtyRateCoupons, 300*time.Millisecond)
-	}
+	return itemID >= 5360000 && itemID <= 5360012
 }
 
 func (p *Player) expCouponMultiplier(now time.Time) float32 {
-	p.cleanupExpiredRateCoupons(now)
-	if p.expCouponItemID == 0 || !couponScheduleActive(p.expCouponItemID, now) {
-		return 1
-	}
-	item, err := nx.GetItem(p.expCouponItemID)
-	if err != nil || item.Rate <= 0 {
-		return 1
-	}
-	return float32(item.Rate)
+	return p.rateCouponMultiplier(now, isExpCouponItem)
 }
 
 func (p *Player) dropCouponMultiplier(now time.Time) float32 {
-	p.cleanupExpiredRateCoupons(now)
-	if p.dropCouponItemID == 0 || !couponScheduleActive(p.dropCouponItemID, now) {
-		return 1
+	return p.rateCouponMultiplier(now, isDropCouponItem)
+}
+
+func (p *Player) rateCouponMultiplier(now time.Time, match func(int32) bool) float32 {
+	best := float32(1)
+
+	for _, item := range p.cash {
+		if !match(item.ID) || !itemHasFiniteExpiry(item) || itemExpired(item, now) {
+			continue
+		}
+
+		nxItem, err := nx.GetItem(item.ID)
+		if err != nil || nxItem.Rate <= 0 || !couponScheduleActive(item.ID, now) {
+			continue
+		}
+
+		rate := float32(nxItem.Rate)
+		if rate > best {
+			best = rate
+		}
 	}
-	item, err := nx.GetItem(p.dropCouponItemID)
-	if err != nil || item.Rate <= 0 {
-		return 1
-	}
-	return float32(item.Rate)
+
+	return best
 }
 
 func couponScheduleActive(itemID int32, now time.Time) bool {

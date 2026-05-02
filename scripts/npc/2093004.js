@@ -1,10 +1,13 @@
-var cost = 10000;
+var aquaRoadMap = 230000000;
+var fee = plr.job() === 0 ? 1000 : 10000;
 
-if (!npc.sendYesNo("Will you move to #b#m230000000##k now? The price is #b" + cost + " mesos#k.")) {
-    npc.sendOk("Hmmm ... too busy to do it right now? If you feel like doing it, though, come back and find me.");
-} else if (plr.getMesos() < cost) {
-    npc.sendOk("I don't think you have enough money...");
+if (npc.sendYesNo("Do you want to head to #b#m" + aquaRoadMap + "##k now? The fare is #b" + fee + " mesos#k.")) {
+    if (plr.mesos() < fee) {
+        npc.sendOk("I don't think you have enough mesos...");
+    } else {
+        plr.takeMesos(fee);
+        plr.warp(aquaRoadMap);
+    }
 } else {
-    plr.gainMesos(-cost);
-    plr.warp(230000000);
+    npc.sendOk("Hmm... too busy right now? Come back when you need a ride.");
 }
