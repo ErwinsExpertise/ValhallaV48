@@ -204,7 +204,7 @@ func (v *Item) EnsureCashMetadata(sn int32, periodDays int32) {
 			v.cashSN = resolvedSN
 		}
 	}
-	if !v.pet && !itemHasFiniteExpiry(*v) {
+	if !itemHasFiniteExpiry(*v) {
 		v.expireTime = cashItemExpireTime(resolveCashItemPeriodDays(v.ID, v.cashSN, periodDays))
 	}
 }
