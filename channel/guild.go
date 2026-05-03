@@ -41,7 +41,7 @@ type guild struct {
 func loadGuildFromDb(guildID int32, players *Players) (*guild, error) {
 	loadedGuild := &guild{}
 
-	row, err := common.DB.Query("SELECT ID, guildRank, Name, job, level, channelID FROM characters WHERE guildID=?", guildID)
+	row, err := common.DB.Query("SELECT ID, guildRank, Name, job, `level`, channelID FROM characters WHERE guildID=?", guildID)
 
 	if err != nil {
 		return nil, err

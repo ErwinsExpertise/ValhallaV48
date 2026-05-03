@@ -78,11 +78,7 @@ func (cs *channelServer) run() {
 	loadNXData(cs.configFile)
 
 	cs.gameState.Initialise(cs.wRecv,
-		cs.dbConfig.User,
-		cs.dbConfig.Password,
-		cs.dbConfig.Address,
-		cs.dbConfig.Port,
-		cs.dbConfig.Database,
+		cs.dbConfig.toCommon(),
 		"drops.json",
 		"reactors.json",
 		"reactor_drops.json")

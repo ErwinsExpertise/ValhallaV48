@@ -26,6 +26,13 @@ mysql:
   password: maplestory
   port: 3306
   user: root
+  tls:
+    mode: ""
+    serverName: ""
+    caFile: ""
+    certFile: ""
+    keyFile: ""
+    existingSecret: ""
 world:
   autoBan: false
   dropRate: 1.1

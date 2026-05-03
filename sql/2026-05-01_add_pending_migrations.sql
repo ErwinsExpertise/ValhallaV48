@@ -13,4 +13,4 @@ CREATE TABLE IF NOT EXISTS `pending_migrations` (
   PRIMARY KEY (`id`),
   KEY `idx_pending_migration_lookup` (`characterID`,`destinationType`,`destinationID`,`consumedAt`,`expiresAt`),
   KEY `idx_pending_migration_account` (`accountID`)
-) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;

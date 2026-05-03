@@ -77,15 +77,7 @@ func (s *storage) load(accountID int32) error {
 	s.ensureCapacity()
 	s.totalSlotsUsed = 0
 
-	rows, qerr := common.DB.Query(`
-		SELECT 
-			id, itemID, inventoryID, slotNumber, amount,
-			flag, upgradeSlots, level, str, dex, intt, luk, hp, mp,
-			watk, matk, wdef, mdef, accuracy, avoid, hands, speed, jump,
-			expireTime, creatorName, cashID, cashSN, ringID
-		FROM account_storage_items
-		WHERE accountID=?
-		ORDER BY slotNumber ASC`, accountID)
+	rows, qerr := common.DB.Query("SELECT id, itemID, inventoryID, slotNumber, amount, flag, upgradeSlots, `level`, str, dex, intt, luk, hp, mp, watk, matk, wdef, mdef, accuracy, avoid, hands, speed, jump, expireTime, creatorName, cashID, cashSN, ringID FROM account_storage_items WHERE accountID=? ORDER BY slotNumber ASC", accountID)
 	if qerr != nil {
 		return fmt.Errorf("failed to load storage items for account %d: %w", accountID, qerr)
 	}
@@ -194,13 +186,7 @@ func (s *storage) save(accountID int32) (err error) {
 		return
 	}
 
-	const ins = `
-		INSERT INTO account_storage_items(
-			accountID, itemID, inventoryID, slotNumber, amount, flag, upgradeSlots, level,
-			str, dex, intt, luk, hp, mp, watk, matk, wdef, mdef, accuracy, avoid, hands,
-			speed, jump, expireTime, creatorName, cashID, cashSN, ringID
-		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-	`
+	const ins = "INSERT INTO account_storage_items(accountID, itemID, inventoryID, slotNumber, amount, flag, upgradeSlots, `level`, str, dex, intt, luk, hp, mp, watk, matk, wdef, mdef, accuracy, avoid, hands, speed, jump, expireTime, creatorName, cashID, cashSN, ringID) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
 	stmt, perr := tx.Prepare(ins)
 	if perr != nil {
 		err = fmt.Errorf("failed to prepare item insert (acct %d): %w", accountID, perr)

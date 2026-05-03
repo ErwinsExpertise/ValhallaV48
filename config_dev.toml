@@ -9,6 +9,22 @@ user = "root"
 password = "maplestory"
 database = "maplestory"
 
+# Optional MySQL TLS settings.
+# mode = "disabled"     # local non-TLS MySQL (default if omitted)
+# mode = "preferred"    # try TLS first, allow fallback
+# mode = "skip-verify"  # dev/test only
+# mode = "required"     # require TLS and verify using system roots
+# caFile = "/path/to/ca.pem"
+# certFile = "/path/to/client-cert.pem"
+# keyFile = "/path/to/client-key.pem"
+# serverName = "db.example.com"
+#
+# Example cloud config:
+# [database.tls]
+# mode = "required"
+# caFile = "/etc/ssl/certs/mysql-ca.pem"
+# serverName = "mydb.example.com"
+
 [nx]
 # Optional: path to Data.nx or a folder containing Base.nx, Character.nx, etc.
 path = ""

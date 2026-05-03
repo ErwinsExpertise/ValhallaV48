@@ -12,6 +12,25 @@ data:
     user = "{{ .Values.mysql.user }}"
     password = "{{ .Values.mysql.password }}"
     database = "{{ .Values.mysql.database }}"
+    {{- with .Values.mysql.tls }}
+    {{- if .mode }}
+
+    [database.tls]
+    mode = "{{ .mode }}"
+    {{- if .serverName }}
+    serverName = "{{ .serverName }}"
+    {{- end }}
+    {{- if .caFile }}
+    caFile = "{{ .caFile }}"
+    {{- end }}
+    {{- if .certFile }}
+    certFile = "{{ .certFile }}"
+    {{- end }}
+    {{- if .keyFile }}
+    keyFile = "{{ .keyFile }}"
+    {{- end }}
+    {{- end }}
+    {{- end }}
 
     [login]
     clientListenAddress = "0.0.0.0"
@@ -37,6 +56,25 @@ data:
     user = "{{ .Values.mysql.user }}"
     password = "{{ .Values.mysql.password }}"
     database = "{{ .Values.mysql.database }}"
+    {{- with .Values.mysql.tls }}
+    {{- if .mode }}
+
+    [database.tls]
+    mode = "{{ .mode }}"
+    {{- if .serverName }}
+    serverName = "{{ .serverName }}"
+    {{- end }}
+    {{- if .caFile }}
+    caFile = "{{ .caFile }}"
+    {{- end }}
+    {{- if .certFile }}
+    certFile = "{{ .certFile }}"
+    {{- end }}
+    {{- if .keyFile }}
+    keyFile = "{{ .keyFile }}"
+    {{- end }}
+    {{- end }}
+    {{- end }}
 
     [world]
     message = "{{ .Values.world.message }}"
@@ -64,6 +102,25 @@ data:
     user = "{{ .Values.mysql.user }}"
     password = "{{ .Values.mysql.password }}"
     database = "{{ .Values.mysql.database }}"
+    {{- with .Values.mysql.tls }}
+    {{- if .mode }}
+
+    [database.tls]
+    mode = "{{ .mode }}"
+    {{- if .serverName }}
+    serverName = "{{ .serverName }}"
+    {{- end }}
+    {{- if .caFile }}
+    caFile = "{{ .caFile }}"
+    {{- end }}
+    {{- if .certFile }}
+    certFile = "{{ .certFile }}"
+    {{- end }}
+    {{- if .keyFile }}
+    keyFile = "{{ .keyFile }}"
+    {{- end }}
+    {{- end }}
+    {{- end }}
 
     [cashshop]
     worldAddress = "world-server.{{ .Release.Namespace }}.svc.{{ .Values.clusterDomain }}"
@@ -91,6 +148,25 @@ data:
     user = "{{ $root.Values.mysql.user }}"
     password = "{{ $root.Values.mysql.password }}"
     database = "{{ $root.Values.mysql.database }}"
+    {{- with $root.Values.mysql.tls }}
+    {{- if .mode }}
+
+    [database.tls]
+    mode = "{{ .mode }}"
+    {{- if .serverName }}
+    serverName = "{{ .serverName }}"
+    {{- end }}
+    {{- if .caFile }}
+    caFile = "{{ .caFile }}"
+    {{- end }}
+    {{- if .certFile }}
+    certFile = "{{ .certFile }}"
+    {{- end }}
+    {{- if .keyFile }}
+    keyFile = "{{ .keyFile }}"
+    {{- end }}
+    {{- end }}
+    {{- end }}
 
     [channel]
     worldAddress = "world-server.{{ $root.Release.Namespace }}.svc.{{ $root.Values.clusterDomain }}"

@@ -5,6 +5,14 @@ user = "root"
 password = "password"
 database = "maplestory"
 
+# Optional MySQL TLS settings:
+# [database.tls]
+# mode = "preferred"
+# serverName = "db.example.com"
+# caFile = "/etc/valhalla/mysql-tls/ca.pem"
+# certFile = "/etc/valhalla/mysql-tls/client-cert.pem"
+# keyFile = "/etc/valhalla/mysql-tls/client-key.pem"
+
 [channel]
 worldAddress = "world_server"
 worldPort = "8584"

@@ -600,11 +600,7 @@ func (r *merchantRoom) autoCloseSoldOut(server *Server, reason byte) bool {
 }
 
 func merchantInsertItem(shopID int64, order int, si *shopItem) error {
-	_, err := common.DB.Exec(`INSERT INTO merchant_items(
-		shopID, displayOrder, inventoryID, itemID, amount, flag, upgradeSlots, level,
-		str, dex, intt, luk, hp, mp, watk, matk, wdef, mdef, accuracy, avoid, hands, speed, jump,
-		expireTime, creatorName, cashID, cashSN, ringID, bundles, bundleAmount, price
-	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	_, err := common.DB.Exec("INSERT INTO merchant_items(shopID, displayOrder, inventoryID, itemID, amount, flag, upgradeSlots, `level`, str, dex, intt, luk, hp, mp, watk, matk, wdef, mdef, accuracy, avoid, hands, speed, jump, expireTime, creatorName, cashID, cashSN, ringID, bundles, bundleAmount, price) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
 		shopID, order, si.item.invID, si.item.ID, si.item.amount, si.item.flag, si.item.upgradeSlots, si.item.scrollLevel,
 		si.item.str, si.item.dex, si.item.intt, si.item.luk, si.item.hp, si.item.mp, si.item.watk, si.item.matk, si.item.wdef, si.item.mdef,
 		si.item.accuracy, si.item.avoid, si.item.hands, si.item.speed, si.item.jump,
@@ -630,11 +626,7 @@ func merchantRewriteItems(shopID int64, items []*shopItem) error {
 		if si == nil {
 			continue
 		}
-		if _, err := tx.Exec(`INSERT INTO merchant_items(
-			shopID, displayOrder, inventoryID, itemID, amount, flag, upgradeSlots, level,
-			str, dex, intt, luk, hp, mp, watk, matk, wdef, mdef, accuracy, avoid, hands, speed, jump,
-			expireTime, creatorName, cashID, cashSN, ringID, bundles, bundleAmount, price
-		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		if _, err := tx.Exec("INSERT INTO merchant_items(shopID, displayOrder, inventoryID, itemID, amount, flag, upgradeSlots, `level`, str, dex, intt, luk, hp, mp, watk, matk, wdef, mdef, accuracy, avoid, hands, speed, jump, expireTime, creatorName, cashID, cashSN, ringID, bundles, bundleAmount, price) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
 			shopID, i, si.item.invID, si.item.ID, si.item.amount, si.item.flag, si.item.upgradeSlots, si.item.scrollLevel,
 			si.item.str, si.item.dex, si.item.intt, si.item.luk, si.item.hp, si.item.mp, si.item.watk, si.item.matk, si.item.wdef, si.item.mdef,
 			si.item.accuracy, si.item.avoid, si.item.hands, si.item.speed, si.item.jump,
@@ -848,10 +840,7 @@ func (server *Server) closeLingeringChannelMerchants() error {
 }
 
 func merchantLoadItems(shopID int64) ([]*shopItem, error) {
-	rows, err := common.DB.Query(`SELECT inventoryID, itemID, amount, flag, upgradeSlots, level, str, dex, intt, luk,
-		hp, mp, watk, matk, wdef, mdef, accuracy, avoid, hands, speed, jump, expireTime, creatorName,
-		cashID, cashSN, ringID, bundles, bundleAmount, price
-		FROM merchant_items WHERE shopID=? ORDER BY displayOrder ASC`, shopID)
+	rows, err := common.DB.Query("SELECT inventoryID, itemID, amount, flag, upgradeSlots, `level`, str, dex, intt, luk, hp, mp, watk, matk, wdef, mdef, accuracy, avoid, hands, speed, jump, expireTime, creatorName, cashID, cashSN, ringID, bundles, bundleAmount, price FROM merchant_items WHERE shopID=? ORDER BY displayOrder ASC", shopID)
 	if err != nil {
 		return nil, err
 	}

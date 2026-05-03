@@ -225,7 +225,7 @@ func CreateCashItemFromCommodity(commodity nx.Commodity) (Item, error) {
 }
 
 func loadInventoryFromDb(charID int32, equipSlots, useSlots, setupSlots, etcSlots, cashSlots byte) ([]Item, []Item, []Item, []Item, []Item) {
-	filter := "ID,inventoryID,itemID,slotNumber,amount,flag,upgradeSlots,level,str,dex,intt,luk,hp,mp,watk,matk,wdef,mdef,accuracy,avoid,hands,speed,jump,expireTime,creatorName,cashID,cashSN,ringID"
+	filter := "ID,inventoryID,itemID,slotNumber,amount,flag,upgradeSlots,`level`,str,dex,intt,luk,hp,mp,watk,matk,wdef,mdef,accuracy,avoid,hands,speed,jump,expireTime,creatorName,cashID,cashSN,ringID"
 	row, err := common.DB.Query("SELECT "+filter+" FROM items WHERE characterID=? ORDER BY inventoryID ASC, slotNumber ASC, ID DESC", charID)
 
 	if err != nil {
@@ -347,10 +347,7 @@ func loadInventoryFromDb(charID int32, equipSlots, useSlots, setupSlots, etcSlot
 
 			item.pet = nxInfo.Pet
 			if item.pet {
-				petRow := common.DB.QueryRow(`
-					SELECT name, sn, level, closeness, fullness,
-						   deadDate, spawnDate, lastInteraction
-					FROM pets WHERE parentID=?`, item.dbID)
+				petRow := common.DB.QueryRow("SELECT name, sn, `level`, closeness, fullness, deadDate, spawnDate, lastInteraction FROM pets WHERE parentID=?", item.dbID)
 
 				petData := pet{
 					itemID:   item.ID,
@@ -625,9 +622,9 @@ func (v Item) shield() bool {
 
 func (v *Item) save(charID int32) (bool, error) {
 	if v.dbID == 0 {
-		props := `characterID,inventoryID,itemID,slotNumber,amount,flag,upgradeSlots,level,
-				str,dex,intt,luk,hp,mp,watk,matk,wdef,mdef,accuracy,avoid,hands,speed,jump,
-				expireTime,creatorName,cashID,cashSN,ringID`
+		props := "characterID,inventoryID,itemID,slotNumber,amount,flag,upgradeSlots,`level`," +
+			"str,dex,intt,luk,hp,mp,watk,matk,wdef,mdef,accuracy,avoid,hands,speed,jump," +
+			"expireTime,creatorName,cashID,cashSN,ringID"
 
 		query := "INSERT into items (" + props + ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
 
@@ -646,9 +643,9 @@ func (v *Item) save(charID int32) (bool, error) {
 			return false, err
 		}
 	} else {
-		props := `slotNumber=?,amount=?,flag=?,upgradeSlots=?,level=?,
-			str=?,dex=?,intt=?,luk=?,hp=?,mp=?,watk=?,matk=?,wdef=?,mdef=?,accuracy=?,avoid=?,hands=?,speed=?,jump=?,
-			expireTime=?,cashID=?,cashSN=?,ringID=?`
+		props := "slotNumber=?,amount=?,flag=?,upgradeSlots=?,`level`=?," +
+			"str=?,dex=?,intt=?,luk=?,hp=?,mp=?,watk=?,matk=?,wdef=?,mdef=?,accuracy=?,avoid=?,hands=?,speed=?,jump=?," +
+			"expireTime=?,cashID=?,cashSN=?,ringID=?"
 
 		query := "UPDATE items SET " + props + " WHERE ID=?"
 
@@ -673,12 +670,7 @@ func (v *Item) save(charID int32) (bool, error) {
 }
 
 func (v Item) SaveToCashShopStorage(tx *sql.Tx, accountID int32, slotNumber int16) error {
-	const ins = `
-		INSERT INTO account_cashshop_storage_items(
-			accountID, itemID, cashID, sn, ringID, slotNumber, amount, flag, upgradeSlots, level,
-			str, dex, intt, luk, hp, mp, watk, matk, wdef, mdef, accuracy, avoid, hands,
-			speed, jump, expireTime, creatorName
-		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+	const ins = "INSERT INTO account_cashshop_storage_items(accountID, itemID, cashID, sn, ringID, slotNumber, amount, flag, upgradeSlots, `level`, str, dex, intt, luk, hp, mp, watk, matk, wdef, mdef, accuracy, avoid, hands, speed, jump, expireTime, creatorName) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
 	_, err := tx.Exec(
 		ins,
 		accountID, v.ID, v.cashID, v.cashSN, v.ringID, slotNumber, v.amount,

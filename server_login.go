@@ -67,7 +67,7 @@ func (ls *loginServer) run() {
 
 	loadNXData(ls.configFile)
 
-	ls.gameState.Initialise(ls.dbConfig.User, ls.dbConfig.Password, ls.dbConfig.Address, ls.dbConfig.Port, ls.dbConfig.Database, ls.config.WithPin, ls.config.AutoRegister)
+	ls.gameState.Initialise(ls.dbConfig.toCommon(), ls.config.WithPin, ls.config.AutoRegister)
 
 	// OS signal handler for graceful shutdown
 	ls.wg.Add(1)

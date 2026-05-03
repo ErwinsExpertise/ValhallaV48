@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS `merchant_shops` (
   KEY `idx_merchant_active_map` (`state`,`channelID`,`mapID`,`expiresAt`),
   CONSTRAINT `merchant_shops_ibfk_character` FOREIGN KEY (`characterID`) REFERENCES `characters` (`id`) ON DELETE CASCADE,
   CONSTRAINT `merchant_shops_ibfk_account` FOREIGN KEY (`accountID`) REFERENCES `accounts` (`accountID`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE IF NOT EXISTS `merchant_items` (
   `id` bigint NOT NULL AUTO_INCREMENT,
@@ -69,4 +69,4 @@ CREATE TABLE IF NOT EXISTS `merchant_items` (
   PRIMARY KEY (`id`),
   KEY `idx_merchant_items_shop` (`shopID`,`displayOrder`),
   CONSTRAINT `merchant_items_ibfk_shop` FOREIGN KEY (`shopID`) REFERENCES `merchant_shops` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;

@@ -25,6 +25,11 @@ spec:
             - name: cfg
               mountPath: /app/docker/docker_config_login.toml
               subPath: docker_config_login.toml
+            {{- if .Values.mysql.tls.existingSecret }}
+            - name: mysql-tls
+              mountPath: /etc/valhalla/mysql-tls
+              readOnly: true
+            {{- end }}
       volumes:
         - name: cfg
           configMap:
@@ -32,6 +37,11 @@ spec:
             items:
               - key: config_login.toml
                 path: docker_config_login.toml
+        {{- if .Values.mysql.tls.existingSecret }}
+        - name: mysql-tls
+          secret:
+            secretName: {{ .Values.mysql.tls.existingSecret }}
+        {{- end }}
 
 ---
 apiVersion: apps/v1
@@ -60,6 +70,11 @@ spec:
             - name: cfg
               mountPath: /app/docker/docker_config_world.toml
               subPath: docker_config_world.toml
+            {{- if .Values.mysql.tls.existingSecret }}
+            - name: mysql-tls
+              mountPath: /etc/valhalla/mysql-tls
+              readOnly: true
+            {{- end }}
       volumes:
         - name: cfg
           configMap:
@@ -67,6 +82,11 @@ spec:
             items:
               - key: config_world.toml
                 path: docker_config_world.toml
+        {{- if .Values.mysql.tls.existingSecret }}
+        - name: mysql-tls
+          secret:
+            secretName: {{ .Values.mysql.tls.existingSecret }}
+        {{- end }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -94,6 +114,11 @@ spec:
             - name: cfg
               mountPath: /app/docker/docker_config_cashshop.toml
               subPath: docker_config_cashshop.toml
+            {{- if .Values.mysql.tls.existingSecret }}
+            - name: mysql-tls
+              mountPath: /etc/valhalla/mysql-tls
+              readOnly: true
+            {{- end }}
       volumes:
         - name: cfg
           configMap:
@@ -101,6 +126,11 @@ spec:
             items:
               - key: config_cashshop.toml
                 path: docker_config_cashshop.toml
+        {{- if .Values.mysql.tls.existingSecret }}
+        - name: mysql-tls
+          secret:
+            secretName: {{ .Values.mysql.tls.existingSecret }}
+        {{- end }}
 {{- $root := . -}}
 {{ $replicas := int .Values.channel.replicas -}}
 {{- range $i, $_ := until $replicas }}
@@ -130,6 +160,11 @@ spec:
             - name: cfg
               mountPath: /app/docker/docker_config_channel.toml
               subPath: docker_config_channel.toml
+            {{- if $root.Values.mysql.tls.existingSecret }}
+            - name: mysql-tls
+              mountPath: /etc/valhalla/mysql-tls
+              readOnly: true
+            {{- end }}
           ports:
             - containerPort: {{ sub 8685 $i }}
       volumes:
@@ -139,4 +174,9 @@ spec:
             items:
               - key: config_channel.toml
                 path: docker_config_channel.toml
+        {{- if $root.Values.mysql.tls.existingSecret }}
+        - name: mysql-tls
+          secret:
+            secretName: {{ $root.Values.mysql.tls.existingSecret }}
+        {{- end }}
 {{- end }}

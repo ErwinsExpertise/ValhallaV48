@@ -92,15 +92,7 @@ func (s *CashShopStorage) load() error {
 	s.ensureCapacity()
 	s.totalSlotsUsed = 0
 
-	rows, qerr := common.DB.Query(`
-		SELECT 
-			itemID, cashID, sn, ringID, slotNumber, amount,
-			flag, upgradeSlots, level, str, dex, intt, luk, hp, mp,
-			watk, matk, wdef, mdef, accuracy, avoid, hands, speed, jump,
-			expireTime, creatorName, UNIX_TIMESTAMP(purchaseDate)
-		FROM account_cashshop_storage_items
-		WHERE accountID=?
-		ORDER BY slotNumber ASC`, s.accountID)
+	rows, qerr := common.DB.Query("SELECT itemID, cashID, sn, ringID, slotNumber, amount, flag, upgradeSlots, `level`, str, dex, intt, luk, hp, mp, watk, matk, wdef, mdef, accuracy, avoid, hands, speed, jump, expireTime, creatorName, UNIX_TIMESTAMP(purchaseDate) FROM account_cashshop_storage_items WHERE accountID=? ORDER BY slotNumber ASC", s.accountID)
 	if qerr != nil {
 		return fmt.Errorf("failed to load cash shop storage items for account %d: %w", s.accountID, qerr)
 	}

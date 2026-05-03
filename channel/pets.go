@@ -72,20 +72,7 @@ func savePet(item *Item) error {
 
 	p := item.petData
 
-	_, err := common.DB.Exec(`
-		INSERT INTO pets (
-			parentID, name, sn, level, closeness, fullness,
-			deadDate, spawnDate, lastInteraction
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON DUPLICATE KEY UPDATE
-			name = VALUES(name),
-			level = VALUES(level),
-			closeness = VALUES(closeness),
-			fullness = VALUES(fullness),
-			deadDate = VALUES(deadDate),
-			spawnDate = VALUES(spawnDate),
-			lastInteraction = VALUES(lastInteraction)
-	`, item.dbID,
+	_, err := common.DB.Exec("INSERT INTO pets (parentID, name, sn, `level`, closeness, fullness, deadDate, spawnDate, lastInteraction) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) AS new ON DUPLICATE KEY UPDATE name=new.name, `level`=new.`level`, closeness=new.closeness, fullness=new.fullness, deadDate=new.deadDate, spawnDate=new.spawnDate, lastInteraction=new.lastInteraction", item.dbID,
 		p.name,
 		p.sn,
 		p.level,

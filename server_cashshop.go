@@ -75,7 +75,7 @@ func (cs *cashShopServer) run() {
 	<-cs.dispatchReady
 	loadNXData(cs.configFile)
 
-	cs.gameState.Initialise(cs.wRecv, cs.dbConfig.User, cs.dbConfig.Password, cs.dbConfig.Address, cs.dbConfig.Port, cs.dbConfig.Database)
+	cs.gameState.Initialise(cs.wRecv, cs.dbConfig.toCommon())
 
 	cs.wg.Add(1)
 	go cs.acceptNewConnections()

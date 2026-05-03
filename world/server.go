@@ -21,8 +21,8 @@ type Server struct {
 }
 
 // Initialise internal state
-func (server *Server) Initialise(dbuser, dbpassword, dbaddress, dbport, dbdatabase string) {
-	err := common.ConnectToDB(dbuser, dbpassword, dbaddress, dbport, dbdatabase)
+func (server *Server) Initialise(dbConfig common.DBConfig) {
+	err := common.ConnectToDB(dbConfig)
 
 	if err != nil {
 		log.Fatal(err)

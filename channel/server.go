@@ -58,14 +58,13 @@ type Server struct {
 }
 
 // Initialise the server
-func (server *Server) Initialise(work chan func(), dbuser, dbpassword, dbaddress, dbport, dbdatabase, dropsJson, reactorJson, reactorDropsJson string) {
+func (server *Server) Initialise(work chan func(), dbConfig common.DBConfig, dropsJson, reactorJson, reactorDropsJson string) {
 	server.dispatch = work
 
-	if err := common.ConnectToDB(dbuser, dbpassword, dbaddress, dbport, dbdatabase); err != nil {
+	if err := common.ConnectToDB(dbConfig); err != nil {
 		log.Fatal(err)
 	}
 	log.Println("Connected to database")
-	ensureCharacterRateCouponColumns()
 	common.CleanupExpiredPendingMigrations()
 
 	server.fields = make(map[int32]*field)

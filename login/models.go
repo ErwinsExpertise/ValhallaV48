@@ -92,9 +92,9 @@ func (d player) displayBytesWithTrailingValue(includeTrailingValue bool) []byte 
 }
 
 func (d player) save() error {
-	query := `UPDATE characters set skin=?, hair=?, face=?, level=?,
-	job=?, str=?, dex=?, intt=?, luk=?, hp=?, maxHP=?, mp=?, maxMP=?,
-	ap=?, sp=?, exp=?, fame=?, mapID=?, mapPos=? WHERE id=?`
+	query := "UPDATE characters SET skin=?, hair=?, face=?, `level`=?, " +
+		"job=?, str=?, dex=?, intt=?, luk=?, hp=?, maxHP=?, mp=?, maxMP=?, " +
+		"ap=?, sp=?, exp=?, fame=?, mapID=?, mapPos=? WHERE id=?"
 
 	d.mapPos = 0
 
@@ -112,7 +112,7 @@ func (d player) save() error {
 func getCharactersFromAccountWorldID(accountID int32, worldID byte) []player {
 	c := []player{}
 
-	filter := "id,accountID,worldID,name,gender,skin,hair,face,level,job,str,dex,intt," +
+	filter := "id,accountID,worldID,name,gender,skin,hair,face,`level`,job,str,dex,intt," +
 		"luk,hp,maxHP,mp,maxMP,ap,sp,exp,fame,mapID,mapPos"
 
 	chars, err := common.DB.Query("SELECT "+filter+" FROM characters WHERE accountID=? AND worldID=? ORDER BY id ASC", accountID, worldID)
@@ -175,7 +175,7 @@ func getCharactersFromAccountAllWorlds(accountID int32) map[byte][]player {
 
 func loadPlayerFromID(id int32) player {
 	c := player{}
-	filter := "id,accountID,worldID,name,gender,skin,hair,face,level,job,str,dex,intt," +
+	filter := "id,accountID,worldID,name,gender,skin,hair,face,`level`,job,str,dex,intt," +
 		"luk,hp,maxHP,mp,maxMP,ap,sp,exp,fame,mapID,mapPos"
 
 	err := common.DB.QueryRow("SELECT "+filter+" FROM characters where id=?", id).Scan(&c.id,

@@ -27,13 +27,13 @@ type Server struct {
 }
 
 // Initialise the server
-func (server *Server) Initialise(work chan func(), dbuser, dbpassword, dbaddress, dbport, dbdatabase string) {
+func (server *Server) Initialise(work chan func(), dbConfig common.DBConfig) {
 	server.dispatch = work
 	server.id = 50
 	server.players = channel.NewPlayers()
 	server.migrating = make(map[mnet.Client]bool)
 
-	if err := common.ConnectToDB(dbuser, dbpassword, dbaddress, dbport, dbdatabase); err != nil {
+	if err := common.ConnectToDB(dbConfig); err != nil {
 		log.Fatal(err)
 	}
 	common.CleanupExpiredPendingMigrations()

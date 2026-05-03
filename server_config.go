@@ -6,15 +6,42 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/Hucaru/Valhalla/common"
 	"github.com/spf13/viper"
 )
 
+type dbTLSConfig struct {
+	Mode       string `mapstructure:"mode"`
+	CAFile     string `mapstructure:"caFile"`
+	CertFile   string `mapstructure:"certFile"`
+	KeyFile    string `mapstructure:"keyFile"`
+	ServerName string `mapstructure:"serverName"`
+}
+
 type dbConfig struct {
-	Address  string `mapstructure:"address"`
-	Port     string `mapstructure:"port"`
-	User     string `mapstructure:"user"`
-	Password string `mapstructure:"password"`
-	Database string `mapstructure:"database"`
+	Address  string      `mapstructure:"address"`
+	Port     string      `mapstructure:"port"`
+	User     string      `mapstructure:"user"`
+	Password string      `mapstructure:"password"`
+	Database string      `mapstructure:"database"`
+	TLS      dbTLSConfig `mapstructure:"tls"`
+}
+
+func (cfg dbConfig) toCommon() common.DBConfig {
+	return common.DBConfig{
+		Address:  cfg.Address,
+		Port:     cfg.Port,
+		User:     cfg.User,
+		Password: cfg.Password,
+		Database: cfg.Database,
+		TLS: common.DBTLSConfig{
+			Mode:       cfg.TLS.Mode,
+			CAFile:     cfg.TLS.CAFile,
+			CertFile:   cfg.TLS.CertFile,
+			KeyFile:    cfg.TLS.KeyFile,
+			ServerName: cfg.TLS.ServerName,
+		},
+	}
 }
 
 type nxConfig struct {

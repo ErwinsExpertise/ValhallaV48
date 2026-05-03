@@ -37,6 +37,7 @@ _testmain.go
 .DS_Store
 
 values_dev.yaml
+dev_config.toml
 
 # GoReleaser
 dist/

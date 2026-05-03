@@ -1,6 +1,6 @@
 ALTER TABLE `account_storage_items`
-    ADD COLUMN `cashID` BIGINT(20) DEFAULT NULL AFTER `creatorName`,
-    ADD COLUMN `cashSN` INT(11) DEFAULT NULL AFTER `cashID`;
+    ADD COLUMN IF NOT EXISTS `cashID` BIGINT(20) DEFAULT NULL AFTER `creatorName`,
+    ADD COLUMN IF NOT EXISTS `cashSN` INT(11) DEFAULT NULL AFTER `cashID`;
 
 CREATE TABLE IF NOT EXISTS `cashshop_wishlist` (
     `characterID` INT(11) NOT NULL,
@@ -10,4 +10,4 @@ CREATE TABLE IF NOT EXISTS `cashshop_wishlist` (
     CONSTRAINT `cashshop_wishlist_fk_character`
         FOREIGN KEY (`characterID`) REFERENCES `characters` (`id`)
         ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;

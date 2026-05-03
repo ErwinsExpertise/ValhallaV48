@@ -71,7 +71,7 @@ func ensureCashShopStorageHeader(tx *sql.Tx, accountID int32) error {
 	_, err := tx.Exec(`
 		INSERT INTO account_cashshop_storage(accountID, slots)
 		VALUES(?, ?)
-		ON DUPLICATE KEY UPDATE accountID=accountID`, accountID, cashShopStorageMinSlots)
+		AS new ON DUPLICATE KEY UPDATE slots=account_cashshop_storage.slots`, accountID, cashShopStorageMinSlots)
 	return err
 }
 

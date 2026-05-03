@@ -168,12 +168,30 @@ Edit `docker-compose.yml` and modify the environment variables:
 x-common-env: &common_env
     # Change database password
     VALHALLA_DATABASE_PASSWORD: "mySecurePassword"
-    
+
+    # Optional MySQL TLS
+    VALHALLA_DATABASE_TLS_MODE: "preferred" # disabled | preferred | skip-verify | required
+    VALHALLA_DATABASE_TLS_SERVERNAME: "db.example.com"
+    VALHALLA_DATABASE_TLS_CAFILE: "/etc/valhalla/mysql-tls/ca.pem"
+    VALHALLA_DATABASE_TLS_CERTFILE: "/etc/valhalla/mysql-tls/client-cert.pem"
+    VALHALLA_DATABASE_TLS_KEYFILE: "/etc/valhalla/mysql-tls/client-key.pem"
+     
     # Change rates
     VALHALLA_WORLD_EXPRATE: "2.0"    # 2x EXP
     VALHALLA_WORLD_DROPRATE: "1.5"   # 1.5x Drop
     VALHALLA_WORLD_MESOSRATE: "1.5"  # 1.5x Mesos
 ```
+
+For local non-TLS MySQL, omit the TLS variables or set `VALHALLA_DATABASE_TLS_MODE=disabled`.
+
+For a TLS-required cloud MySQL instance, set at minimum:
+
+```yaml
+VALHALLA_DATABASE_TLS_MODE: "required"
+VALHALLA_DATABASE_TLS_SERVERNAME: "mydb.example.com"
+```
+
+If your provider requires a custom CA or client certificate, mount those files into the container and set the matching `VALHALLA_DATABASE_TLS_*FILE` paths.
 
 After making changes:
 

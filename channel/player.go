@@ -202,7 +202,7 @@ func createPlayerSkillFromData(ID int32, level byte) (playerSkill, error) {
 func getSkillsFromCharID(id int32) []playerSkill {
 	skills := []playerSkill{}
 
-	const filter = "skillID, level, cooldown"
+	const filter = "skillID, `level`, cooldown"
 	row, err := common.DB.Query("SELECT "+filter+" FROM skills WHERE characterID=?", id)
 	if err != nil {
 		log.Printf("getSkillsFromCharID: query failed for character %d: %v", id, err)
@@ -2207,10 +2207,10 @@ func (d *Player) Kick() {
 
 // Save data - this needs to be split to occur at relevant points in time
 func (d Player) save() error {
-	query := `UPDATE characters set skin=?, hair=?, face=?, level=?,
-	job=?, str=?, dex=?, intt=?, luk=?, hp=?, maxHP=?, mp=?, maxMP=?,
-	ap=?, sp=?, exp=?, fame=?, mapID=?, mapPos=?, mesos=?, miniGameWins=?,
-	miniGameDraw=?, miniGameLoss=?, miniGamePoints=?, buddyListSize=? WHERE ID=?`
+	query := "UPDATE characters SET skin=?, hair=?, face=?, `level`=?, " +
+		"job=?, str=?, dex=?, intt=?, luk=?, hp=?, maxHP=?, mp=?, maxMP=?, " +
+		"ap=?, sp=?, exp=?, fame=?, mapID=?, mapPos=?, mesos=?, miniGameWins=?, " +
+		"miniGameDraw=?, miniGameLoss=?, miniGamePoints=?, buddyListSize=? WHERE ID=?"
 
 	var mapPos byte
 	var err error
@@ -2238,9 +2238,7 @@ func (d Player) save() error {
 		return err
 	}
 
-	query = `INSERT INTO skills(characterID,skillID,level,cooldown)
-	         VALUES(?,?,?,?)
-	         ON DUPLICATE KEY UPDATE level=VALUES(level), cooldown=VALUES(cooldown)`
+	query = "INSERT INTO skills(characterID,skillID,`level`,cooldown) VALUES(?,?,?,?) AS new ON DUPLICATE KEY UPDATE `level`=new.`level`, cooldown=new.cooldown"
 	for skillID, skill := range d.skills {
 		if _, err := common.DB.Exec(query, d.ID, skillID, skill.Level, skill.Cooldown); err != nil {
 			return err
@@ -2656,7 +2654,7 @@ func LoadPlayerFromID(id int32, conn mnet.Client) Player {
 func loadFuncKeyMap(characterID int32) funcKeyMapState {
 	state := funcKeyMapState{Entries: constant.DefaultFuncKeyMap(), Loaded: true}
 
-	rows, err := common.DB.Query("SELECT tkey, type, action FROM keymap WHERE characterid=?", characterID)
+	rows, err := common.DB.Query("SELECT tkey, `type`, `action` FROM keymap WHERE characterid=?", characterID)
 	if err != nil {
 		log.Printf("loadFuncKeyMap: characterID=%d err=%v", characterID, err)
 		return state
@@ -2682,11 +2680,7 @@ func loadFuncKeyMap(characterID int32) funcKeyMapState {
 }
 
 func saveFuncKeyMapEntry(characterID int32, index int32, mapped constant.FuncKeyMapped) {
-	if _, err := common.DB.Exec(`
-		INSERT INTO keymap (characterid, tkey, type, action)
-		VALUES (?, ?, ?, ?)
-		ON DUPLICATE KEY UPDATE type=VALUES(type), action=VALUES(action)
-	`, characterID, index, mapped.Type, mapped.Action); err != nil {
+	if _, err := common.DB.Exec("INSERT INTO keymap (characterid, tkey, `type`, `action`) VALUES (?, ?, ?, ?) AS new ON DUPLICATE KEY UPDATE `type`=new.`type`, `action`=new.`action`", characterID, index, mapped.Type, mapped.Action); err != nil {
 		log.Printf("saveFuncKeyMapEntry: characterID=%d index=%d err=%v", characterID, index, err)
 	}
 }
@@ -2720,7 +2714,7 @@ func saveQuickslotKeys(characterID int32, keys [2]int32) {
 	if _, err := common.DB.Exec(`
 		INSERT INTO quickslot_keymap (characterID, key1, key2)
 		VALUES (?, ?, ?)
-		ON DUPLICATE KEY UPDATE key1=VALUES(key1), key2=VALUES(key2)
+		AS new ON DUPLICATE KEY UPDATE key1=new.key1, key2=new.key2
 	`, characterID, keys[0], keys[1]); err != nil {
 		log.Printf("saveQuickslotKeys: characterID=%d err=%v", characterID, err)
 	}
@@ -2858,7 +2852,7 @@ func (d *Player) saveBuffSnapshot() {
 		return
 	}
 
-	stmt, err := tx.Prepare("INSERT INTO character_buffs(characterID, sourceID, level, expiresAtMs) VALUES(?,?,?,?)")
+	stmt, err := tx.Prepare("INSERT INTO character_buffs(characterID, sourceID, `level`, expiresAtMs) VALUES(?,?,?,?)")
 	if err != nil {
 		log.Println("saveBuffSnapshot: prepare:", err)
 		return
@@ -2874,7 +2868,7 @@ func (d *Player) saveBuffSnapshot() {
 }
 
 func (d *Player) loadAndApplyBuffSnapshot() {
-	rows, err := common.DB.Query("SELECT sourceID, level, expiresAtMs FROM character_buffs WHERE characterID=?", d.ID)
+	rows, err := common.DB.Query("SELECT sourceID, `level`, expiresAtMs FROM character_buffs WHERE characterID=?", d.ID)
 	if err != nil {
 		log.Println("loadBuffSnapshot:", err)
 		return

@@ -113,16 +113,14 @@ func loadQuestMobKillsFromDB(charID int32) map[int16]map[int32]int32 {
 
 func upsertQuestRecord(charID int32, questID int16, record string) {
 	_, _ = common.DB.Exec(
-		"INSERT INTO character_quests(characterID, questID, record, completed, completedAt) "+
-			"VALUES(?,?,?,?,?) ON DUPLICATE KEY UPDATE record=VALUES(record), completed=0, completedAt=0",
+		"INSERT INTO character_quests(characterID, questID, record, completed, completedAt) VALUES(?,?,?,?,?) AS new ON DUPLICATE KEY UPDATE record=new.record, completed=0, completedAt=0",
 		charID, questID, record, 0, 0,
 	)
 }
 
 func setQuestCompleted(charID int32, questID int16, completedAtMs int64) {
 	_, _ = common.DB.Exec(
-		"INSERT INTO character_quests(characterID, questID, record, completed, completedAt) "+
-			"VALUES(?,?,?,?,?) ON DUPLICATE KEY UPDATE completed=1, completedAt=VALUES(completedAt)",
+		"INSERT INTO character_quests(characterID, questID, record, completed, completedAt) VALUES(?,?,?,?,?) AS new ON DUPLICATE KEY UPDATE completed=1, completedAt=new.completedAt",
 		charID, questID, "", 1, completedAtMs,
 	)
 }
@@ -133,8 +131,7 @@ func deleteQuest(charID int32, questID int16) {
 
 func upsertQuestMobKill(charID int32, questID int16, mobID int32, delta int32) {
 	_, _ = common.DB.Exec(
-		"INSERT INTO character_quest_kills(characterID, questID, mobID, kills) VALUES(?,?,?,?) "+
-			"ON DUPLICATE KEY UPDATE kills = kills + VALUES(kills)",
+		"INSERT INTO character_quest_kills(characterID, questID, mobID, kills) VALUES(?,?,?,?) AS new ON DUPLICATE KEY UPDATE kills = character_quest_kills.kills + new.kills",
 		charID, questID, mobID, delta,
 	)
 }

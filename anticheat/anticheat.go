@@ -302,15 +302,13 @@ LIMIT ?`, accountID, limit)
 
 // Internal: track temp ban count for escalation
 func (ac *AntiCheat) incrementTempBans(accountID int32) (int, error) {
-	_, err := ac.db.Exec(`
-		INSERT INTO ban_escalation (accountID, count) VALUES (?, 1)
-		ON DUPLICATE KEY UPDATE count = count + 1`, accountID)
+	_, err := ac.db.Exec("INSERT INTO ban_escalation (accountID, `count`) VALUES (?, 1) AS new ON DUPLICATE KEY UPDATE `count` = ban_escalation.`count` + new.`count`", accountID)
 	if err != nil {
 		return 0, err
 	}
 
 	var count int
-	err = ac.db.QueryRow(`SELECT count FROM ban_escalation WHERE accountID = ?`, accountID).Scan(&count)
+	err = ac.db.QueryRow("SELECT `count` FROM ban_escalation WHERE accountID = ?", accountID).Scan(&count)
 	return count, err
 }
 

@@ -186,6 +186,18 @@ database:
   password: "password"
   database: "maplestory"
 
+mysql:
+  host: mysql.mysql.svc.cluster.local
+  port: 3306
+  user: root
+  password: password
+  database: maplestory
+  tls:
+    mode: "required"
+    serverName: "mydb.example.com"
+    caFile: "/etc/valhalla/mysql-tls/ca.pem"
+    existingSecret: "valhalla-mysql-tls"
+
 # World settings
 world:
   message: "Welcome to Valhalla!"
@@ -216,6 +228,30 @@ EOF
 
 # Install with custom values
 helm install valhalla ./helm -n valhalla -f my-values.yaml
+```
+
+For local non-TLS MySQL, leave `mysql.tls.mode` empty.
+
+For TLS-required MySQL using system roots only:
+
+```yaml
+mysql:
+  tls:
+    mode: "required"
+    serverName: "mydb.example.com"
+```
+
+For TLS with a custom CA or client certificate, create a Kubernetes secret containing the PEM files, mount it with `mysql.tls.existingSecret`, and point `caFile`, `certFile`, and `keyFile` at the mounted paths, for example:
+
+```yaml
+mysql:
+  tls:
+    mode: "required"
+    serverName: "mydb.example.com"
+    caFile: "/etc/valhalla/mysql-tls/ca.pem"
+    certFile: "/etc/valhalla/mysql-tls/client-cert.pem"
+    keyFile: "/etc/valhalla/mysql-tls/client-key.pem"
+    existingSecret: "valhalla-mysql-tls"
 ```
 
 ### Upgrading Configuration

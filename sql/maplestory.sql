@@ -1,9 +1,8 @@
 -- Adminer 5.3.0 MySQL 5.7.44 dump
 
-SET NAMES utf8;
+SET NAMES utf8mb4;
 SET time_zone = '+00:00';
 SET foreign_key_checks = 0;
-SET sql_mode = 'NO_AUTO_VALUE_ON_ZERO';
 
 DROP TABLE IF EXISTS `accounts`;
 CREATE TABLE `accounts` (
@@ -25,7 +24,7 @@ CREATE TABLE `accounts` (
   `hwid` varchar(20) DEFAULT NULL,
   PRIMARY KEY (`accountID`),
   KEY `idx_hwid` (`hwid`)
-) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 
 DROP TABLE IF EXISTS `bans`;
@@ -42,7 +41,7 @@ CREATE TABLE `bans` (
   KEY `idx_ip` (`ip`,`banEnd`),
   KEY `idx_hwid` (`hwid`,`banEnd`),
   CONSTRAINT `bans_fk_account` FOREIGN KEY (`accountID`) REFERENCES `accounts` (`accountID`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 
 DROP TABLE IF EXISTS `ban_escalation`;
@@ -51,7 +50,7 @@ CREATE TABLE `ban_escalation` (
   `count` int(11) NOT NULL DEFAULT '0',
   PRIMARY KEY (`accountID`),
   CONSTRAINT `ban_escalation_fk_account` FOREIGN KEY (`accountID`) REFERENCES `accounts` (`accountID`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 
 DROP TABLE IF EXISTS `buddy`;
@@ -65,7 +64,7 @@ CREATE TABLE `buddy` (
   KEY `friendID` (`friendID`),
   CONSTRAINT `buddy_ibfk_4` FOREIGN KEY (`characterID`) REFERENCES `characters` (`id`) ON DELETE CASCADE,
   CONSTRAINT `buddy_ibfk_5` FOREIGN KEY (`friendID`) REFERENCES `characters` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 
 DROP TABLE IF EXISTS `characters`;
@@ -117,6 +116,10 @@ CREATE TABLE `characters` (
   `partnerID` int(11) DEFAULT NULL,
   `marriageItemID` int(11) DEFAULT NULL,
   `divorceUntil` bigint(20) NOT NULL DEFAULT '0',
+  `expCouponItemID` int(11) NOT NULL DEFAULT '0',
+  `expCouponExpiresAt` bigint(20) NOT NULL DEFAULT '0',
+  `dropCouponItemID` int(11) NOT NULL DEFAULT '0',
+  `dropCouponExpiresAt` bigint(20) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`),
   KEY `userID` (`accountID`),
   KEY `guildID` (`guildID`),
@@ -124,7 +127,7 @@ CREATE TABLE `characters` (
   CONSTRAINT `characters_ibfk_2` FOREIGN KEY (`accountID`) REFERENCES `accounts` (`accountID`) ON DELETE CASCADE,
   CONSTRAINT `characters_ibfk_4` FOREIGN KEY (`guildID`) REFERENCES `guilds` (`id`) ON DELETE SET NULL ON UPDATE CASCADE,
   CONSTRAINT `characters_ibfk_partner` FOREIGN KEY (`partnerID`) REFERENCES `characters` (`id`) ON DELETE SET NULL ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 
 DROP TABLE IF EXISTS `pending_migrations`;
@@ -143,7 +146,7 @@ CREATE TABLE `pending_migrations` (
   PRIMARY KEY (`id`),
   KEY `idx_pending_migration_lookup` (`characterID`,`destinationType`,`destinationID`,`consumedAt`,`expiresAt`),
   KEY `idx_pending_migration_account` (`accountID`)
-) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 
 DROP TABLE IF EXISTS `guilds`;
@@ -164,7 +167,7 @@ CREATE TABLE `guilds` (
   `logoColour` tinyint(3) unsigned NOT NULL DEFAULT '0',
   `points` int(10) unsigned NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 DROP TABLE IF EXISTS `guild_invites`;
 CREATE TABLE `guild_invites` (
@@ -177,7 +180,7 @@ CREATE TABLE `guild_invites` (
   KEY `guildID` (`guildID`),
   CONSTRAINT `guild_invites_ibfk_3` FOREIGN KEY (`playerID`) REFERENCES `characters` (`id`) ON DELETE CASCADE,
   CONSTRAINT `guild_invites_ibfk_4` FOREIGN KEY (`guildID`) REFERENCES `guilds` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 DROP TABLE IF EXISTS `character_buffs`;
 CREATE TABLE IF NOT EXISTS character_buffs (
@@ -187,7 +190,7 @@ CREATE TABLE IF NOT EXISTS character_buffs (
    `expiresAtMs` BIGINT NOT NULL,
    PRIMARY KEY(`characterID`, `sourceID`),
    CONSTRAINT `buffs_ibfk_5` FOREIGN KEY (`characterID`) REFERENCES `characters` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 DROP TABLE IF EXISTS `items`;
 CREATE TABLE `items` (
@@ -224,7 +227,7 @@ CREATE TABLE `items` (
   KEY `characterID` (`characterID`),
   UNIQUE KEY `uniq_character_inventory_slot` (`characterID`,`inventoryID`,`slotNumber`),
   CONSTRAINT `items_ibfk_5` FOREIGN KEY (`characterID`) REFERENCES `characters` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 DROP TABLE IF EXISTS `merchant_shops`;
 CREATE TABLE `merchant_shops` (
@@ -260,7 +263,7 @@ CREATE TABLE `merchant_shops` (
   KEY `idx_merchant_active_map` (`state`,`channelID`,`mapID`,`expiresAt`),
   CONSTRAINT `merchant_shops_ibfk_character` FOREIGN KEY (`characterID`) REFERENCES `characters` (`id`) ON DELETE CASCADE,
   CONSTRAINT `merchant_shops_ibfk_account` FOREIGN KEY (`accountID`) REFERENCES `accounts` (`accountID`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 DROP TABLE IF EXISTS `merchant_items`;
 CREATE TABLE `merchant_items` (
@@ -299,7 +302,7 @@ CREATE TABLE `merchant_items` (
   PRIMARY KEY (`id`),
   KEY `idx_merchant_items_shop` (`shopID`,`displayOrder`),
   CONSTRAINT `merchant_items_ibfk_shop` FOREIGN KEY (`shopID`) REFERENCES `merchant_shops` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 DROP TABLE IF EXISTS `marriages`;
 CREATE TABLE `marriages` (
@@ -307,7 +310,7 @@ CREATE TABLE `marriages` (
   `husbandID` int(11) NOT NULL DEFAULT '0',
   `wifeID` int(11) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 DROP TABLE IF EXISTS `rings`;
 CREATE TABLE `rings` (
@@ -321,7 +324,7 @@ CREATE TABLE `rings` (
   PRIMARY KEY (`id`),
   KEY `idx_ownerCharacterID` (`ownerCharacterID`),
   KEY `idx_partnerCharacterID` (`partnerCharacterID`)
-) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 
 DROP TABLE IF EXISTS `skills`;
@@ -335,7 +338,7 @@ CREATE TABLE `skills` (
   UNIQUE KEY `unique_index` (`characterID`,`skillID`),
   KEY `characterID` (`characterID`),
   CONSTRAINT `skills_ibfk_2` FOREIGN KEY (`characterID`) REFERENCES `characters` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 
 DROP TABLE IF EXISTS `keymap`;
@@ -349,7 +352,7 @@ CREATE TABLE `keymap` (
   UNIQUE KEY `keymap_character_key_unique` (`characterid`,`tkey`),
   KEY `keymap_characterid_idx` (`characterid`),
   CONSTRAINT `keymap_ibfk_1` FOREIGN KEY (`characterid`) REFERENCES `characters` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 
 DROP TABLE IF EXISTS `quickslot_keymap`;
@@ -359,7 +362,7 @@ CREATE TABLE `quickslot_keymap` (
   `key2` int(11) NOT NULL DEFAULT '0',
   PRIMARY KEY (`characterID`),
   CONSTRAINT `quickslot_keymap_ibfk_1` FOREIGN KEY (`characterID`) REFERENCES `characters` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 DROP TABLE IF EXISTS `character_quests`;
 CREATE TABLE `character_quests` (
@@ -372,7 +375,7 @@ CREATE TABLE `character_quests` (
   KEY `idx_character_quests_character` (`characterID`),
   KEY `idx_character_quests_completed` (`completed`),
   CONSTRAINT `character_quests_fk_character` FOREIGN KEY (`characterID`) REFERENCES `characters` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 DROP TABLE IF EXISTS `character_quest_kills`;
 CREATE TABLE `character_quest_kills` (
@@ -381,7 +384,7 @@ CREATE TABLE `character_quest_kills` (
   `mobID` INT NOT NULL,
   `kills` INT NOT NULL DEFAULT 0,
   PRIMARY KEY (`characterID`, `questID`, `mobID`), CONSTRAINT `c_q_kills_fk_character` FOREIGN KEY (`characterID`) REFERENCES `characters` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 DROP TABLE IF EXISTS `fame_log`;
 CREATE TABLE `fame_log` (
@@ -394,7 +397,7 @@ CREATE TABLE `fame_log` (
   KEY `idx_to_time` (`to`, `time`),
   CONSTRAINT `fame_log_ibfk_from` FOREIGN KEY (`from`) REFERENCES `characters` (`id`) ON DELETE CASCADE,
   CONSTRAINT `fame_log_ibfk_to`   FOREIGN KEY (`to`)   REFERENCES `characters` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE IF NOT EXISTS account_storage (
     accountID   INT(10) UNSIGNED NOT NULL,
@@ -405,7 +408,7 @@ CREATE TABLE IF NOT EXISTS account_storage (
     CONSTRAINT fk_storage_account
     FOREIGN KEY (accountID) REFERENCES accounts(accountID)
     ON DELETE CASCADE ON UPDATE CASCADE
-    ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE IF NOT EXISTS account_storage_items (
     id           INT(11) NOT NULL AUTO_INCREMENT,
@@ -443,7 +446,7 @@ CREATE TABLE IF NOT EXISTS account_storage_items (
     CONSTRAINT fk_storage_items_account
     FOREIGN KEY (accountID) REFERENCES accounts(accountID)
     ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE IF NOT EXISTS cashshop_wishlist (
     characterID INT(11) NOT NULL,
@@ -453,7 +456,7 @@ CREATE TABLE IF NOT EXISTS cashshop_wishlist (
     CONSTRAINT cashshop_wishlist_fk_character
         FOREIGN KEY (characterID) REFERENCES characters(id)
         ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE IF NOT EXISTS account_cashshop_storage (
     accountID   INT(10) UNSIGNED NOT NULL,
@@ -463,7 +466,7 @@ CREATE TABLE IF NOT EXISTS account_cashshop_storage (
     CONSTRAINT fk_cashshop_storage_account
     FOREIGN KEY (accountID) REFERENCES accounts(accountID)
     ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE IF NOT EXISTS account_cashshop_storage_items (
     id           BIGINT(20) NOT NULL AUTO_INCREMENT,
@@ -501,7 +504,7 @@ CREATE TABLE IF NOT EXISTS account_cashshop_storage_items (
     CONSTRAINT fk_cashshop_storage_items_account
     FOREIGN KEY (accountID) REFERENCES accounts(accountID)
     ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE IF NOT EXISTS  `pets` (
     `parentID` INT(11) NOT NULL,
@@ -521,4 +524,6 @@ CREATE TABLE IF NOT EXISTS  `pets` (
     CONSTRAINT `fk_pet_item` FOREIGN KEY (`parentID`)
         REFERENCES `items` (`id`)
         ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+SET foreign_key_checks = 1;

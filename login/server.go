@@ -22,13 +22,13 @@ type Server struct {
 }
 
 // Initialise the server
-func (server *Server) Initialise(dbuser, dbpassword, dbaddress, dbport, dbdatabase string, withpin bool, autoRegister bool) {
+func (server *Server) Initialise(dbConfig common.DBConfig, withpin bool, autoRegister bool) {
 	server.migrating = make(map[mnet.Client]bool)
 	server.sessions = make(map[mnet.Client]*session)
 	server.withPin = withpin
 	server.autoRegister = autoRegister
 
-	err := common.ConnectToDB(dbuser, dbpassword, dbaddress, dbport, dbdatabase)
+	err := common.ConnectToDB(dbConfig)
 
 	if err != nil {
 		log.Fatal(err.Error())

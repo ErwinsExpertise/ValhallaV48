@@ -456,9 +456,7 @@ func (s *saver) persist(job pendingSave) bool {
 	}
 
 	if job.bits&DirtySkills != 0 && len(job.snap.Skills) > 0 {
-		upsert := `INSERT INTO skills(characterID,skillID,level,cooldown)
-		           VALUES(?,?,?,?)
-		           ON DUPLICATE KEY UPDATE level=VALUES(level), cooldown=VALUES(cooldown)`
+		upsert := "INSERT INTO skills(characterID,skillID,`level`,cooldown) VALUES(?,?,?,?) AS new ON DUPLICATE KEY UPDATE `level`=new.`level`, cooldown=new.cooldown"
 		for sid, srec := range job.snap.Skills {
 			if _, err := common.DB.Exec(upsert, job.snap.ID, sid, srec.Level, srec.Cooldown); err != nil {
 				log.Printf("saver.persist: upsert skill %d for char %d failed: %v", sid, job.snap.ID, err)
@@ -474,7 +472,7 @@ func (s *saver) persist(job pendingSave) bool {
 	}
 
 	if job.bits&DirtyPet != 0 {
-		query := "UPDATE pets SET name=?, sn=?, level=?, closeness=?, fullness=?, deadDate=?, spawnDate=?, lastInteraction=? WHERE parentID=?"
+		query := "UPDATE pets SET name=?, sn=?, `level`=?, closeness=?, fullness=?, deadDate=?, spawnDate=?, lastInteraction=? WHERE parentID=?"
 		if _, err := common.DB.Exec(query, job.snap.Pet.name, job.snap.Pet.sn, job.snap.Pet.level, job.snap.Pet.closeness, job.snap.Pet.fullness, job.snap.Pet.deadDate, job.snap.Pet.spawnDate, job.snap.Pet.lastInteraction, job.snap.Pet.itemDBID); err != nil {
 			log.Printf("saver.persist: UPDATE pets (itemID=%d) failed: %v", job.snap.Pet.itemDBID, err)
 		}

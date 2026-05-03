@@ -1,13 +1,10 @@
 package channel
 
 import (
-	"fmt"
-	"log"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/Hucaru/Valhalla/common"
 	"github.com/Hucaru/Valhalla/nx"
 )
 
@@ -18,34 +15,6 @@ var pacificLocation = func() *time.Location {
 	}
 	return loc
 }()
-
-func ensureCharacterRateCouponColumns() {
-	if common.DB == nil {
-		return
-	}
-	ensureCharacterColumn("expCouponItemID", "INT NOT NULL DEFAULT 0")
-	ensureCharacterColumn("expCouponExpiresAt", "BIGINT NOT NULL DEFAULT 0")
-	ensureCharacterColumn("dropCouponItemID", "INT NOT NULL DEFAULT 0")
-	ensureCharacterColumn("dropCouponExpiresAt", "BIGINT NOT NULL DEFAULT 0")
-}
-
-func ensureCharacterColumn(name, ddl string) {
-	var count int
-	err := common.DB.QueryRow(`SELECT COUNT(*)
-		FROM information_schema.COLUMNS
-		WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'characters' AND COLUMN_NAME = ?`, name).Scan(&count)
-	if err != nil {
-		log.Printf("ensureCharacterColumn probe failed: %s err=%v", name, err)
-		return
-	}
-	if count > 0 {
-		return
-	}
-	query := fmt.Sprintf("ALTER TABLE characters ADD COLUMN %s %s", name, ddl)
-	if _, err := common.DB.Exec(query); err != nil {
-		log.Printf("ensureCharacterColumn alter failed: %s err=%v", name, err)
-	}
-}
 
 func isExpCouponItem(itemID int32) bool {
 	return itemID >= 5211000 && itemID <= 5211046
