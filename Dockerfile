@@ -11,7 +11,6 @@ RUN go build -o /out/Valhalla
 FROM alpine:3.20
 WORKDIR /app
 
-COPY Data.nx /app/Data.nx
 COPY drops.json /app/drops.json
 COPY reactors.json /app/reactors.json
 COPY reactor_drops.json /app/reactor_drops.json

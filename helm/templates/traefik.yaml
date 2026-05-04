@@ -1,0 +1,178 @@
+{{- if .Values.controller.enabled }}
+{{- $root := . -}}
+{{- $gatewayNamespace := default .Release.Namespace .Values.gateway.namespace -}}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: valhalla-traefik
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Name }}-traefik
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "services", "pods", "secrets", "namespaces", "configmaps"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["gatewayclasses", "gateways", "tcproutes", "referencegrants", "httproutes", "grpcroutes", "tlsroutes", "backendtlspolicies"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["gatewayclasses/status", "gateways/status", "tcproutes/status", "httproutes/status", "grpcroutes/status", "tlsroutes/status", "backendtlspolicies/status"]
+    verbs: ["update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Name }}-traefik
+subjects:
+  - kind: ServiceAccount
+    name: valhalla-traefik
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ .Release.Name }}-traefik
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-traefik
+  namespace: {{ .Release.Namespace }}
+  {{- with .Values.controller.service.annotations }}
+  annotations:
+{{ toYaml . | indent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.controller.service.type }}
+  {{- if .Values.controller.service.loadBalancerClass }}
+  loadBalancerClass: {{ .Values.controller.service.loadBalancerClass | quote }}
+  {{- end }}
+  {{- if .Values.controller.service.externalTrafficPolicy }}
+  externalTrafficPolicy: {{ .Values.controller.service.externalTrafficPolicy }}
+  {{- end }}
+  selector:
+    app: valhalla-traefik
+  ports:
+    - name: login
+      port: 8484
+      targetPort: 8484
+      protocol: TCP
+    - name: cashshop
+      port: 8600
+      targetPort: 8600
+      protocol: TCP
+    {{- $replicas := int .Values.channel.replicas }}
+    {{- range $i, $_ := until $replicas }}
+    - name: channel{{ add $i 1 }}
+      port: {{ sub 8685 $i }}
+      targetPort: {{ sub 8685 $i }}
+      protocol: TCP
+    {{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-traefik
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: {{ .Values.controller.replicas }}
+  selector:
+    matchLabels:
+      app: valhalla-traefik
+  template:
+    metadata:
+      labels:
+        app: valhalla-traefik
+    spec:
+      serviceAccountName: valhalla-traefik
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: traefik
+          image: {{ .Values.controller.image }}
+          imagePullPolicy: {{ .Values.controller.imagePullPolicy }}
+          args:
+            - --entryPoints.login.address=:8484/tcp
+            - --entryPoints.cashshop.address=:8600/tcp
+            {{- range $i, $_ := until $replicas }}
+            - --entryPoints.channel{{ add $i 1 }}.address=:{{ sub 8685 $i }}/tcp
+            {{- end }}
+            - --entryPoints.traefik.address=:8080/tcp
+            - --api.dashboard=true
+            - --ping=true
+            - --experimental.kubernetesgateway
+            - --providers.kubernetesgateway
+            - --providers.kubernetesgateway.experimentalchannel=true
+            - --providers.kubernetesgateway.statusaddress.service.name={{ .Release.Name }}-traefik
+            - --providers.kubernetesgateway.statusaddress.service.namespace={{ .Release.Namespace }}
+            - --providers.kubernetescrd=false
+            - --providers.kubernetesingress=false
+            - --log.level=INFO
+          ports:
+            - name: login
+              containerPort: 8484
+              protocol: TCP
+            - name: cashshop
+              containerPort: 8600
+              protocol: TCP
+            {{- range $i, $_ := until $replicas }}
+            - name: channel{{ add $i 1 }}
+              containerPort: {{ sub 8685 $i }}
+              protocol: TCP
+            {{- end }}
+            - name: traefik
+              containerPort: 8080
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /ping
+              port: 8080
+              scheme: HTTP
+            initialDelaySeconds: 2
+            periodSeconds: 10
+            timeoutSeconds: 2
+            successThreshold: 1
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: 8080
+              scheme: HTTP
+            initialDelaySeconds: 2
+            periodSeconds: 10
+            timeoutSeconds: 2
+            successThreshold: 1
+            failureThreshold: 1
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: {{ .Values.gateway.gatewayClassName }}
+spec:
+  controllerName: traefik.io/gateway-controller
+{{- end }}

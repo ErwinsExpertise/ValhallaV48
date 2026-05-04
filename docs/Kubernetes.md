@@ -154,9 +154,9 @@ kubectl port-forward -n valhalla svc/channel-server-1 8685:8685
 kubectl port-forward -n valhalla svc/channel-server-2 8686:8686
 ```
 
-#### Option B: Ingress-Nginx (Recommended for Production)
+#### Option B: Gateway API (Recommended for Production)
 
-See [Exposing via Ingress](#exposing-services-with-ingress-nginx) below.
+See [Exposing Services with Gateway API](#exposing-services-with-gateway-api) below.
 
 ## Helm Chart Configuration
 
@@ -198,6 +198,11 @@ mysql:
     caFile: "/etc/valhalla/mysql-tls/ca.pem"
     existingSecret: "valhalla-mysql-tls"
 
+nx:
+  path: "/app/nx"
+  existingClaim: "valhalla-nx"
+  readOnly: true
+
 # World settings
 world:
   message: "Welcome to Valhalla!"
@@ -209,7 +214,17 @@ world:
 # Channel settings
 channel:
   maxPop: 250
-  clientConnectionAddress: "127.0.0.1"
+
+# Gateway settings
+gateway:
+  enabled: true
+  createGateway: false
+  gatewayClassName: valhalla-traefik
+  publicAddress: ""
+  autoDiscoverAddress: true
+
+runtimeConfig:
+  image: alpine/k8s:1.31.12
 ```
 
 ### Installing with Custom Values
@@ -231,6 +246,24 @@ helm install valhalla ./helm -n valhalla -f my-values.yaml
 ```
 
 For local non-TLS MySQL, leave `mysql.tls.mode` empty.
+
+If you want to mount NX/WZ assets from a PVC instead of baking them into the image, set:
+
+```yaml
+nx:
+  path: "/app/nx"
+  existingClaim: "valhalla-nx"
+  readOnly: true
+```
+
+That PVC is mounted into the login, channel, and cashshop pods, and the generated TOML gets:
+
+```toml
+[nx]
+path = "/app/nx"
+```
+
+If you leave `nx.existingClaim` and `nx.path` empty, Helm does nothing and the server falls back to its normal built-in NX path resolution.
 
 For TLS-required MySQL using system roots only:
 
@@ -280,70 +313,97 @@ In Kubernetes, services use DNS names instead of IP addresses:
 
 The Helm chart automatically adjusts configurations to use hyphens for K8s service names.
 
-## Exposing Services with Ingress-Nginx
+## Exposing Services with Gateway API
 
-Ingress-Nginx allows you to expose TCP services (required for MapleStory):
+Gateway API can expose the TCP services MapleStory needs while keeping the Valhalla services as `ClusterIP`.
 
-### Step 1: Install Ingress-Nginx
+### Step 1: Use the bundled Gateway controller or bring your own
 
-```bash
-# Add Helm repo
-helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
-helm repo update
+By default, this chart now installs a bundled Traefik deployment and ships the Gateway API experimental CRDs needed for `Gateway`, `GatewayClass`, and `TCPRoute`.
 
-# Install ingress-nginx with TCP service support
-helm install ingress-nginx ingress-nginx/ingress-nginx \
-  --create-namespace \
-  --namespace ingress-nginx \
-  -f ingress-values.yaml
-```
+On a fresh cluster, `helm install` will install those CRDs automatically from `helm/crds` before creating the rest of the resources.
 
-### Step 2: Create ingress-values.yaml
+CRD caveat: Helm installs CRDs on first install, but does not fully manage CRD upgrades/removals. If the chart later bumps Gateway API CRD versions, treat that as an explicit cluster upgrade step.
+
+If you prefer another controller such as kgateway, disable the bundled Traefik install and point the chart at your existing Gateway/GatewayClass and gateway service.
+
+The runtime config init container no longer uses Bitnami. If you need to override the helper image used for LoadBalancer address discovery, set `runtimeConfig.image`.
+
+### Step 2: Enable Gateway API in Helm values
 
 ```yaml
-tcp:
-  8484: valhalla/login-server:8484
-  8600: valhalla/cashshop-server:8600
-  8685: valhalla/channel-server-1:8685
-  8686: valhalla/channel-server-2:8686
-  # Add more channels as needed:
-  # 8687: valhalla/channel-server-3:8687
-  # 8688: valhalla/channel-server-4:8688
+gateway:
+  enabled: true
+  createGateway: false
+  name: valhalla-gateway
+  gatewayClassName: valhalla-traefik
+  publicAddress: ""
+  autoDiscoverAddress: true
+  listeners:
+    login: true
+    cashshop: true
+    channels: true
 ```
 
-**Important**: Each channel needs its own port mapping. Port numbers decrease by 1 for each additional channel.
+If you already have a shared Gateway, keep `createGateway: false` and point `name`, `namespace`, and `gatewayClassName` at the existing Gateway.
 
-### Step 3: Get External IP
-
-```bash
-kubectl get svc -n ingress-nginx ingress-nginx-controller
-
-# Look for EXTERNAL-IP
-# On cloud providers, this will be a public IP or hostname
-# On minikube: minikube tunnel (in separate terminal)
-# On kind: Use port mappings defined in cluster config
-```
-
-### Step 4: Update Valhalla Configuration
-
-Update `helm/values.yaml` with the external IP:
+For an external controller such as kgateway:
 
 ```yaml
-channel:
-  clientConnectionAddress: "<loadbalancer-ip>"
-  
-cashshop:
-  clientConnectionAddress: "<loadbalancer-ip>"
+controller:
+  enabled: false
+
+gateway:
+  enabled: true
+  createGateway: true
+  name: valhalla-gateway
+  gatewayClassName: kgateway
+  autoDiscoverAddress: true
+  discovery:
+    serviceName: kgateway-proxy
+    namespace: kgateway-system
 ```
+
+**Important**: Each channel still needs its own TCP port/listener. The chart creates one listener and `TCPRoute` per channel based on `channel.replicas`.
+
+### Step 3: Update Valhalla Configuration
+
+If you already have a fixed reserved/public IPv4, you can set it directly:
+
+```yaml
+gateway:
+  publicAddress: "<gateway-ipv4>"
+```
+
+If `gateway.publicAddress` is empty and `gateway.autoDiscoverAddress=true`, the channel and cashshop pods will wait for the configured gateway service's LoadBalancer address, resolve a hostname to IPv4 if needed, and render that into their startup config automatically.
+
+`channel.clientConnectionAddress` and `cashshop.clientConnectionAddress` can still be set individually, but if left empty they follow this order:
+
+1. `gateway.publicAddress`
+2. Auto-discovered LoadBalancer service address
+
+This is needed because the server ultimately needs a literal IPv4 address in its startup config.
 
 Upgrade Helm deployment:
 ```bash
 helm upgrade valhalla ./helm -n valhalla -f helm/values.yaml
 ```
 
+### Step 4: Get External Address
+
+Inspect the Gateway or gateway service status to find the published external address:
+
+```bash
+kubectl get gateway -n valhalla
+kubectl describe gateway valhalla-gateway -n valhalla
+
+# Bundled Traefik default:
+kubectl get svc -n valhalla valhalla-traefik
+```
+
 ### Step 5: Update MapleStory Client
 
-Configure your client to connect to the ingress controller's external IP.
+Configure your client to connect to the Gateway's external IPv4 address.
 
 ## Scaling Channels
 
@@ -355,28 +415,20 @@ replicaCount:
   channels: 5  # Increase from 2 to 5
 ```
 
-Update ingress-values.yaml to include new channel ports:
+Increase the Helm channel replica count:
 ```yaml
-tcp:
-  8484: valhalla/login-server:8484
-  8600: valhalla/cashshop-server:8600
-  8685: valhalla/channel-server-1:8685
-  8686: valhalla/channel-server-2:8686
-  8687: valhalla/channel-server-3:8687
-  8688: valhalla/channel-server-4:8688
-  8689: valhalla/channel-server-5:8689
+channel:
+  replicas: 5
 ```
 
-Upgrade both:
+Upgrade Valhalla:
 ```bash
-# Upgrade ingress
-helm upgrade ingress-nginx ingress-nginx/ingress-nginx \
-  -n ingress-nginx \
-  -f ingress-values.yaml
-
-# Upgrade valhalla
 helm upgrade valhalla ./helm -n valhalla
 ```
+
+The chart will automatically add the matching Gateway listeners and `TCPRoute` resources for the extra channels.
+
+If you use the bundled controller, extra channel ports are generated automatically from `channel.replicas` for the Traefik service, Traefik entrypoints, Gateway listeners, and `TCPRoute`s.
 
 ## Database
 

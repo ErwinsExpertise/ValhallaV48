@@ -25,6 +25,11 @@ spec:
             - name: cfg
               mountPath: /app/docker/docker_config_login.toml
               subPath: docker_config_login.toml
+            {{- if .Values.nx.existingClaim }}
+            - name: nx-data
+              mountPath: {{ .Values.nx.path | quote }}
+              readOnly: {{ .Values.nx.readOnly }}
+            {{- end }}
             {{- if .Values.mysql.tls.existingSecret }}
             - name: mysql-tls
               mountPath: /etc/valhalla/mysql-tls
@@ -37,6 +42,11 @@ spec:
             items:
               - key: config_login.toml
                 path: docker_config_login.toml
+        {{- if .Values.nx.existingClaim }}
+        - name: nx-data
+          persistentVolumeClaim:
+            claimName: {{ .Values.nx.existingClaim }}
+        {{- end }}
         {{- if .Values.mysql.tls.existingSecret }}
         - name: mysql-tls
           secret:
@@ -107,30 +117,83 @@ spec:
         - name: valhalla
           image: {{ .Values.image }}
           command: ["/bin/sh", "-c"]
-          args: ["/app/Valhalla -type cashshop -config /app/docker/docker_config_cashshop.toml"]
+          args: ["/app/Valhalla -type cashshop -config /app/rendered/docker_config_cashshop.toml"]
           ports:
             - containerPort: 8600
           volumeMounts:
-            - name: cfg
+            - name: rendered-cfg
+              mountPath: /app/rendered
+            - name: cfg-template
               mountPath: /app/docker/docker_config_cashshop.toml
               subPath: docker_config_cashshop.toml
+            {{- if .Values.nx.existingClaim }}
+            - name: nx-data
+              mountPath: {{ .Values.nx.path | quote }}
+              readOnly: {{ .Values.nx.readOnly }}
+            {{- end }}
             {{- if .Values.mysql.tls.existingSecret }}
             - name: mysql-tls
               mountPath: /etc/valhalla/mysql-tls
               readOnly: true
             {{- end }}
+      initContainers:
+        - name: render-cashshop-config
+          image: {{ .Values.runtimeConfig.image }}
+          imagePullPolicy: {{ .Values.runtimeConfig.imagePullPolicy }}
+          command: ["/bin/sh", "-ec"]
+          volumeMounts:
+            - name: cfg-template
+              mountPath: /config-template
+            - name: rendered-cfg
+              mountPath: /rendered
+          args:
+            - |
+              address="{{ .Values.cashshop.clientConnectionAddress }}"
+              if [ -z "$address" ]; then
+                address="{{ .Values.gateway.publicAddress }}"
+              fi
+              if [ -z "$address" ] && [ "{{ .Values.gateway.autoDiscoverAddress }}" = "true" ]; then
+                service_name="{{ default (printf "%s-traefik" .Release.Name) .Values.gateway.discovery.serviceName }}"
+                service_namespace="{{ default .Release.Namespace .Values.gateway.discovery.namespace }}"
+                while [ -z "$address" ]; do
+                  address="$(kubectl get service "$service_name" -n "$service_namespace" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)"
+                  if [ -n "$address" ]; then
+                    break
+                  fi
+                  hostname="$(kubectl get service "$service_name" -n "$service_namespace" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)"
+                  if [ -n "$hostname" ]; then
+                    address="$(getent ahostsv4 "$hostname" | awk 'NR==1 { print $1 }')"
+                  fi
+                  if [ -z "$address" ]; then
+                    sleep 5
+                  fi
+                done
+              fi
+              if [ -z "$address" ]; then
+                echo "unable to determine clientConnectionAddress; set gateway.publicAddress or cashshop.clientConnectionAddress"
+                exit 1
+              fi
+              sed "s/__CLIENT_CONNECTION_ADDRESS__/$address/" /config-template/docker_config_cashshop.toml > /rendered/docker_config_cashshop.toml
       volumes:
-        - name: cfg
+        - name: cfg-template
           configMap:
             name: cashshop-config
             items:
               - key: config_cashshop.toml
                 path: docker_config_cashshop.toml
+        - name: rendered-cfg
+          emptyDir: {}
+        {{- if .Values.nx.existingClaim }}
+        - name: nx-data
+          persistentVolumeClaim:
+            claimName: {{ .Values.nx.existingClaim }}
+        {{- end }}
         {{- if .Values.mysql.tls.existingSecret }}
         - name: mysql-tls
           secret:
             secretName: {{ .Values.mysql.tls.existingSecret }}
         {{- end }}
+      serviceAccountName: valhalla-runtime-config
 {{- $root := . -}}
 {{ $replicas := int .Values.channel.replicas -}}
 {{- range $i, $_ := until $replicas }}
@@ -155,11 +218,18 @@ spec:
           imagePullPolicy: Always
           image: {{ $root.Values.image }}
           command: ["/bin/sh", "-c"]
-          args: ["/app/Valhalla -type channel -config /app/docker/docker_config_channel.toml"]
+          args: ["/app/Valhalla -type channel -config /app/rendered/docker_config_channel.toml"]
           volumeMounts:
-            - name: cfg
+            - name: rendered-cfg
+              mountPath: /app/rendered
+            - name: cfg-template
               mountPath: /app/docker/docker_config_channel.toml
               subPath: docker_config_channel.toml
+            {{- if $root.Values.nx.existingClaim }}
+            - name: nx-data
+              mountPath: {{ $root.Values.nx.path | quote }}
+              readOnly: {{ $root.Values.nx.readOnly }}
+            {{- end }}
             {{- if $root.Values.mysql.tls.existingSecret }}
             - name: mysql-tls
               mountPath: /etc/valhalla/mysql-tls
@@ -167,16 +237,62 @@ spec:
             {{- end }}
           ports:
             - containerPort: {{ sub 8685 $i }}
+      initContainers:
+        - name: render-channel-config
+          image: {{ $root.Values.runtimeConfig.image }}
+          imagePullPolicy: {{ $root.Values.runtimeConfig.imagePullPolicy }}
+          command: ["/bin/sh", "-ec"]
+          volumeMounts:
+            - name: cfg-template
+              mountPath: /config-template
+            - name: rendered-cfg
+              mountPath: /rendered
+          args:
+            - |
+              address="{{ $root.Values.channel.clientConnectionAddress }}"
+              if [ -z "$address" ]; then
+                address="{{ $root.Values.gateway.publicAddress }}"
+              fi
+              if [ -z "$address" ] && [ "{{ $root.Values.gateway.autoDiscoverAddress }}" = "true" ]; then
+                service_name="{{ default (printf "%s-traefik" $root.Release.Name) $root.Values.gateway.discovery.serviceName }}"
+                service_namespace="{{ default $root.Release.Namespace $root.Values.gateway.discovery.namespace }}"
+                while [ -z "$address" ]; do
+                  address="$(kubectl get service "$service_name" -n "$service_namespace" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)"
+                  if [ -n "$address" ]; then
+                    break
+                  fi
+                  hostname="$(kubectl get service "$service_name" -n "$service_namespace" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)"
+                  if [ -n "$hostname" ]; then
+                    address="$(getent ahostsv4 "$hostname" | awk 'NR==1 { print $1 }')"
+                  fi
+                  if [ -z "$address" ]; then
+                    sleep 5
+                  fi
+                done
+              fi
+              if [ -z "$address" ]; then
+                echo "unable to determine clientConnectionAddress; set gateway.publicAddress or channel.clientConnectionAddress"
+                exit 1
+              fi
+              sed "s/__CLIENT_CONNECTION_ADDRESS__/$address/" /config-template/docker_config_channel.toml > /rendered/docker_config_channel.toml
       volumes:
-        - name: cfg
+        - name: cfg-template
           configMap:
             name: channel-config-{{ add $i 1 }}
             items:
               - key: config_channel.toml
                 path: docker_config_channel.toml
+        - name: rendered-cfg
+          emptyDir: {}
+        {{- if $root.Values.nx.existingClaim }}
+        - name: nx-data
+          persistentVolumeClaim:
+            claimName: {{ $root.Values.nx.existingClaim }}
+        {{- end }}
         {{- if $root.Values.mysql.tls.existingSecret }}
         - name: mysql-tls
           secret:
             secretName: {{ $root.Values.mysql.tls.existingSecret }}
         {{- end }}
+      serviceAccountName: valhalla-runtime-config
 {{- end }}

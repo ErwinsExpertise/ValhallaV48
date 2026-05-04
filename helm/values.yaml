@@ -1,18 +1,52 @@
 clusterDomain: cluster.local
 image: docker/valhalla:latest
 namespace: valhalla
+gateway:
+  enabled: true
+  createGateway: true
+  name: valhalla-gateway
+  namespace: ""
+  gatewayClassName: valhalla-traefik
+  publicAddress: ""
+  autoDiscoverAddress: true
+  discovery:
+    serviceName: ""
+    namespace: ""
+  annotations: {}
+  labels: {}
+  listeners:
+    login: true
+    cashshop: true
+    channels: true
+controller:
+  enabled: true
+  image: traefik:v3.6.10
+  imagePullPolicy: IfNotPresent
+  replicas: 1
+  service:
+    type: LoadBalancer
+    annotations: {}
+    loadBalancerClass: ""
+    externalTrafficPolicy: ""
+runtimeConfig:
+  image: alpine/k8s:1.31.12
+  imagePullPolicy: IfNotPresent
+nx:
+  path: ""
+  existingClaim: ""
+  readOnly: true
 channel:
   jitter: 0
   latency: 0
   maxPop: 250
   packetQueueSize: 512
   replicas: 1
-  clientConnectionAddress: "127.0.0.1"
+  clientConnectionAddress: ""
 cashshop:
   jitter: 0
   latency: 0
   packetQueueSize: 512
-  clientConnectionAddress: "127.0.0.1"
+  clientConnectionAddress: ""
 login:
   jitter: 0
   latency: 0

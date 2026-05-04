@@ -1,0 +1,107 @@
+{{- if .Values.gateway.enabled }}
+{{- $root := . -}}
+{{- $gatewayNamespace := default .Release.Namespace .Values.gateway.namespace -}}
+{{- if .Values.gateway.createGateway }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: {{ .Values.gateway.name }}
+  namespace: {{ $gatewayNamespace }}
+  {{- with .Values.gateway.annotations }}
+  annotations:
+{{ toYaml . | indent 4 }}
+  {{- end }}
+  {{- with .Values.gateway.labels }}
+  labels:
+{{ toYaml . | indent 4 }}
+  {{- end }}
+spec:
+  gatewayClassName: {{ .Values.gateway.gatewayClassName | quote }}
+  listeners:
+    {{- if .Values.gateway.listeners.login }}
+    - name: login
+      protocol: TCP
+      port: 8484
+      allowedRoutes:
+        namespaces:
+          from: All
+    {{- end }}
+    {{- if .Values.gateway.listeners.cashshop }}
+    - name: cashshop
+      protocol: TCP
+      port: 8600
+      allowedRoutes:
+        namespaces:
+          from: All
+    {{- end }}
+    {{- if .Values.gateway.listeners.channels }}
+    {{- $replicas := int .Values.channel.replicas }}
+    {{- range $i, $_ := until $replicas }}
+    - name: channel-{{ add $i 1 }}
+      protocol: TCP
+      port: {{ sub 8685 $i }}
+      allowedRoutes:
+        namespaces:
+          from: All
+    {{- end }}
+    {{- end }}
+{{- end }}
+
+{{- if .Values.gateway.listeners.login }}
+---
+apiVersion: gateway.networking.k8s.io/v1alpha2
+kind: TCPRoute
+metadata:
+  name: login-route
+  namespace: {{ .Release.Namespace }}
+spec:
+  parentRefs:
+    - name: {{ .Values.gateway.name }}
+      namespace: {{ $gatewayNamespace }}
+      sectionName: login
+  rules:
+    - backendRefs:
+        - name: login-server
+          port: 8484
+{{- end }}
+
+{{- if .Values.gateway.listeners.cashshop }}
+---
+apiVersion: gateway.networking.k8s.io/v1alpha2
+kind: TCPRoute
+metadata:
+  name: cashshop-route
+  namespace: {{ .Release.Namespace }}
+spec:
+  parentRefs:
+    - name: {{ .Values.gateway.name }}
+      namespace: {{ $gatewayNamespace }}
+      sectionName: cashshop
+  rules:
+    - backendRefs:
+        - name: cashshop-server
+          port: 8600
+{{- end }}
+
+{{- if .Values.gateway.listeners.channels }}
+{{- $replicas := int .Values.channel.replicas }}
+{{- range $i, $_ := until $replicas }}
+---
+apiVersion: gateway.networking.k8s.io/v1alpha2
+kind: TCPRoute
+metadata:
+  name: channel-route-{{ add $i 1 }}
+  namespace: {{ $root.Release.Namespace }}
+spec:
+  parentRefs:
+    - name: {{ $root.Values.gateway.name }}
+      namespace: {{ $gatewayNamespace }}
+      sectionName: channel-{{ add $i 1 }}
+  rules:
+    - backendRefs:
+        - name: channel-server-{{ add $i 1 }}
+          port: {{ sub 8685 $i }}
+{{- end }}
+{{- end }}
+{{- end }}

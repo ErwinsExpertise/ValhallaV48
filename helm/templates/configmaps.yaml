@@ -32,6 +32,11 @@ data:
     {{- end }}
     {{- end }}
 
+    {{- if .Values.nx.path }}
+    [nx]
+    path = "{{ .Values.nx.path }}"
+    {{- end }}
+
     [login]
     clientListenAddress = "0.0.0.0"
     clientListenPort = "8484"
@@ -94,6 +99,7 @@ kind: ConfigMap
 metadata:
   name: cashshop-config
   namespace: {{ .Release.Namespace }}
+{{- $gatewayAddress := default "127.0.0.1" .Values.gateway.publicAddress }}
 data:
   config_cashshop.toml: |
     [database]
@@ -122,12 +128,17 @@ data:
     {{- end }}
     {{- end }}
 
+    {{- if .Values.nx.path }}
+    [nx]
+    path = "{{ .Values.nx.path }}"
+    {{- end }}
+
     [cashshop]
     worldAddress = "world-server.{{ .Release.Namespace }}.svc.{{ .Values.clusterDomain }}"
     worldPort = "8584"
     listenAddress = "0.0.0.0"
     listenPort = "8600"
-    clientConnectionAddress = "{{ .Values.cashshop.clientConnectionAddress }}"
+    clientConnectionAddress = "__CLIENT_CONNECTION_ADDRESS__"
     packetQueueSize = {{ .Values.cashshop.packetQueueSize }}
     latency = {{ .Values.cashshop.latency }}
     jitter = {{ .Values.cashshop.jitter }}
@@ -168,12 +179,17 @@ data:
     {{- end }}
     {{- end }}
 
+    {{- if $root.Values.nx.path }}
+    [nx]
+    path = "{{ $root.Values.nx.path }}"
+    {{- end }}
+
     [channel]
     worldAddress = "world-server.{{ $root.Release.Namespace }}.svc.{{ $root.Values.clusterDomain }}"
     worldPort = "8584"
     listenAddress = "0.0.0.0"
     listenPort = "{{ sub 8685 $i }}"
-    clientConnectionAddress = "{{ $root.Values.channel.clientConnectionAddress }}"
+    clientConnectionAddress = "__CLIENT_CONNECTION_ADDRESS__"
     packetQueueSize = {{ $root.Values.channel.packetQueueSize }}
     maxPop = {{ $root.Values.channel.maxPop }}
     latency = {{ $root.Values.channel.latency }}
