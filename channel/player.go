@@ -3797,12 +3797,29 @@ func sendPrimarySkillAnimation(plr *Player, skillID int32, level byte) {
 	}
 }
 
+func sendPrimaryRemoteSkillAnimation(plr *Player, skillID int32, level byte) {
+	if plr == nil || plr.inst == nil || plr.Conn == nil {
+		return
+	}
+
+	plr.inst.sendExcept(packetPlayerRemotePrimarySkillAnimation(plr.ID, skillID, level), plr.Conn)
+}
+
 func sendSecondaryRemoteSkillAnimation(plr *Player, skillID int32, level byte) {
 	if plr == nil || plr.inst == nil || plr.Conn == nil {
 		return
 	}
 
 	plr.inst.sendExcept(packetPlayerRemoteSkillAnimationWithType(plr.ID, constant.PlayerEffectSkillOnOther, skillID, level), plr.Conn)
+}
+
+func sendSecondarySkillAnimation(plr *Player, skillID int32, level byte) {
+	if plr == nil {
+		return
+	}
+
+	plr.Send(packetPlayerLocalSkillAnimationWithType(constant.PlayerEffectSkillOnOther, skillID, level))
+	sendSecondaryRemoteSkillAnimation(plr, skillID, level)
 }
 
 func packetPlayerGiveBuff(mask []byte, values []byte, delay int16, extra byte) mpacket.Packet {

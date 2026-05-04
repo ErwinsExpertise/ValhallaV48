@@ -365,6 +365,7 @@ func (server *Server) playerConnect(conn mnet.Client, reader mpacket.Reader) {
 	if newPlr.buffs != nil {
 		newPlr.buffs.plr.inst = newPlr.inst
 		newPlr.buffs.AuditAndExpireStaleBuffs()
+		newPlr.buffs.broadcastCurrentRemoteBuffs()
 	}
 
 	for _, q := range newPlr.quests.inProgressList() {
@@ -4792,7 +4793,7 @@ func (server *Server) playerSpecialSkill(conn mnet.Client, reader mpacket.Reader
 	case skill.Haste, skill.BanditHaste, skill.Bless, skill.IronWill, skill.Rage,
 		skill.Meditation, skill.ILMeditation, skill.MesoUp, skill.HolySymbol, skill.HyperBody, skill.NimbleBody:
 		plr.addBuff(skillID, skillLevel, delay)
-		sendPrimarySkillAnimation(plr, skillID, skillLevel)
+		sendPrimaryRemoteSkillAnimation(plr, skillID, skillLevel)
 
 		// Apply to eligible party members in same map/instance per mask
 		if plr.party != nil {
@@ -4803,11 +4804,12 @@ func (server *Server) playerSpecialSkill(conn mnet.Client, reader mpacket.Reader
 				}
 
 				member.addForeignBuff(member.ID, skillID, skillLevel, delay)
+				sendSecondarySkillAnimation(member, skillID, skillLevel)
 			}
 		}
 	case skill.SuperGMHaste, skill.SuperGMBless, skill.SuperGMHolySymbol:
 		plr.addBuff(skillID, skillLevel, delay)
-		sendPrimarySkillAnimation(plr, skillID, skillLevel)
+		sendPrimaryRemoteSkillAnimation(plr, skillID, skillLevel)
 
 		// Apply buff to the entire map
 		for _, member := range plr.inst.players {
@@ -4815,6 +4817,7 @@ func (server *Server) playerSpecialSkill(conn mnet.Client, reader mpacket.Reader
 				continue
 			}
 			member.addForeignBuff(member.ID, skillID, skillLevel, delay)
+			sendSecondarySkillAnimation(member, skillID, skillLevel)
 		}
 	case skill.SuperGMResurrection:
 		sendPrimarySkillAnimation(plr, skillID, skillLevel)
@@ -4953,7 +4956,7 @@ func (server *Server) playerSpecialSkill(conn mnet.Client, reader mpacket.Reader
 	// Nimble feet and recovery beginner skills with cooldown
 	case skill.NimbleFeet, skill.Recovery:
 		plr.addBuff(skillID, skillLevel, delay)
-		sendPrimarySkillAnimation(plr, skillID, skillLevel)
+		sendPrimaryRemoteSkillAnimation(plr, skillID, skillLevel)
 		// Send cooldown packet for beginner skills
 		if skillData, ok := plr.skills[skillID]; ok {
 			plr.Send(packetPlayerSkillCooldown(skillID, skillData.CooldownTime))
@@ -4985,7 +4988,7 @@ func (server *Server) playerSpecialSkill(conn mnet.Client, reader mpacket.Reader
 		// GM Hide (mapped to invincible bit)
 		skill.SuperGMHide:
 		plr.addBuff(skillID, skillLevel, delay)
-		sendPrimarySkillAnimation(plr, skillID, skillLevel)
+		sendPrimaryRemoteSkillAnimation(plr, skillID, skillLevel)
 
 	case skill.Threaten,
 		skill.Slow, skill.ILSlow,

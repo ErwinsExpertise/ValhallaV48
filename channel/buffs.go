@@ -369,6 +369,15 @@ func (cb *CharacterBuffs) remoteSpawnMask() uint64 {
 	return mask
 }
 
+func (cb *CharacterBuffs) broadcastCurrentRemoteBuffs() {
+	if cb == nil || cb.plr == nil || cb.plr.inst == nil || cb.plr.Conn == nil {
+		return
+	}
+	for _, viewer := range cb.plr.inst.players {
+		cb.sendCurrentRemoteBuffsTo(viewer)
+	}
+}
+
 func (cb *CharacterBuffs) sendCurrentRemoteBuffsTo(viewer *Player) {
 	if cb == nil || cb.plr == nil || viewer == nil || viewer.Conn == nil || viewer == cb.plr {
 		return
