@@ -365,7 +365,6 @@ func (server *Server) playerConnect(conn mnet.Client, reader mpacket.Reader) {
 	if newPlr.buffs != nil {
 		newPlr.buffs.plr.inst = newPlr.inst
 		newPlr.buffs.AuditAndExpireStaleBuffs()
-		newPlr.buffs.broadcastCurrentRemoteBuffs()
 	}
 
 	for _, q := range newPlr.quests.inProgressList() {
@@ -4804,7 +4803,6 @@ func (server *Server) playerSpecialSkill(conn mnet.Client, reader mpacket.Reader
 				}
 
 				member.addForeignBuff(member.ID, skillID, skillLevel, delay)
-				sendSecondarySkillAnimation(member, skillID, skillLevel)
 			}
 		}
 	case skill.SuperGMHaste, skill.SuperGMBless, skill.SuperGMHolySymbol:
@@ -4817,7 +4815,6 @@ func (server *Server) playerSpecialSkill(conn mnet.Client, reader mpacket.Reader
 				continue
 			}
 			member.addForeignBuff(member.ID, skillID, skillLevel, delay)
-			sendSecondarySkillAnimation(member, skillID, skillLevel)
 		}
 	case skill.SuperGMResurrection:
 		sendPrimarySkillAnimation(plr, skillID, skillLevel)

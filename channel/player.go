@@ -3805,15 +3805,6 @@ func sendSecondaryRemoteSkillAnimation(plr *Player, skillID int32, level byte) {
 	plr.inst.sendExcept(packetPlayerRemoteSkillAnimationWithType(plr.ID, constant.PlayerEffectSkillOnOther, skillID, level), plr.Conn)
 }
 
-func sendSecondarySkillAnimation(plr *Player, skillID int32, level byte) {
-	if plr == nil {
-		return
-	}
-
-	plr.Send(packetPlayerLocalSkillAnimationWithType(constant.PlayerEffectSkillOnOther, skillID, level))
-	sendSecondaryRemoteSkillAnimation(plr, skillID, level)
-}
-
 func packetPlayerGiveBuff(mask []byte, values []byte, delay int16, extra byte) mpacket.Packet {
 	p := mpacket.CreateWithOpcode(opcode.SendChannelTempStatChange)
 
