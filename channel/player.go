@@ -1816,6 +1816,11 @@ func (d *Player) moveItem(start, end, amount int16, invID byte) error {
 			return fmt.Errorf("Item to move doesn't exist")
 		}
 
+		isQuestItem := false
+		if meta, metaErr := nx.GetItem(item.ID); metaErr == nil {
+			isQuestItem = meta.Quest != 0
+		}
+
 		if isRechargeable(item.ID) {
 			amount = item.amount
 		}
@@ -1841,7 +1846,11 @@ func (d *Player) moveItem(start, end, amount int16, invID byte) error {
 			}
 		}
 
-		d.inst.dropPool.createDrop(dropSpawnNormal, dropFreeForAll, 0, d.pos, true, true, d.ID, 0, dropItem)
+		if isQuestItem {
+			d.inst.dropPool.createDropAnimationOnly(dropSpawnDisappears, dropFreeForAll, d.pos, d.ID, 0, dropItem)
+		} else {
+			d.inst.dropPool.createDrop(dropSpawnNormal, dropFreeForAll, 0, d.pos, true, true, d.ID, 0, dropItem)
+		}
 
 		return nil
 	}

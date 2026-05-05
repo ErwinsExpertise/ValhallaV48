@@ -2766,9 +2766,11 @@ func (server Server) playerMeleeSkill(conn mnet.Client, reader mpacket.Reader) {
 		return
 	}
 
-	calc := NewDamageCalculator(plr, &data, attackMelee)
-	results := calc.ValidateAttack()
-	server.validateAndApplyCriticals(conn, plr, &data, results)
+	if server.shouldValidateAttackDamage() {
+		calc := NewDamageCalculator(plr, &data, attackMelee)
+		results := calc.ValidateAttack()
+		server.validateAndApplyCriticals(conn, plr, &data, results)
+	}
 	logAttackApplied("melee", data.skillID, data.attackInfo)
 
 	inst.sendExcept(packetSkillMelee(*plr, data), conn)
@@ -2843,6 +2845,10 @@ func (server *Server) validateAndApplyCriticals(conn mnet.Client, plr *Player, d
 	}
 }
 
+func (server *Server) shouldValidateAttackDamage() bool {
+	return server.autoBan && server.ac != nil
+}
+
 func (server Server) playerRangedSkill(conn mnet.Client, reader mpacket.Reader) {
 	plr, err := server.players.GetFromConn(conn)
 
@@ -2882,9 +2888,11 @@ func (server Server) playerRangedSkill(conn mnet.Client, reader mpacket.Reader) 
 		return
 	}
 
-	calc := NewDamageCalculator(plr, &data, attackRanged)
-	results := calc.ValidateAttack()
-	server.validateAndApplyCriticals(conn, plr, &data, results)
+	if server.shouldValidateAttackDamage() {
+		calc := NewDamageCalculator(plr, &data, attackRanged)
+		results := calc.ValidateAttack()
+		server.validateAndApplyCriticals(conn, plr, &data, results)
+	}
 	logAttackApplied("ranged", data.skillID, data.attackInfo)
 
 	// if Player in party extract
@@ -2942,9 +2950,11 @@ func (server Server) playerMagicSkill(conn mnet.Client, reader mpacket.Reader) {
 		}
 	}
 
-	calc := NewDamageCalculator(plr, &data, attackMagic)
-	results := calc.ValidateAttack()
-	server.validateAndApplyCriticals(conn, plr, &data, results)
+	if server.shouldValidateAttackDamage() {
+		calc := NewDamageCalculator(plr, &data, attackMagic)
+		results := calc.ValidateAttack()
+		server.validateAndApplyCriticals(conn, plr, &data, results)
+	}
 	logAttackApplied("magic", data.skillID, data.attackInfo)
 
 	inst.sendExcept(packetSkillMagic(*plr, data), conn)
@@ -3298,6 +3308,8 @@ func (server *Server) npcChatContinue(conn mnet.Client, reader mpacket.Reader) {
 	action := reader.ReadByte()
 	if action == 0 {
 		terminate = true
+	} else if action == 255 {
+		controller.stateTracker.popState()
 	} else if lastMsg == 3 {
 		controller.stateTracker.addState(npcStringInputState)
 		controller.stateTracker.inputs = append(controller.stateTracker.inputs, reader.ReadString(reader.ReadInt16()))
@@ -5200,9 +5212,11 @@ func (server *Server) playerSummonAttack(conn mnet.Client, reader mpacket.Reader
 		return
 	}
 
-	calc := NewDamageCalculator(plr, &data, attackSummon)
-	results := calc.ValidateAttack()
-	server.validateAndApplyCriticals(conn, plr, &data, results)
+	if server.shouldValidateAttackDamage() {
+		calc := NewDamageCalculator(plr, &data, attackSummon)
+		results := calc.ValidateAttack()
+		server.validateAndApplyCriticals(conn, plr, &data, results)
+	}
 	logAttackApplied("summon", data.skillID, data.attackInfo)
 
 	mobDamages := make(map[int32][]int32, len(data.attackInfo))

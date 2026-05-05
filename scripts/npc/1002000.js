@@ -2,8 +2,8 @@ var travelMaps = [102000000, 101000000, 100000000, 103000000, 120000000];
 var travelCosts = [1200, 1200, 800, 1000, 1000];
 var townDescriptions = [
     [
-        "The town you are at is Lith Harbor! Alright I'll explain to you more about #bLith Harbor#k. It's the place you landed on Victoria Island by riding The Victoria. That's Lith Harbor. A lot of beginners who just got here from Maple Island start their journey here.",
-        "It's a quiet town with the wide body of water on the back of it, thanks to the fact that the harbot is located at the west end of the island. Most of the people here are, or used to be fisherman, so they may look intimidating, but if you strike up a conversation with them, they'll be friendly to you.",
+        "The town you are in is Lith Harbor! Alright, I'll tell you more about #bLith Harbor#k. This is where you arrive on Victoria Island after riding The Victoria. Many beginners who leave Maple Island start their journey here.",
+        "It's a quiet town with a wide body of water behind it, since the harbor is located on the west side of the island. Most of the people here are, or used to be, fishermen, so they may look intimidating, but if you strike up a conversation with them, they will be friendly.",
         "Around town lies a beautiful prairie. Most of the monsters there are small and gentle, perfect for beginners. If you haven't chosen your job yet, this is a good place to boost up your level."
     ],
     [
@@ -19,7 +19,7 @@ var townDescriptions = [
     [
         "Alright I'll explain to you more about #bHenesys#k. It's a bowman-town located at the southernmost part of the island, made on a flatland in the midst of a deep forest and prairies. The weather's just right, and everything is plentiful around that town, perfect for living. Go check it out.",
         "Around the prairie you'll find weak monsters such as snails, mushrooms, and pigs. According to what I hear, though, in the deepest part of the Pig Park, which is connected to the town somewhere, you'll find a humongous, powerful mushroom called Mushmom every now and then.",
-        "If you want to be a #bBowman#k, you need to go see #rAthena Pierce#k at Henesys. With a level at or above 10 and a decent amount of DEX, she may make you be one afterall. If not, go train yourself, make yourself stronger, then try again."
+        "If you want to be a #bBowman#k, you need to go see #rAthena Pierce#k at Henesys. With a level of 10 or higher and a decent amount of DEX, she may make you one after all. If not, go train, make yourself stronger, and then try again."
     ],
     [
         "Alright I'll explain to you more about #bKerning City#k. It's a thief-town located at the northwest part of Victoria Island, and there are buildings up there that have just this strange feeling around them. It's mostly covered in black clouds, but if you can go up to a really high place, you'll be able to see a very beautiful sunset there.",
@@ -27,9 +27,9 @@ var townDescriptions = [
         "If you want to be a #bThief#k, seek #rDark Lord#k, the heart of darkness of Kerning City. He may well make you a thief if you're at or above level 10 with a good amount of DEX. If not, go hunt and train yourself to reach there."
     ],
     [
-        "Here's a little information on #b#m120000000##k. It's a submarine that's currently parked in between Ellinia and Henesys in Victoria Island. That submarine serves as home to numerous pirates. You can have just as beautiful a view of the ocean there as you do here in Lith Harbor.",
-        "#m120000000# is parked in between Henesys and Ellinia, so if you step out just a bit, you'll be able to enjoy the view of both towns. All the pirates you'll meet in town are very gregarious and friendly as well.",
-        "If you are serious about becoming a #bPirate#k, then you better meet the captain of #m120000000#, #r#p1090000##k. If you are over Level 10 with 20 DEX, then she may let you become one. If you aren't up to that level, then you'll need to train harder to get there!"
+        "Here is a little information on #b#m120000000##k. In later eras, it becomes known as the Nautilus, but that is not part of this version of the world.",
+        "You do not need to worry about that place for now. Focus on the main towns of Victoria Island while you are still getting started.",
+        "If you are choosing your first job in this version, speak with the instructors in Henesys, Ellinia, Perion, or Kerning City once you meet their requirements."
     ],
     [
         "Alright I'll explain to you more about #bSleepywood#k. It's a forest town located at the southeast side of Victoria Island. It's pretty much in between Henesys and the ant-tunnel dungeon. There's a hotel there, so you can rest up after a long day at the dungeon ... it's a quiet town in general.",

@@ -1323,6 +1323,46 @@ func (pool *dropPool) createDrop(spawnType byte, dropType byte, mesos int32, dro
 	}
 }
 
+func (pool *dropPool) createDropAnimationOnly(spawnType byte, dropType byte, dropFrom pos, ownerID, partyID int32, items ...Item) {
+	iCount := len(items)
+	if iCount == 0 {
+		return
+	}
+
+	offset := int16(itemDistance * (iCount / 2))
+	now := time.Now().UnixMilli()
+
+	for i, item := range items {
+		tmp := dropFrom
+		tmp.x = dropFrom.x - offset + int16(i*itemDistance)
+		finalPos := pool.instance.calculateFinalDropPos(tmp)
+
+		poolID, err := pool.nextID()
+		if err != nil {
+			return
+		}
+
+		drop := fieldDrop{
+			ID:      poolID,
+			ownerID: ownerID,
+			partyID: partyID,
+			item:    item,
+
+			expireTime:  now,
+			timeoutTime: now,
+			neverExpire: false,
+			byPlayer:    true,
+
+			originPos: dropFrom,
+			finalPos:  finalPos,
+
+			dropType: dropType,
+		}
+
+		pool.instance.send(packetShowDrop(spawnType, drop, true))
+	}
+}
+
 func (pool *dropPool) update(t time.Time) {
 	id := make([]int32, 0, len(pool.drops))
 

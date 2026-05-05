@@ -683,6 +683,10 @@ func (server *Server) handleNewCharacter(conn mnet.Client, reader mpacket.Reader
 		}
 
 		char := loadPlayerFromID(int32(characterID))
+		char.hp = 50
+		char.maxHP = 50
+		char.mp = 50
+		char.maxMP = 50
 
 		if conn.GetAdminLevel() > 0 {
 			items := map[int32]int16{

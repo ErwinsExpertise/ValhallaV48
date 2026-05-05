@@ -10,7 +10,7 @@ var chat = "Ask me whatever you like! Remember, you'll pick up most of this info
         + "#L7#What should I do to become a Bowman?#l\r\n"
         + "#L8#What should I do to become a Thief?#l\r\n"
         + "#L9#What should I do to become a Magician?#l\r\n"
-        + "#L10#What should I do to become a pirate?#l\r\n"
+        + "#L10#What should I do to become a Thief?#l\r\n"
         + "#L11#How do I raise the character stats? (S)#l\r\n"
         + "#L12#How do I check the items that I just picked up?#l\r\n"
         + "#L13#How do I equip an item?#l\r\n"
@@ -33,7 +33,7 @@ var Text = [
     "You want to become a #bBowman#k? You'll need to go to Victoria Island to make the job advancement. Head over to a bowman-town called #rHenesys#k and talk to the beautiful #bAthena Pierce#k and learn the in's and out's of being a bowman. Ohh, and one VERY important thing: You'll need to be at least level 10 in order to become a bowman!!",
     "You want to become a #bThief#k? In order to become one, you'll have to head over to Victoria Island. Head over to a thief-town called #rKerning City#k, and on the shadier side of town, you'll see a thief's hideaway. There, you'll meet #bDark Lord#k who'll teach you everything about being a thief. Ohh, and one VERY important thing: You'll need to be at least level 10 in order to become a thief!!",
     "You want to become a #bMagician#k? For you to do that, you'll have to head over to Victoria Island. Head over to a magician-town called #rEllinia#k, and at the very top lies the Magic Library. Inside, you'll meet the head of all wizards, #bGrendel the Really Old#k, who'll teach you everything about becoming a wizard.",
-    "Do you wish to become a #bPirate#k? For you to do that, you'll have to head over to Victoria Island. Head to the #rNautilus#k, a strange-looking submarine currently docked on the island, head inside, and find #bKyrin#k. She'll help you with the rest. Oh, and one VERY important thing: You'll need to be at least level 10 in order to become a pirate!",
+    "You want to become a #bThief#k? In order to do that, you'll have to head over to Victoria Island. Head to a thief town called #rKerning City#k and find #bDark Lord#k. He will teach you everything about becoming a thief. Oh, and one VERY important thing: You'll need to be at least level 10 in order to become a thief!",
     "You want to know how to raise your character's ability stats? First press #bS#k to check out the ability window. Every time you level up, you'll be awarded 5 ability points aka AP's. Assign those AP's to the ability of your choice. It's that simple.",
     "You want to know how to check out the items you've picked up, huh? When you defeat a monster, it'll drop an item on the ground, and you may press #bZ#k to pick up the item. That item will then be stored in your item inventory, and you can take a look at it by simply pressing #bI#k.",
     "You want to know how to wear the items, right? Press #bI#k to check out your item inventory. Place your mouse cursor on top of an item and double-click on it to put it on your character. If you find yourself unable to wear the item, chances are your character does not meet the level & stat requirements. You can also put on the item by opening the equipment inventory (#bE#k) and dragging the item into it. To take off an item, double-click on the item at the equipment inventory.",
