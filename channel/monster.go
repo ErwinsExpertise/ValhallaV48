@@ -327,43 +327,8 @@ func (m monster) displayBytes() []byte {
 	p := mpacket.NewPacket()
 
 	p.WriteInt32(m.spawnID)
-	p.WriteByte(0x00) // control status?
+	p.WriteByte(m.calcDamageStatIndex)
 	p.WriteInt32(m.id)
-
-	p.WriteInt32(0) // some kind of status?
-
-	p.WriteInt16(m.pos.x)
-	p.WriteInt16(m.pos.y)
-
-	var bitfield byte
-	if m.summoner != nil {
-		bitfield = 0x08
-	} else {
-		bitfield = 0x02
-	}
-
-	if m.faceLeft {
-		bitfield |= 0x01
-	} else {
-		bitfield |= 0x04
-	}
-
-	if m.stance%2 == 1 {
-		bitfield |= 0x01
-	}
-
-	if m.flySpeed > 0 {
-		bitfield |= 0x04
-	}
-
-	p.WriteByte(bitfield)        // 0x08 - a summon, 0x04 - flying, 0x02 - ???, 0x01 - faces left
-	p.WriteInt16(m.pos.foothold) // foothold to oscillate around
-	p.WriteInt16(m.pos.foothold) // spawn foothold
-	p.WriteInt8(m.summonType)
-
-	if m.summonType == constant.MobSummonTypeRevive || m.summonType >= 0 {
-		p.WriteInt32(m.summonOption) // when -3 used to link mob to a death using spawnID
-	}
 
 	p.WriteUint32(uint32(m.statBuff))
 
@@ -411,6 +376,41 @@ func (m monster) displayBytes() []byte {
 			p.WriteInt16(durationUnits)
 		}
 	}
+
+	p.WriteInt16(m.pos.x)
+	p.WriteInt16(m.pos.y)
+
+	var bitfield byte
+	if m.summoner != nil {
+		bitfield = 0x08
+	} else {
+		bitfield = 0x02
+	}
+
+	if m.faceLeft {
+		bitfield |= 0x01
+	} else {
+		bitfield |= 0x04
+	}
+
+	if m.stance%2 == 1 {
+		bitfield |= 0x01
+	}
+
+	if m.flySpeed != 0 {
+		bitfield |= 0x04
+	}
+
+	p.WriteByte(bitfield)        // 0x08 - a summon, 0x04 - flying, 0x02 - ground mob, 0x01 - faces left
+	p.WriteInt16(m.pos.foothold) // foothold to oscillate around
+	p.WriteInt16(m.pos.foothold) // spawn foothold
+	p.WriteInt8(m.summonType)
+
+	if m.summonType == constant.MobSummonTypeRevive || m.summonType >= 0 {
+		p.WriteInt32(m.summonOption) // when -3 used to link mob to a death using spawnID
+	}
+
+	p.WriteByte(0xFF)
 
 	return p
 }
@@ -809,19 +809,11 @@ func packetMobStatSet(spawnID int32, statMask int32, value int16, skillID int32,
 func packetMobControl(m monster, chase bool) mpacket.Packet {
 	p := mpacket.CreateWithOpcode(opcode.SendChannelControlMob)
 	if chase {
-		p.WriteByte(0x02) // 2 chase, 1 no chase, 0 no control
+		p.WriteByte(0x02)
 	} else {
 		p.WriteByte(0x01)
 	}
-	p.WriteInt32(m.spawnID)
-	if chase {
-		p.WriteByte(1)
-	} else {
-		p.WriteByte(0)
-	}
-
-	body := m.displayBytes()
-	p.WriteBytes(body[5:])
+	p.Append(m.displayBytes())
 
 	return p
 }

@@ -15,6 +15,11 @@ import (
 	"github.com/Hucaru/Valhalla/nx"
 )
 
+func (server *Server) shouldLogUnknownClientPacket(conn mnet.Client) bool {
+	_, err := server.players.GetFromConn(conn)
+	return err == nil
+}
+
 func (server *Server) HandleClientPacket(conn mnet.Client, reader mpacket.Reader) {
 	op := reader.ReadInt16()
 
@@ -30,7 +35,9 @@ func (server *Server) HandleClientPacket(conn mnet.Client, reader mpacket.Reader
 		server.leaveCashShopToChannel(conn, reader)
 
 	default:
-		log.Println("[CASHSHOP] UNKNOWN CLIENT PACKET (", op, "):", reader)
+		if server.shouldLogUnknownClientPacket(conn) {
+			log.Println("[CASHSHOP] UNKNOWN CLIENT PACKET (", op, "):", reader)
+		}
 	}
 }
 

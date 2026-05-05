@@ -19,6 +19,19 @@ import (
 	"github.com/Hucaru/Valhalla/mpacket"
 )
 
+func (server *Server) shouldLogUnknownClientPacket(conn mnet.Client) bool {
+	if conn.GetLogedIn() || conn.GetAccountID() > 0 {
+		return true
+	}
+
+	sess, ok := server.sessions[conn]
+	if !ok || sess == nil {
+		return false
+	}
+
+	return sess.stage != sessionStageAwaitLogin
+}
+
 // HandleClientPacket data
 func (server *Server) HandleClientPacket(conn mnet.Client, reader mpacket.Reader) {
 	defer func() {
@@ -65,7 +78,9 @@ func (server *Server) HandleClientPacket(conn mnet.Client, reader mpacket.Reader
 	case opcode.RecvPing:
 		// Thumbs Up
 	default:
-		log.Printf("[LOGIN] UNKNOWN CLIENT PACKET: opcode=0x%04X, data=% X", op, reader.GetBuffer())
+		if server.shouldLogUnknownClientPacket(conn) {
+			log.Printf("[LOGIN] UNKNOWN CLIENT PACKET: opcode=0x%04X, data=% X", op, reader.GetBuffer())
+		}
 	}
 }
 

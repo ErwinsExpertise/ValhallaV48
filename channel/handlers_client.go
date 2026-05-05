@@ -56,6 +56,11 @@ func init() {
 	prometheus.MustRegister(packetsTotal, unknownPacketsTotal)
 }
 
+func (server *Server) shouldLogUnknownClientPacket(conn mnet.Client) bool {
+	_, err := server.players.GetFromConn(conn)
+	return err == nil
+}
+
 func (server *Server) HandleClientPacket(conn mnet.Client, reader mpacket.Reader) {
 	// Read opcode first for logging/metrics and to make panic logs useful
 	op := reader.ReadInt16()
@@ -216,7 +221,9 @@ func (server *Server) HandleClientPacket(conn mnet.Client, reader mpacket.Reader
 		unknownPacketsTotal.Inc()
 		// Let's send a no change to make sure characters aren't stuck on unknown packets
 		conn.Send(packetPlayerNoChange())
-		log.Println("[CHANNEL] UNKNOWN CLIENT PACKET(", op, "):", reader)
+		if server.shouldLogUnknownClientPacket(conn) {
+			log.Println("[CHANNEL] UNKNOWN CLIENT PACKET(", op, "):", reader)
+		}
 	}
 }
 
