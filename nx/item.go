@@ -13,6 +13,7 @@ import (
 // Item data from nx
 type Item struct {
 	InvTabID                                                       byte
+	SearchCategory                                                 string
 	Name                                                           string
 	Cash, Pet                                                      bool
 	Only, TradeBlock, ExpireOnLogout, Quest, TimeLimited           int64
@@ -98,6 +99,7 @@ func extractItems(nodes []gonx.Node, textLookup []string) map[int32]Item {
 	}
 
 	for _, base := range characterSearches {
+		category := strings.ToLower(strings.TrimPrefix(base, "/Character/"))
 		ok := gonx.FindNode(base, nodes, textLookup, func(node *gonx.Node) {
 			iterateChildren(node, nodes, textLookup, func(itemNode gonx.Node, name string) {
 				subSearch := base + "/" + name + "/info"
@@ -106,7 +108,7 @@ func extractItems(nodes []gonx.Node, textLookup []string) map[int32]Item {
 					log.Println("Invalid node search:", subSearch)
 					return
 				}
-				if !addItemByName(name, &itm, items) {
+				if !addItemByName(name, &itm, items, category) {
 					return
 				}
 			})
@@ -120,6 +122,7 @@ func extractItems(nodes []gonx.Node, textLookup []string) map[int32]Item {
 	groupedSearches := []string{"/Item/Cash", "/Item/Etc", "/Item/Install"}
 	for _, base := range groupedSearches {
 		ok := gonx.FindNode(base, nodes, textLookup, func(node *gonx.Node) {
+			category := itemSearchCategoryFromBase(base)
 			iterateChildren(node, nodes, textLookup, func(groupNode gonx.Node, groupName string) {
 				iterateChildren(&groupNode, nodes, textLookup, func(itemNode gonx.Node, name string) {
 					subSearch := base + "/" + groupName + "/" + name + "/info"
@@ -128,7 +131,7 @@ func extractItems(nodes []gonx.Node, textLookup []string) map[int32]Item {
 						log.Println("Invalid node search:", subSearch)
 						return
 					}
-					if !addItemByName(name, &itm, items) {
+					if !addItemByName(name, &itm, items, category) {
 						return
 					}
 				})
@@ -158,7 +161,7 @@ func extractItems(nodes []gonx.Node, textLookup []string) map[int32]Item {
 				specPath = consumeBase + "/" + groupName + "/" + name + "/mob"
 				_ = findAndExtract(specPath, nodes, textLookup, &itm)
 
-				if !addItemByName(name, &itm, items) {
+				if !addItemByName(name, &itm, items, "use") {
 					return
 				}
 			})
@@ -203,7 +206,7 @@ func extractItems(nodes []gonx.Node, textLookup []string) map[int32]Item {
 				})
 			}
 
-			addItemByName(name, &itm, items)
+			addItemByName(name, &itm, items, "pet")
 		})
 	})
 
@@ -248,7 +251,7 @@ func findAndExtract(path string, nodes []gonx.Node, textLookup []string, item *I
 }
 
 // addItemByName parses an item ID from a filename-like name, sets InvTabID and inserts to map
-func addItemByName(name string, item *Item, out map[int32]Item) bool {
+func addItemByName(name string, item *Item, out map[int32]Item, category string) bool {
 	trimmed := strings.TrimSuffix(name, filepath.Ext(name))
 	id64, err := strconv.ParseInt(trimmed, 10, 32)
 	if err != nil {
@@ -257,8 +260,26 @@ func addItemByName(name string, item *Item, out map[int32]Item) bool {
 	}
 	itemID := int32(id64)
 	item.InvTabID = byte(itemID / 1e6)
+	item.SearchCategory = category
 	out[itemID] = *item
 	return true
+}
+
+func itemSearchCategoryFromBase(base string) string {
+	switch base {
+	case "/Item/Cash":
+		return "cash"
+	case "/Item/Consume":
+		return "use"
+	case "/Item/Etc":
+		return "etc"
+	case "/Item/Install":
+		return "setup"
+	case "/Item/Pet":
+		return "pet"
+	default:
+		return ""
+	}
 }
 
 func (item *Item) getItem(node *gonx.Node, nodes []gonx.Node, textLookup []string) {
@@ -630,6 +651,24 @@ func itemName(id int32, nodes []gonx.Node, textLookup []string) (string, error) 
 }
 
 func itemStringValue(id int32, field string, nodes []gonx.Node, textLookup []string) (string, error) {
+	equipCategories := []string{
+		"Accessory", "Cap", "Cape", "Coat", "Face", "Glove", "Hair", "Longcoat",
+		"Pants", "PetEquip", "Ring", "Shield", "Shoes", "Weapon",
+	}
+	for _, category := range equipCategories {
+		paths := []string{
+			fmt.Sprintf("/String/Item.img/Eqp/%s/%07d/%s", category, id, field),
+			fmt.Sprintf("/String/Item.img/%s/%07d/%s", category, id, field),
+		}
+		for _, path := range paths {
+			var nameNode *gonx.Node
+			gonx.FindNode(path, nodes, textLookup, func(n *gonx.Node) { nameNode = n })
+			if nameNode != nil {
+				return textLookup[gonx.DataToUint32(nameNode.Data)], nil
+			}
+		}
+	}
+
 	groups := []string{"Cash", "Con", "Eqp", "Etc", "Ins", "Pet"}
 	for _, g := range groups {
 		path := fmt.Sprintf("/String/Item.img/%s/%07d/%s", g, id, field)

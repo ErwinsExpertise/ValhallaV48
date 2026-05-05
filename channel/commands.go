@@ -18,6 +18,55 @@ import (
 	"github.com/Hucaru/Valhalla/nx"
 )
 
+func searchLabelForItemType(searchType string) string {
+	switch searchType {
+	case "item":
+		return "Items"
+	case "equip":
+		return "Equips"
+	case "cash":
+		return "Cash Items"
+	case "use":
+		return "Use Items"
+	case "setup":
+		return "Setup Items"
+	case "etc":
+		return "Etc Items"
+	case "pet":
+		return "Pet Items"
+	case "accessory":
+		return "Accessories"
+	case "cap":
+		return "Caps"
+	case "cape":
+		return "Capes"
+	case "coat":
+		return "Coats"
+	case "face":
+		return "Faces"
+	case "glove":
+		return "Gloves"
+	case "hair":
+		return "Hair"
+	case "longcoat":
+		return "Longcoats"
+	case "pants":
+		return "Pants"
+	case "petequip":
+		return "Pet Equips"
+	case "ring":
+		return "Rings"
+	case "shield":
+		return "Shields"
+	case "shoes":
+		return "Shoes"
+	case "weapon":
+		return "Weapons"
+	default:
+		return "Items"
+	}
+}
+
 // TODO: Split these into ranks/levels (each rank can do everything the previous can):
 // Admin -  Everything, can run server wide commands, can generate items, provide exp etc.
 // Game Master  - can ban, can run channel wide commands, can spawn monsters
@@ -114,16 +163,25 @@ func (server *Server) gmCommand(conn mnet.Client, msg string) {
 		}
 	case "search":
 		if len(command) < 2 {
-			conn.Send(packetMessageRedText("Command structure is /search [item|map|quest] <query>"))
+			conn.Send(packetMessageRedText("Command structure is /search [type] <query>"))
+			conn.Send(packetMessageNotice("Types: item, equip, cash, use, setup, etc, pet, accessory, cap, cape, coat, face, glove, hair, longcoat, pants, petequip, ring, shield, shoes, weapon, map, quest"))
 			return
 		}
 
 		searchType := "all"
 		queryStart := 1
 		switch strings.ToLower(command[1]) {
-		case "item", "items", "map", "maps", "quest", "quests":
-			searchType = strings.ToLower(command[1])
+		case "map", "maps":
+			searchType = "map"
 			queryStart = 2
+		case "quest", "quests":
+			searchType = "quest"
+			queryStart = 2
+		default:
+			if itemType, ok := nx.NormalizeItemSearchCategory(command[1]); ok {
+				searchType = itemType
+				queryStart = 2
+			}
 		}
 
 		if len(command) <= queryStart {
@@ -141,22 +199,28 @@ func (server *Server) gmCommand(conn mnet.Client, msg string) {
 			}
 			conn.Send(packetMessageRedText(label + ":"))
 			for _, match := range matches {
-				conn.Send(packetMessageRedText(fmt.Sprintf("  [%d] %s", match.ID, match.Name)))
+				line := fmt.Sprintf("  [%d] %s", match.ID, match.Name)
+				if match.Extra != "" {
+					line += fmt.Sprintf(" (%s)", match.Extra)
+				}
+				conn.Send(packetMessageRedText(line))
 				sent++
 			}
 		}
 
 		switch searchType {
-		case "item", "items":
-			sendMatches("Items", nx.SearchItemsByName(query, perTypeLimit))
-		case "map", "maps":
+		case "map":
 			sendMatches("Maps", nx.SearchMapsByName(query, perTypeLimit))
-		case "quest", "quests":
+		case "quest":
 			sendMatches("Quests", nx.SearchQuestsByName(query, perTypeLimit))
 		default:
-			sendMatches("Items", nx.SearchItemsByName(query, perTypeLimit))
-			sendMatches("Maps", nx.SearchMapsByName(query, perTypeLimit))
-			sendMatches("Quests", nx.SearchQuestsByName(query, perTypeLimit))
+			if searchType == "all" {
+				sendMatches("Items", nx.SearchItemsByName(query, perTypeLimit))
+				sendMatches("Maps", nx.SearchMapsByName(query, perTypeLimit))
+				sendMatches("Quests", nx.SearchQuestsByName(query, perTypeLimit))
+			} else {
+				sendMatches(searchLabelForItemType(searchType), nx.SearchItemsByCategory(query, searchType, perTypeLimit))
+			}
 		}
 
 		if sent == 0 {
