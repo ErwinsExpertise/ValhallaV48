@@ -1624,7 +1624,7 @@ func (pool *reactorPool) tryTriggerByDrop(drop fieldDrop) bool {
 			if pool.server != nil && pool.server.reactorScriptStore != nil {
 				name := strconv.Itoa(int(r.templateID))
 				if program, ok := pool.server.reactorScriptStore.scripts[name]; ok {
-					if err := runReactorScript(program, pool.server, pool.instance, r); err != nil {
+					if err := runReactorScript(program, pool.server, pool.instance, r, nil); err != nil {
 						log.Println("reactor script error:", name, err)
 					}
 				}
@@ -1871,7 +1871,7 @@ func (pool *reactorPool) processStateSideEffects(r *fieldReactor, plr *Player) {
 			}
 			if pool.server != nil && pool.server.reactorScriptStore != nil {
 				if program, ok := pool.server.reactorScriptStore.scripts[name]; ok {
-					if err := runReactorScript(program, pool.server, pool.instance, r); err != nil {
+					if err := runReactorScript(program, pool.server, pool.instance, r, plr); err != nil {
 						log.Println("reactor side effect script error:", name, err)
 					}
 				}

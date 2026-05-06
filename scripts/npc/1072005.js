@@ -1,7 +1,22 @@
-if (plr.itemCount(4031013) >= 30) {
-    plr.removeAll(4031013);
-    npc.sendOk("You gathered every last Dark Marble. Good. Take this proof back to Grendel and show him your control was not a matter of luck.");
+var LETTER = 4031009;
+var PROOF = 4031012;
+var MARBLE = 4031013;
+
+if (plr.job() !== 200 || plr.getLevel() < 30) {
+    npc.sendOk("You shouldn't be here. I'll send you back.");
     plr.warp(101020000);
+} else if (plr.itemCount(MARBLE) >= 30) {
+    plr.removeAll(MARBLE);
+    plr.gainItem(LETTER, -1);
+    if (!plr.gainItem(PROOF, 1)) {
+        npc.sendOk("Something is wrong. Make sure you still have the letter and at least one free Etc slot.");
+    } else {
+        npc.sendOk("Excellent. You passed. Take #b#t4031012##k back to Grendel the Really Old in Ellinia.");
+        plr.warp(101020000);
+    }
+} else if (!npc.sendYesNo("You still haven't collected 30 #b#t4031013##k. If you want, you can leave now and try again later. Do you want to give up and leave?")) {
+    npc.sendOk("Then keep fighting and come back when you've collected 30 Dark Marbles.");
 } else {
-    npc.sendOk("Come back when you've collected #b30 #t4031013##k. A magician who cannot finish a trial should not be asking about the next rank.");
+    npc.sendOk("I'll send you out. Don't give up; you can always try again.");
+    plr.warp(101020000);
 }

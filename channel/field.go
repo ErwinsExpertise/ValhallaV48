@@ -353,6 +353,7 @@ func (f *field) createInstance(rates *rates, server *Server) int {
 			inst.portals[p.ID] = createPortalFromData(p)
 		}
 	}
+	applyJobAdvancementPortalScripts(inst)
 
 	inst.roomPool = createNewRoomPool(inst)
 	inst.dropPool = createNewDropPool(inst, rates)
@@ -556,6 +557,32 @@ func createPortalFromData(p nx.Portal) portal {
 		destName:    p.Tn,
 		temporary:   false,
 		enabled:     true,
+	}
+}
+
+func jobAdvancementPortalScript(fieldID int32, portalName string) string {
+	switch fieldID {
+	case 105070001:
+		if portalName == "hide01" || portalName == "hide02" {
+			return "crack"
+		}
+	case 100040106:
+		if portalName == "up03" || portalName == "up12" || portalName == "up23" {
+			return "crack"
+		}
+	case 105040305:
+		if portalName == "hiden00" {
+			return "crack"
+		}
+	}
+	return ""
+}
+
+func applyJobAdvancementPortalScripts(inst *fieldInstance) {
+	for i := range inst.portals {
+		if script := jobAdvancementPortalScript(inst.fieldID, inst.portals[i].name); script != "" {
+			inst.portals[i].script = script
+		}
 	}
 }
 

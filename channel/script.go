@@ -796,6 +796,15 @@ func (ctrl *scriptPlayerWrapper) CompleteQuest(id int16) bool {
 	return ctrl.plr.tryCompleteQuest(id)
 }
 
+func (ctrl *scriptPlayerWrapper) ForceCompleteQuest(id int16) {
+	nowMs := time.Now().UnixMilli()
+	ctrl.plr.quests.complete(id, nowMs)
+	setQuestCompleted(ctrl.plr.ID, id, nowMs)
+	clearQuestMobKills(ctrl.plr.ID, id)
+	ctrl.plr.Send(packetQuestUpdate(id, ""))
+	ctrl.plr.Send(packetQuestComplete(id))
+}
+
 func (ctrl *scriptPlayerWrapper) ForfeitQuest(id int16) {
 	if !ctrl.plr.quests.hasInProgress(id) {
 		return
@@ -826,6 +835,10 @@ func (ctrl *scriptPlayerWrapper) RemoveAll(id int32) bool {
 		return true
 	}
 	return ctrl.plr.removeItemsByID(id, count, true)
+}
+
+func (ctrl *scriptPlayerWrapper) IncreaseSlotSize(invID byte, amount byte) bool {
+	return ctrl.plr.IncreaseSlotSize(invID, amount) == nil
 }
 
 func (ctrl *scriptPlayerWrapper) ItemCount(id int32) int32 {
@@ -962,8 +975,16 @@ func (ctrl *scriptPlayerWrapper) GiveHP(amount int16) {
 	ctrl.plr.giveHP(amount)
 }
 
+func (ctrl *scriptPlayerWrapper) GiveMaxHP(amount int16) {
+	ctrl.plr.giveMaxHP(amount)
+}
+
 func (ctrl *scriptPlayerWrapper) GiveMP(amount int16) {
 	ctrl.plr.giveMP(amount)
+}
+
+func (ctrl *scriptPlayerWrapper) GiveMaxMP(amount int16) {
+	ctrl.plr.giveMaxMP(amount)
 }
 
 func (ctrl *scriptPlayerWrapper) HealToFull() {
@@ -1685,6 +1706,7 @@ type reactorScriptController struct {
 	server  *Server
 	inst    *fieldInstance
 	reactor *fieldReactor
+	plr     *Player
 }
 
 func (ctrl *reactorScriptController) MapMessage(msgType int, msg string) {
@@ -1790,11 +1812,15 @@ func (ctrl *reactorScriptController) SetMapMobSpawnEnabled(mapID int32, mobID in
 	return true
 }
 
-func runReactorScript(program *goja.Program, server *Server, inst *fieldInstance, reactor *fieldReactor) error {
+func runReactorScript(program *goja.Program, server *Server, inst *fieldInstance, reactor *fieldReactor, plr *Player) error {
 	vm := goja.New()
 	vm.SetFieldNameMapper(goja.UncapFieldNameMapper())
-	rm := &reactorScriptController{server: server, inst: inst, reactor: reactor}
+	rm := &reactorScriptController{server: server, inst: inst, reactor: reactor, plr: plr}
+	plrCtrl := &scriptPlayerWrapper{plr: plr, server: server}
+	mapWrapper := &scriptMapWrapper{inst: inst, server: server}
 	_ = vm.Set("rm", rm)
+	_ = vm.Set("plr", plrCtrl)
+	_ = vm.Set("map", mapWrapper)
 	_, err := vm.RunProgram(program)
 	if err != nil {
 		return err
