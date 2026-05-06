@@ -64,9 +64,9 @@ if (plr.job() === 0) {
         npc.sendOk("Train a bit more before asking to become a Magician.");
     } else if (!npc.sendYesNo("You definitely have the look of a Magician. Do you want to become a #bMagician#k?")) {
         npc.sendOk("Come back when you've made up your mind.");
-    } else if (plr.getEquipInventoryFreeSlot() < 1) {
+    } else if (!plr.canHold(1372005, 1)) {
         npc.sendOk("Make sure you have at least one free Equip slot. I want to give you a weapon for your first advancement.");
-    } else if (!plr.gainItem(1372043, 1)) {
+    } else if (!plr.gainItem(1372005, 1)) {
         npc.sendOk("Make sure you have at least one free Equip slot. I want to give you a weapon for your first advancement.");
     } else {
         plr.setJob(200);

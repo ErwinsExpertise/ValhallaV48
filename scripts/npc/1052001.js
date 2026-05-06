@@ -60,9 +60,9 @@ if (plr.job() === 0) {
         npc.sendOk("You're still just an apprentice. Train more and come back later.");
     } else if (!npc.sendYesNo("You look like you could become one of us. Do you want to become a #bThief#k?")) {
         npc.sendOk("Choosing your path matters. Come back when you've decided.");
-    } else if (plr.getEquipInventoryFreeSlot() < 2 || plr.getUseInventoryFreeSlot() < 3) {
-        npc.sendOk("Make sure you have at least two free Equip slots and three free Use slots first.");
-    } else if (!plr.gainItem(1472061, 1) || !plr.gainItem(1332063, 1) || !plr.gainItem(2070015, 3000)) {
+    } else if (!plr.canHoldAll([[1472000, 1], [1332000, 1], [2070000, 500], [2070000, 500], [2070000, 500]])) {
+        npc.sendOk("Make sure you have enough free Equip and Use inventory space first.");
+    } else if (!plr.gainItem(1472000, 1) || !plr.gainItem(1332000, 1) || !plr.gainItem(2070000, 500) || !plr.gainItem(2070000, 500) || !plr.gainItem(2070000, 500)) {
         npc.sendOk("Make sure you have enough free Equip and Use inventory space first.");
     } else {
         plr.increaseSlotSize(1, 4);

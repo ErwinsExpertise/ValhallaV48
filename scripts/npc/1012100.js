@@ -60,9 +60,9 @@ if (plr.job() === 0) {
         npc.sendOk("Train more before asking to become a Bowman.");
     } else if (!npc.sendYesNo("You have the sharp eyes and steady hands of a Bowman. Do you want to become a #bBowman#k?")) {
         npc.sendOk("Come back when you've made up your mind.");
-    } else if (plr.getEquipInventoryFreeSlot() < 1 || plr.getUseInventoryFreeSlot() < 3) {
-        npc.sendOk("Make sure you have at least one free Equip slot and three free Use slots first.");
-    } else if (!plr.gainItem(1452051, 1) || !plr.gainItem(2060000, 6000)) {
+    } else if (!plr.canHoldAll([[1452002, 1], [2060000, 2000], [2060000, 2000], [2060000, 2000]])) {
+        npc.sendOk("Make sure you have enough free Equip and Use inventory space first.");
+    } else if (!plr.gainItem(1452002, 1) || !plr.gainItem(2060000, 2000) || !plr.gainItem(2060000, 2000) || !plr.gainItem(2060000, 2000)) {
         npc.sendOk("Make sure you have enough free Equip and Use inventory space first.");
     } else {
         plr.increaseSlotSize(1, 4);

@@ -869,7 +869,7 @@ func (ctrl *scriptPlayerWrapper) CanHold(id int32, amount int16) bool {
 	if err != nil {
 		return false
 	}
-	return ctrl.plr.CanReceiveItems([]Item{item})
+	return ctrl.plr.canReceiveQuestActItems([]Item{item})
 }
 
 func (ctrl *scriptPlayerWrapper) CanHoldAll(items [][]int32) bool {
@@ -892,27 +892,27 @@ func (ctrl *scriptPlayerWrapper) CanHoldAll(items [][]int32) bool {
 		}
 		converted = append(converted, item)
 	}
-	return ctrl.plr.CanReceiveItems(converted)
+	return ctrl.plr.canReceiveQuestActItems(converted)
 }
 
 func (ctrl *scriptPlayerWrapper) GetEquipInventoryFreeSlot() int16 {
-	return int16(ctrl.plr.equipSlotSize) - int16(len(ctrl.plr.equip))
+	return int16(ctrl.plr.equipSlotSize) - int16(inventoryOccupiedSlots(ctrl.plr.equip, ctrl.plr.equipSlotSize))
 }
 
 func (ctrl *scriptPlayerWrapper) GetUseInventoryFreeSlot() int16 {
-	return int16(ctrl.plr.useSlotSize) - int16(len(ctrl.plr.use))
+	return int16(ctrl.plr.useSlotSize) - int16(inventoryOccupiedSlots(ctrl.plr.use, ctrl.plr.useSlotSize))
 }
 
 func (ctrl *scriptPlayerWrapper) GetSetupInventoryFreeSlot() int16 {
-	return int16(ctrl.plr.setupSlotSize) - int16(len(ctrl.plr.setUp))
+	return int16(ctrl.plr.setupSlotSize) - int16(inventoryOccupiedSlots(ctrl.plr.setUp, ctrl.plr.setupSlotSize))
 }
 
 func (ctrl *scriptPlayerWrapper) GetEtcInventoryFreeSlot() int16 {
-	return int16(ctrl.plr.etcSlotSize) - int16(len(ctrl.plr.etc))
+	return int16(ctrl.plr.etcSlotSize) - int16(inventoryOccupiedSlots(ctrl.plr.etc, ctrl.plr.etcSlotSize))
 }
 
 func (ctrl *scriptPlayerWrapper) GetCashInventoryFreeSlot() int16 {
-	return int16(ctrl.plr.cashSlotSize) - int16(len(ctrl.plr.cash))
+	return int16(ctrl.plr.cashSlotSize) - int16(inventoryOccupiedSlots(ctrl.plr.cash, ctrl.plr.cashSlotSize))
 }
 
 func (ctrl *scriptPlayerWrapper) TakeMesos(amount int32) {

@@ -238,6 +238,30 @@ func getSkillsFromCharID(id int32) []playerSkill {
 	return skills
 }
 
+func inventoryOccupiedSlots(items []Item, size byte) int {
+	if size == 0 {
+		return 0
+	}
+
+	occupied := make([]bool, size)
+	count := 0
+	for _, item := range items {
+		if item.slotID <= 0 || item.slotID > int16(size) {
+			continue
+		}
+
+		idx := item.slotID - 1
+		if occupied[idx] {
+			continue
+		}
+
+		occupied[idx] = true
+		count++
+	}
+
+	return count
+}
+
 type updatePartyInfoFunc func(partyID, playerID, job, level, mapID int32, name string)
 
 type Players struct {
@@ -1338,7 +1362,7 @@ func (d *Player) GiveItem(newItem Item) (Item, error) { // TODO: Refactor
 	findFirstEmptySlot := func(items []Item, size byte) (int16, error) {
 		slotsUsed := make([]bool, size)
 		for _, v := range items {
-			if v.slotID > 0 {
+			if v.slotID > 0 && v.slotID <= int16(size) {
 				slotsUsed[v.slotID-1] = true
 			}
 		}
@@ -1434,19 +1458,19 @@ func (p *Player) CanReceiveItems(items []Item) bool {
 		var cur, max byte
 		switch invType {
 		case constant.InventoryEquip:
-			cur = byte(len(p.equip))
+			cur = byte(inventoryOccupiedSlots(p.equip, p.equipSlotSize))
 			max = p.equipSlotSize
 		case constant.InventoryUse:
-			cur = byte(len(p.use))
+			cur = byte(inventoryOccupiedSlots(p.use, p.useSlotSize))
 			max = p.useSlotSize
 		case constant.InventorySetup:
-			cur = byte(len(p.setUp))
+			cur = byte(inventoryOccupiedSlots(p.setUp, p.setupSlotSize))
 			max = p.setupSlotSize
 		case constant.InventoryEtc:
-			cur = byte(len(p.etc))
+			cur = byte(inventoryOccupiedSlots(p.etc, p.etcSlotSize))
 			max = p.etcSlotSize
 		case constant.InventoryCash:
-			cur = byte(len(p.cash))
+			cur = byte(inventoryOccupiedSlots(p.cash, p.cashSlotSize))
 			max = p.cashSlotSize
 		default:
 			continue
@@ -3151,11 +3175,11 @@ func (d *Player) canReceiveQuestActItems(items []Item) bool {
 	}
 
 	states := map[byte]*slotState{
-		constant.InventoryEquip: {used: len(d.equip), max: int(d.equipSlotSize), stackRoom: map[int32]int32{}},
-		constant.InventoryUse:   {used: len(d.use), max: int(d.useSlotSize), stackRoom: map[int32]int32{}},
-		constant.InventorySetup: {used: len(d.setUp), max: int(d.setupSlotSize), stackRoom: map[int32]int32{}},
-		constant.InventoryEtc:   {used: len(d.etc), max: int(d.etcSlotSize), stackRoom: map[int32]int32{}},
-		constant.InventoryCash:  {used: len(d.cash), max: int(d.cashSlotSize), stackRoom: map[int32]int32{}},
+		constant.InventoryEquip: {used: inventoryOccupiedSlots(d.equip, d.equipSlotSize), max: int(d.equipSlotSize), stackRoom: map[int32]int32{}},
+		constant.InventoryUse:   {used: inventoryOccupiedSlots(d.use, d.useSlotSize), max: int(d.useSlotSize), stackRoom: map[int32]int32{}},
+		constant.InventorySetup: {used: inventoryOccupiedSlots(d.setUp, d.setupSlotSize), max: int(d.setupSlotSize), stackRoom: map[int32]int32{}},
+		constant.InventoryEtc:   {used: inventoryOccupiedSlots(d.etc, d.etcSlotSize), max: int(d.etcSlotSize), stackRoom: map[int32]int32{}},
+		constant.InventoryCash:  {used: inventoryOccupiedSlots(d.cash, d.cashSlotSize), max: int(d.cashSlotSize), stackRoom: map[int32]int32{}},
 	}
 
 	accumulate := func(inv byte, items []Item) {

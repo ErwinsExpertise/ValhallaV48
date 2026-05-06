@@ -1,5 +1,5 @@
-var travelMaps = [102000000, 101000000, 100000000, 103000000, 120000000];
-var travelCosts = [1200, 1200, 800, 1000, 1000];
+var travelMaps = [102000000, 101000000, 100000000, 103000000];
+var travelCosts = [1200, 1200, 800, 1000];
 var townDescriptions = [
     [
         "The town you are in is Lith Harbor! Alright, I'll tell you more about #bLith Harbor#k. This is where you arrive on Victoria Island after riding The Victoria. Many beginners who leave Maple Island start their journey here.",
@@ -27,11 +27,6 @@ var townDescriptions = [
         "If you want to be a #bThief#k, seek #rDark Lord#k, the heart of darkness of Kerning City. He may well make you a thief if you're at or above level 10 with a good amount of DEX. If not, go hunt and train yourself to reach there."
     ],
     [
-        "Here is a little information on #b#m120000000##k. In later eras, it becomes known as the Nautilus, but that is not part of this version of the world.",
-        "You do not need to worry about that place for now. Focus on the main towns of Victoria Island while you are still getting started.",
-        "If you are choosing your first job in this version, speak with the instructors in Henesys, Ellinia, Perion, or Kerning City once you meet their requirements."
-    ],
-    [
         "Alright I'll explain to you more about #bSleepywood#k. It's a forest town located at the southeast side of Victoria Island. It's pretty much in between Henesys and the ant-tunnel dungeon. There's a hotel there, so you can rest up after a long day at the dungeon ... it's a quiet town in general.",
         "In front of the hotel there's an old buddhist monk by the name of #rChrishrama#k. Nobody knows a thing about that monk. Apparently he collects materials from the travelers and create something, but I am not too sure about the details. If you have any business going around that area, please check that out for me.",
         "From Sleepywood, head east and you'll find the ant tunnel connected to the deepest part of the Victoria Island. Lots of nasty, powerful monsters abound so if you walk in thinking it's a walk in the park, you'll be coming out as a corpse. You need to fully prepare yourself for a rough ride before going in.",
@@ -41,10 +36,10 @@ var townDescriptions = [
 
 npc.sendNext("Do you wanna head over to some other town? With a little money involved, I can make it happen. It's a tad expensive, but I run a special 90% discount for beginners.");
 
-var firstChoice = npc.sendSelection("It's understandable that you may be confused about this place if this is your first time around. If you got any questions about this place, fire away.\r\n#L0##bWhat kind of towns are here in Victoria Island?#l\r\n#L1#Please take me somewhere else.#k#l");
+var firstChoice = npc.sendMenu("It's understandable that you may be confused about this place if this is your first time around. If you got any questions about this place, fire away.\r\n#L0##bWhat kind of towns are here in Victoria Island?#l\r\n#L1#Please take me somewhere else.#k#l");
 
 if (firstChoice === 0) {
-    var townChoice = npc.sendSelection("There are 7 big towns here in Victoria Island. Which of those do you want to know more of?\r\n#b#L0##m104000000##l\r\n#L1##m102000000##l\r\n#L2##m101000000##l\r\n#L3##m100000000##l\r\n#L4##m103000000##l\r\n#L5##m120000000##l\r\n#L6##m105040300##l");
+    var townChoice = npc.sendMenu("There are 6 big towns here in Victoria Island. Which of those do you want to know more of?\r\n#b#L0##m104000000##l\r\n#L1##m102000000##l\r\n#L2##m101000000##l\r\n#L3##m100000000##l\r\n#L4##m103000000##l\r\n#L5##m105040300##l");
     if (townChoice >= 0 && townChoice < townDescriptions.length) {
         var pages = townDescriptions[townChoice];
         for (var i = 0; i < pages.length; i++) {
@@ -62,7 +57,7 @@ if (firstChoice === 0) {
         travelText += "\r\n#L" + j + "##m" + travelMaps[j] + "# (" + price + " mesos)#l";
     }
 
-    var destination = npc.sendSelection(travelText);
+    var destination = npc.sendMenu(travelText);
     if (destination >= 0 && destination < travelMaps.length) {
         var finalCost = beginner ? Math.floor(travelCosts[destination] * 0.10) : travelCosts[destination];
         if (!npc.sendYesNo("I guess you don't need to be here. Do you really want to move to #b#m" + travelMaps[destination] + "##k? Well it'll cost you #b" + finalCost + " mesos#k. What do you think?")) {

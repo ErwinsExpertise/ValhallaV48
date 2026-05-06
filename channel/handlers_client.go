@@ -2511,7 +2511,7 @@ func (server Server) mobControl(conn mnet.Client, reader mpacket.Reader) {
 	inst.lifePool.mobAcknowledge(mobSpawnID, plr, moveID, skillPossible, action, skillData, moveData, finalData, moveBytes)
 	if !valid {
 		log.Println("unknown mobControl data")
-		inst.sendExcept(packetPlayerNoChange(), conn)
+		inst.send(packetPlayerNoChange())
 	}
 }
 

@@ -69,9 +69,9 @@ if (plr.job() === 0) {
         npc.sendOk("You still need more training before you can become a Warrior.");
     } else if (!npc.sendYesNo("You definitely have the look of a Warrior. Do you want to become a #bWarrior#k?")) {
         npc.sendOk("Come back when you're ready to decide.");
-    } else if (plr.getEquipInventoryFreeSlot() < 1) {
+    } else if (!plr.canHold(1302000, 1)) {
         npc.sendOk("Make sure you have at least one free Equip slot. I want to give you a weapon for your first advancement.");
-    } else if (!plr.gainItem(1302077, 1)) {
+    } else if (!plr.gainItem(1302000, 1)) {
         npc.sendOk("Make sure you have at least one free Equip slot. I want to give you a weapon for your first advancement.");
     } else {
         plr.setJob(100);
