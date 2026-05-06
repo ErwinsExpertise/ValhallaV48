@@ -185,7 +185,7 @@ func (server *Server) handleLoginRequest(conn mnet.Client, reader mpacket.Reader
 		}
 	} else if isLocked > 0 {
 		result = constant.LoginResultDeletedOrBlocked
-	} else if !verifyStoredCredential(password, databasePassword, passwordSalt) {
+	} else if passwordOK, passwordScheme := verifyStoredCredential(password, databasePassword, passwordSalt); !passwordOK {
 		if server.ac != nil {
 			ipKey := fmt.Sprintf("ip:%s", ip)
 			userKey := fmt.Sprintf("user:%s", username)
@@ -202,6 +202,15 @@ func (server *Server) handleLoginRequest(conn mnet.Client, reader mpacket.Reader
 		}
 
 		result = constant.LoginResultInvalidPassword
+	} else if passwordScheme != credentialSchemeSaltedSHA512 {
+		hashedPassword, passwordSaltValue, hashErr := makeStoredCredential(password)
+		if hashErr != nil {
+			log.Println("Failed to upgrade account password hash for accountID:", accountID, hashErr)
+		} else {
+			if _, updateErr := common.DB.Exec("UPDATE accounts SET password=?, passwordSalt=? WHERE accountID=?", hashedPassword, passwordSaltValue, accountID); updateErr != nil {
+				log.Println("Failed to upgrade account password hash for accountID:", accountID, updateErr)
+			}
+		}
 	} else if isLogedIn {
 		active, reconcileErr := common.ReconcileAccountLoginState(accountID)
 		if reconcileErr != nil {
@@ -396,14 +405,34 @@ func (server *Server) handleGoodLogin(conn mnet.Client, reader mpacket.Reader) {
 			reader.Skip(6) // space padding?
 			pin := string(reader.GetRestAsBytes())
 
-			if !verifyStoredCredential(pin, pinDB, pinSalt) {
+			if pinOK, pinScheme := verifyStoredCredential(pin, pinDB, pinSalt); !pinOK {
 				conn.Send(packetRequestPinAfterFailure())
 
 			} else if b1 == 2 { // Changing pin request
+				if pinScheme != credentialSchemeSaltedSHA512 {
+					hashedPin, pinSaltValue, hashErr := makeStoredCredential(pin)
+					if hashErr != nil {
+						log.Println("Failed to upgrade account pin hash for accountID:", accountID, hashErr)
+					} else {
+						if _, updateErr := common.DB.Exec("UPDATE accounts SET pin=?, pinSalt=? WHERE accountID=?", hashedPin, pinSaltValue, accountID); updateErr != nil {
+							log.Println("Failed to upgrade account pin hash for accountID:", accountID, updateErr)
+						}
+					}
+				}
 				sess.stage = sessionStageAwaitPinRegistration
 				conn.Send(packetRegisterPin())
 
 			} else { // Authenticated successfully
+				if pinScheme != credentialSchemeSaltedSHA512 {
+					hashedPin, pinSaltValue, hashErr := makeStoredCredential(pin)
+					if hashErr != nil {
+						log.Println("Failed to upgrade account pin hash for accountID:", accountID, hashErr)
+					} else {
+						if _, updateErr := common.DB.Exec("UPDATE accounts SET pin=?, pinSalt=? WHERE accountID=?", hashedPin, pinSaltValue, accountID); updateErr != nil {
+							log.Println("Failed to upgrade account pin hash for accountID:", accountID, updateErr)
+						}
+					}
+				}
 				authDone = true
 			}
 

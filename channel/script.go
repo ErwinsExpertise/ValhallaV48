@@ -1574,6 +1574,10 @@ func (ctrl *scriptMapWrapper) HitReactorByTemplate(id int32) bool {
 	return false
 }
 
+func (ctrl *scriptMapWrapper) SpawnMonster(id int32, x int16, y int16) {
+	ctrl.inst.lifePool.spawnMobFromID(id, newPos(x, y, 0), false, true, true, constant.MobSummonTypeInstant, 0)
+}
+
 func (ctrl *scriptMapWrapper) SpawnNpc(id int32, x int16, y int16) bool {
 	npcData := nx.Life{ID: id, Type: "n", X: x, Y: y, FaceLeft: false, Foothold: 0}
 	spawnID, err := ctrl.inst.lifePool.nextNpcID()
@@ -1713,6 +1717,25 @@ func (ctrl *reactorScriptController) SpawnNpcAtReactor(id int32) bool {
 
 func (ctrl *reactorScriptController) SpawnMonster(id int32, x int16, y int16) {
 	ctrl.inst.lifePool.spawnMobFromID(id, newPos(x, y, 0), false, true, true, constant.MobSummonTypeInstant, 0)
+}
+
+func (ctrl *reactorScriptController) RemoveAllMobs() {
+	ctrl.inst.lifePool.eraseMobs()
+}
+
+func (ctrl *reactorScriptController) RemoveMobsByID(id int32) {
+	ctrl.inst.lifePool.removeMobsByTemplate(id)
+}
+
+func (ctrl *reactorScriptController) SetMapProperty(key string, value interface{}) {
+	ctrl.inst.properties[key] = value
+}
+
+func (ctrl *reactorScriptController) GetMapProperty(key string) interface{} {
+	if value, ok := ctrl.inst.properties[key]; ok {
+		return value
+	}
+	return nil
 }
 
 func (ctrl *reactorScriptController) GainGuildPoints(points int32) {
@@ -2095,11 +2118,11 @@ func (ctrl *npcChatController) SendMenu(baseText string, selections ...string) i
 		if len(msg) > 0 {
 			b.WriteString(msg)
 			if msg[len(msg)-1] != '\n' {
-				b.WriteByte('\n')
+				b.WriteString("\r\n")
 			}
 		}
 		for i, s := range selections {
-			fmt.Fprintf(&b, "#L%d#%s#l\n", i, s)
+			fmt.Fprintf(&b, "#L%d#%s#l\r\n", i, s)
 		}
 		msg = b.String()
 	}
