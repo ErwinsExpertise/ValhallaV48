@@ -174,7 +174,7 @@ func packetPetFoodResponse(charID int32, success bool, balloon bool) mpacket.Pac
 func packetPetInteraction(charID int32, interactionId byte, success bool, balloon bool) mpacket.Packet {
 	p := mpacket.CreateWithOpcode(opcode.SendChannelPetInteraction)
 	p.WriteInt32(charID)
-	p.WriteByte(0)
+	p.WriteByte(1)
 	p.WriteByte(interactionId)
 	p.WriteBool(success)
 	p.WriteBool(balloon)
@@ -189,7 +189,7 @@ func packetPetMove(charID int32, move []byte) mpacket.Packet {
 	return p
 }
 
-func writePetInitData(p *mpacket.Packet, petData *pet) {
+func writePetInitData(p *mpacket.Packet, petData *pet, petAccessoryItemID int32) {
 	p.WriteInt32(petData.itemID)
 	p.WriteString(petData.name)
 	p.WriteUint64(uint64(petData.lockerSN))
@@ -199,12 +199,13 @@ func writePetInitData(p *mpacket.Packet, petData *pet) {
 	p.WriteInt16(petData.pos.foothold)
 	p.WriteBool(false) // bNameTag
 	p.WriteBool(false) // bChatBalloon
+	p.WriteInt32(petAccessoryItemID)
 }
 
-func packetPetSpawn(charID int32, petData *pet) mpacket.Packet {
+func packetPetSpawn(charID int32, petData *pet, petAccessoryItemID int32) mpacket.Packet {
 	p := mpacket.CreateWithOpcode(opcode.SendChannelPetSpawn)
 	p.WriteInt32(charID)
-	writePetInitData(&p, petData)
+	writePetInitData(&p, petData, petAccessoryItemID)
 
 	return p
 }

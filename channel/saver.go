@@ -130,6 +130,15 @@ func copySkills(src map[int32]playerSkill) map[int32]playerSkill {
 	return dst
 }
 
+func clonePetSnapshot(src *pet) *pet {
+	if src == nil {
+		return nil
+	}
+
+	cp := *src
+	return &cp
+}
+
 // Build a snapshot from a Player (caller is on game thread).
 func snapshotFromPlayer(p *Player) snapshot {
 	s := snapshot{
@@ -165,7 +174,7 @@ func snapshotFromPlayer(p *Player) snapshot {
 		MiniGameLoss:   p.miniGameLoss,
 		MiniGamePoints: p.miniGamePoints,
 		BuddyListSize:  p.buddyListSize,
-		Pet:            p.pet,
+		Pet:            clonePetSnapshot(p.pet),
 	}
 
 	if p.dirty&DirtySkills != 0 {
@@ -472,6 +481,14 @@ func (s *saver) persist(job pendingSave) bool {
 	}
 
 	if job.bits&DirtyPet != 0 {
+		if job.snap.Pet == nil {
+			log.Printf("saver.persist: skipping DirtyPet for char %d with nil pet snapshot", job.snap.ID)
+			return true
+		}
+		if job.snap.Pet.itemDBID == 0 {
+			log.Printf("saver.persist: skipping DirtyPet for char %d with unsaved pet snapshot", job.snap.ID)
+			return true
+		}
 		query := "UPDATE pets SET name=?, sn=?, `level`=?, closeness=?, fullness=?, deadDate=?, spawnDate=?, lastInteraction=? WHERE parentID=?"
 		if _, err := common.DB.Exec(query, job.snap.Pet.name, job.snap.Pet.sn, job.snap.Pet.level, job.snap.Pet.closeness, job.snap.Pet.fullness, job.snap.Pet.deadDate, job.snap.Pet.spawnDate, job.snap.Pet.lastInteraction, job.snap.Pet.itemDBID); err != nil {
 			log.Printf("saver.persist: UPDATE pets (itemID=%d) failed: %v", job.snap.Pet.itemDBID, err)

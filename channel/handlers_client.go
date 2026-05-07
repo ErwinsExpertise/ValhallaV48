@@ -43,6 +43,10 @@ var (
 
 const attackDamageDebug = false
 
+const (
+	duplicateAttackPacketGapMS int64 = 15
+)
+
 func logAttackApplied(kind string, skillID int32, attacks []attackInfo) {
 	if !attackDamageDebug {
 		return
@@ -50,6 +54,27 @@ func logAttackApplied(kind string, skillID int32, attacks []attackInfo) {
 	for idx, at := range attacks {
 		log.Printf("attack-apply kind=%s targetIndex=%d skill=%d spawn=%d hitCount=%d damages=%v crit=%v", kind, idx, skillID, at.spawnID, len(at.damages), at.damages, at.isCritical)
 	}
+}
+
+func shouldRejectAttackPacket(player *Player, recvTime int64, clientTick int32) (string, bool) {
+	if player == nil || player.hp == 0 {
+		return "dead_or_missing_player", true
+	}
+
+	if clientTick != 0 {
+		if player.lastAttackClientTick == clientTick {
+			return "duplicate_client_tick", true
+		}
+		if player.lastAttackClientTick != 0 && clientTick < player.lastAttackClientTick {
+			return "stale_client_tick", true
+		}
+	}
+
+	if clientTick == 0 && recvTime-player.lastAttackPacketTime >= 0 && recvTime-player.lastAttackPacketTime < duplicateAttackPacketGapMS {
+		return "duplicate_attack_burst", true
+	}
+
+	return "", false
 }
 
 func init() {
@@ -450,6 +475,8 @@ func (server Server) playerMovement(conn mnet.Client, reader mpacket.Reader) {
 		log.Println("Unable to get Player from connection", conn)
 		return
 	}
+
+	plr.lastMovementPacketTime = reader.Time
 
 	portalCount := reader.ReadByte()
 	if plr.portalCount != portalCount {
@@ -1608,7 +1635,7 @@ func (server Server) warpPlayerToInstance(plr *Player, dstField *field, dstPorta
 	if plr.petCashID != 0 && plr.pet.spawned {
 		plr.pet.pos = plr.pos
 		plr.pet.pos.y -= 15
-		dstInst.send(packetPetSpawn(plr.ID, plr.pet))
+		dstInst.send(packetPetSpawn(plr.ID, plr.pet, plr.petAccessoryItemID()))
 	}
 
 	server.handleWeddingMapLeave(plr, dstField.id)
@@ -2810,9 +2837,12 @@ func (server Server) playerMeleeSkill(conn mnet.Client, reader mpacket.Reader) {
 		conn.Send(packetMessageRedText(err.Error()))
 		return
 	}
-	data, valid := getAttackInfo(reader, plr, attackMelee)
+	data, valid, _ := getAttackInfo(reader, plr, attackMelee)
 
 	if !valid {
+		if plr != nil {
+			plr.Send(packetPlayerNoChange())
+		}
 		return
 	}
 
@@ -2834,6 +2864,7 @@ func (server Server) playerMeleeSkill(conn mnet.Client, reader mpacket.Reader) {
 		if server.ac != nil {
 			server.ac.LogSkillAbuseViolation(plr.accountID, data.skillID)
 		}
+		plr.Send(packetPlayerNoChange())
 		return
 	}
 
@@ -2877,6 +2908,7 @@ func (server Server) playerMeleeSkill(conn mnet.Client, reader mpacket.Reader) {
 			}
 		}
 	}
+
 }
 
 func (server *Server) validateAndApplyCriticals(conn mnet.Client, plr *Player, data *attackData, results [][]CalcHitResult) {
@@ -2932,9 +2964,12 @@ func (server Server) playerRangedSkill(conn mnet.Client, reader mpacket.Reader) 
 		conn.Send(packetMessageRedText(err.Error()))
 		return
 	}
-	data, valid := getAttackInfo(reader, plr, attackRanged)
+	data, valid, _ := getAttackInfo(reader, plr, attackRanged)
 
 	if !valid {
+		if plr != nil {
+			plr.Send(packetPlayerNoChange())
+		}
 		return
 	}
 
@@ -2956,6 +2991,7 @@ func (server Server) playerRangedSkill(conn mnet.Client, reader mpacket.Reader) 
 		if server.ac != nil {
 			server.ac.LogSkillAbuseViolation(plr.accountID, data.skillID)
 		}
+		plr.Send(packetPlayerNoChange())
 		return
 	}
 
@@ -2981,6 +3017,7 @@ func (server Server) playerRangedSkill(conn mnet.Client, reader mpacket.Reader) 
 			inst.lifePool.applyMobBuff(plr.ID, attack.spawnID, data.skillID, data.skillLevel, statMask, inst)
 		}
 	}
+
 }
 
 func (server Server) playerMagicSkill(conn mnet.Client, reader mpacket.Reader) {
@@ -2990,9 +3027,12 @@ func (server Server) playerMagicSkill(conn mnet.Client, reader mpacket.Reader) {
 		conn.Send(packetMessageRedText(err.Error()))
 		return
 	}
-	data, valid := getAttackInfo(reader, plr, attackMagic)
+	data, valid, _ := getAttackInfo(reader, plr, attackMagic)
 
 	if !valid {
+		if plr != nil {
+			plr.Send(packetPlayerNoChange())
+		}
 		return
 	}
 
@@ -3014,6 +3054,7 @@ func (server Server) playerMagicSkill(conn mnet.Client, reader mpacket.Reader) {
 		if server.ac != nil {
 			server.ac.LogSkillAbuseViolation(plr.accountID, data.skillID)
 		}
+		plr.Send(packetPlayerNoChange())
 		return
 	}
 
@@ -3041,6 +3082,7 @@ func (server Server) playerMagicSkill(conn mnet.Client, reader mpacket.Reader) {
 			inst.lifePool.applyMobBuff(plr.ID, attack.spawnID, data.skillID, data.skillLevel, statMask, inst)
 		}
 	}
+
 }
 
 func (server *Server) handleMesoExplosion(plr *Player, inst *fieldInstance, data attackData) {
@@ -3086,27 +3128,22 @@ type attackInfo struct {
 }
 
 type attackData struct {
-	skillID, summonType, totalDamage, projectileID int32
-	isMesoExplosion, facesLeft                     bool
-	option, action, attackType                     byte
-	partyCount, targets, hits, skillLevel          byte
-	mesoKillDelay                                  int16
+	skillID, summonType, totalDamage, projectileID, clientTick int32
+	isMesoExplosion, facesLeft                                 bool
+	option, action, attackType                                 byte
+	partyCount, targets, hits, skillLevel                      byte
+	mesoKillDelay                                              int16
 
 	attackInfo []attackInfo
 	playerPos  pos
 }
 
-func getAttackInfo(reader mpacket.Reader, player *Player, attackType int) (attackData, bool) {
+func getAttackInfo(reader mpacket.Reader, player *Player, attackType int) (attackData, bool, string) {
 	data := attackData{}
 
 	if player == nil || player.hp == 0 {
-		return data, false
+		return data, false, "dead_or_missing_player"
 	}
-
-	if reader.Time-player.lastAttackPacketTime < 350 {
-		return data, false
-	}
-	player.lastAttackPacketTime = reader.Time
 
 	if attackType != attackSummon {
 		_ = reader.ReadByte() // leading byte/unknown
@@ -3114,7 +3151,7 @@ func getAttackInfo(reader mpacket.Reader, player *Player, attackType int) (attac
 		skillID := reader.ReadInt32()
 
 		if _, ok := player.skills[skillID]; !ok && skillID != 0 {
-			return data, false
+			return data, false, "missing_skill"
 		}
 
 		data.skillID = skillID
@@ -3136,7 +3173,7 @@ func getAttackInfo(reader mpacket.Reader, player *Player, attackType int) (attac
 		speedByte := reader.ReadByte()
 		data.partyCount = speedByte >> 4
 		data.attackType = speedByte & 0x0F
-		_ = reader.ReadInt32()
+		data.clientTick = reader.ReadInt32()
 		if attackType == attackRanged {
 			projectileSlot := reader.ReadInt16()
 			_ = reader.ReadInt16()
@@ -3151,7 +3188,7 @@ func getAttackInfo(reader mpacket.Reader, player *Player, attackType int) (attac
 					}
 				}
 				if data.projectileID == -1 {
-					return data, false
+					return data, false, "missing_projectile"
 				}
 			} else {
 				// No projectile slot given: must have Soul Arrow active
@@ -3165,7 +3202,7 @@ func getAttackInfo(reader mpacket.Reader, player *Player, attackType int) (attac
 					}
 				}
 				if !hasSoulArrow {
-					return data, false
+					return data, false, "missing_soul_arrow"
 				}
 				data.projectileID = -1
 			}
@@ -3239,7 +3276,15 @@ func getAttackInfo(reader mpacket.Reader, player *Player, attackType int) (attac
 			}
 			data.mesoKillDelay = reader.ReadInt16()
 		}
-		return data, true
+
+		reason, reject := shouldRejectAttackPacket(player, reader.Time, data.clientTick)
+		if reject {
+			return data, false, reason
+		}
+		player.lastAttackPacketTime = reader.Time
+		player.lastAttackClientTick = data.clientTick
+
+		return data, true, ""
 	}
 
 	// Summon attack parsing restored to the last known working server layout.
@@ -3259,7 +3304,7 @@ func getAttackInfo(reader mpacket.Reader, player *Player, attackType int) (attac
 		}
 	}
 	if delayIdx == -1 || delayIdx+6 > len(rest) {
-		return data, false
+		return data, false, "invalid_summon_attack_layout"
 	}
 
 	dmg := int32(rest[delayIdx+2]) |
@@ -3277,7 +3322,14 @@ func getAttackInfo(reader mpacket.Reader, player *Player, attackType int) (attac
 	data.targets = 1
 	data.totalDamage = dmg
 
-	return data, true
+	reason, reject := shouldRejectAttackPacket(player, reader.Time, data.clientTick)
+	if reject {
+		return data, false, reason
+	}
+	player.lastAttackPacketTime = reader.Time
+	player.lastAttackClientTick = data.clientTick
+
+	return data, true, ""
 }
 
 func (server *Server) npcMovement(conn mnet.Client, reader mpacket.Reader) {
@@ -5345,8 +5397,11 @@ func (server *Server) playerSummonAttack(conn mnet.Client, reader mpacket.Reader
 	if err != nil {
 		return
 	}
-	data, valid := getAttackInfo(reader, plr, attackSummon)
+	data, valid, _ := getAttackInfo(reader, plr, attackSummon)
 	if !valid || len(data.attackInfo) == 0 {
+		if plr != nil {
+			plr.Send(packetPlayerNoChange())
+		}
 		return
 	}
 	summ := plr.getSummon(data.summonType)
@@ -5783,7 +5838,7 @@ func (server *Server) playerHandleMessenger(conn mnet.Client, reader mpacket.Rea
 	switch mode {
 	case constant.MessengerEnter:
 		messengerID := reader.ReadInt32()
-		var petAcc int32
+		petAcc := plr.petAccessoryItemID()
 		var vis []internal.KV
 		var hid []internal.KV
 
@@ -5861,7 +5916,7 @@ func (server *Server) playerHandleMessenger(conn mnet.Client, reader mpacket.Rea
 		p := internal.PacketMessengerChat(plr.ID, server.id, plr.Name, message)
 		server.world.Send(p)
 	case constant.MessengerAvatar:
-		var petAcc int32
+		petAcc := plr.petAccessoryItemID()
 		var vis []internal.KV
 		var hid []internal.KV
 
@@ -5965,11 +6020,9 @@ func (server *Server) playerPetSpawn(conn mnet.Client, reader mpacket.Reader) {
 		}
 
 		plr.pet.pos = plr.pos
-		plr.inst.send(packetPetSpawn(plr.ID, plr.pet))
+		plr.inst.send(packetPetSpawn(plr.ID, plr.pet, plr.petAccessoryItemID()))
 
-		if plr.pet.spawnDate == 0 {
-			plr.Send(packetPlayerPetUpdate(plr.pet.lockerSN))
-		}
+		plr.Send(packetPlayerPetUpdate(plr.pet.lockerSN))
 		plr.pet.spawnDate = time.Now().Unix()
 		plr.pet.spawned = true
 	}

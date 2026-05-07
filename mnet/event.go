@@ -19,4 +19,5 @@ type Event struct {
 	Type   int
 	Packet mpacket.Packet
 	Conn   net.Conn
+	Time   int64
 }

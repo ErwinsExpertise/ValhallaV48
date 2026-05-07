@@ -21,7 +21,7 @@ type MConn interface {
 }
 
 func clientReader(conn net.Conn, eRecv chan *Event, mapleVersion int16, headerSize int, cryptRecv *crypt.Maple) {
-	eRecv <- &Event{Type: MEClientConnected, Conn: conn}
+	eRecv <- &Event{Type: MEClientConnected, Conn: conn, Time: time.Now().UnixMilli()}
 
 	header := true
 	readSize := headerSize
@@ -30,7 +30,7 @@ func clientReader(conn net.Conn, eRecv chan *Event, mapleVersion int16, headerSi
 		buffer := make([]byte, readSize)
 
 		if _, err := io.ReadFull(conn, buffer); err != nil {
-			eRecv <- &Event{Type: MEClientDisconnect, Conn: conn}
+			eRecv <- &Event{Type: MEClientDisconnect, Conn: conn, Time: time.Now().UnixMilli()}
 			break
 		}
 
@@ -43,7 +43,7 @@ func clientReader(conn net.Conn, eRecv chan *Event, mapleVersion int16, headerSi
 				cryptRecv.Decrypt(buffer, true, true)
 			}
 
-			eRecv <- &Event{Type: MEClientPacket, Conn: conn, Packet: buffer}
+			eRecv <- &Event{Type: MEClientPacket, Conn: conn, Packet: buffer, Time: time.Now().UnixMilli()}
 		}
 
 		header = !header
@@ -51,7 +51,7 @@ func clientReader(conn net.Conn, eRecv chan *Event, mapleVersion int16, headerSi
 }
 
 func serverReader(conn net.Conn, eRecv chan *Event, headerSize int) {
-	eRecv <- &Event{Type: MEServerConnected, Conn: conn}
+	eRecv <- &Event{Type: MEServerConnected, Conn: conn, Time: time.Now().UnixMilli()}
 
 	header := true
 	readSize := headerSize
@@ -60,7 +60,7 @@ func serverReader(conn net.Conn, eRecv chan *Event, headerSize int) {
 		buffer := make([]byte, readSize)
 
 		if _, err := io.ReadFull(conn, buffer); err != nil {
-			eRecv <- &Event{Type: MEServerDisconnect, Conn: conn}
+			eRecv <- &Event{Type: MEServerDisconnect, Conn: conn, Time: time.Now().UnixMilli()}
 			break
 		}
 
@@ -68,7 +68,7 @@ func serverReader(conn net.Conn, eRecv chan *Event, headerSize int) {
 			readSize = int(buffer[0]) | int(buffer[1])<<8
 		} else {
 			readSize = headerSize
-			eRecv <- &Event{Type: MEServerPacket, Conn: conn, Packet: buffer}
+			eRecv <- &Event{Type: MEServerPacket, Conn: conn, Packet: buffer, Time: time.Now().UnixMilli()}
 		}
 
 		header = !header
@@ -154,6 +154,22 @@ func (bc *baseConn) Send(p mpacket.Packet) {
 		log.Printf("disconnecting %s: send queue full", bc)
 		_ = bc.Close()
 	}
+}
+
+func (bc *baseConn) SendQueueLen() int {
+	if bc == nil || bc.eSend == nil {
+		return 0
+	}
+
+	return len(bc.eSend)
+}
+
+func (bc *baseConn) SendQueueCap() int {
+	if bc == nil || bc.eSend == nil {
+		return 0
+	}
+
+	return cap(bc.eSend)
 }
 
 func (bc *baseConn) String() string {

@@ -232,7 +232,7 @@ func (ls *loginServer) processEvent() {
 					// Ensure game state cleanup on disconnect
 					ls.gameState.ClientDisconnected(conn)
 				case mnet.MEClientPacket:
-					ls.gameState.HandleClientPacket(conn, mpacket.NewReader(&e.Packet, time.Now().UnixMilli()))
+					ls.gameState.HandleClientPacket(conn, mpacket.NewReader(&e.Packet, e.Time))
 				}
 			case mnet.Server:
 				switch e.Type {
@@ -242,7 +242,7 @@ func (ls *loginServer) processEvent() {
 					log.Println("Server at", conn, "disconnected")
 					ls.gameState.ServerDisconnected(conn)
 				case mnet.MEServerPacket:
-					ls.gameState.HandleServerPacket(conn, mpacket.NewReader(&e.Packet, time.Now().UnixMilli()))
+					ls.gameState.HandleServerPacket(conn, mpacket.NewReader(&e.Packet, e.Time))
 				}
 			default:
 				// Unknown event origin; ignore safely

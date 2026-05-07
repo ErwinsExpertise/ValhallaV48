@@ -1790,7 +1790,7 @@ func (ctrl *reactorScriptController) HitMapReactorByName(mapID int32, name strin
 }
 
 func (ctrl *reactorScriptController) DropItems(args ...int32) {
-	mesos, items := buildDropRewards(ctrl.inst.lifePool.rNumber, reactorDropTable[ctrl.reactor.info.ID], ctrl.inst.dropPool.rates.drop, nil)
+	mesos, items := buildDropRewards(ctrl.inst.lifePool.rNumber, reactorDropTable[ctrl.reactor.info.ID], ctrl.inst.dropPool.rates.drop, 1, nil, 0)
 	if mesos > 0 || len(items) > 0 {
 		ctrl.inst.dropPool.createDrop(dropSpawnNormal, dropFreeForAll, mesos, ctrl.reactor.pos, true, false, 0, 0, items...)
 	}

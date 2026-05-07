@@ -427,8 +427,10 @@ type Player struct {
 
 	miniGameWins, miniGameDraw, miniGameLoss, miniGamePoints int32
 
-	lastAttackPacketTime int64
-	nextMapDamageAtMs    int64
+	lastAttackPacketTime   int64
+	lastAttackClientTick   int32
+	lastMovementPacketTime int64
+	nextMapDamageAtMs      int64
 
 	buddyListSize      byte
 	buddyList          []buddy
@@ -1737,6 +1739,100 @@ func (d *Player) activePetIndex() byte {
 	return 0
 }
 
+func (d *Player) petAccessoryItemID() int32 {
+	if d == nil {
+		return 0
+	}
+
+	petAccessory := int32(0)
+	bestSlot := int16(0)
+	for i := range d.equip {
+		it := d.equip[i]
+		if it.slotID >= 0 || it.amount <= 0 || !it.isPetEquip() {
+			continue
+		}
+		if petAccessory == 0 || it.slotID < bestSlot {
+			petAccessory = it.ID
+			bestSlot = it.slotID
+		}
+	}
+
+	return petAccessory
+}
+
+func (d *Player) petCharacterInfoEquipIDs() []int32 {
+	if d == nil {
+		return nil
+	}
+
+	ids := make([]int32, 0, 3)
+	for i := range d.equip {
+		it := d.equip[i]
+		if it.slotID >= 0 || it.amount <= 0 || !it.isPetEquip() {
+			continue
+		}
+		ids = append(ids, it.ID)
+	}
+
+	return ids
+}
+
+func (d *Player) characterInfoPetData() *pet {
+	if d == nil || d.petCashID == 0 {
+		return nil
+	}
+
+	if d.pet != nil {
+		return d.pet
+	}
+
+	item, _, err := d.GetItemByCashID(constant.InventoryCash, d.petCashID)
+	if err != nil {
+		return nil
+	}
+	if item.petData != nil {
+		return item.petData
+	}
+	if !item.pet {
+		return nil
+	}
+
+	sn, _ := nx.GetCommoditySNByItemID(item.ID)
+	return newPet(item.ID, sn, item.dbID, item.cashID)
+}
+
+func (d *Player) onPetEquipVisualChange(start, end int16, changed ...Item) {
+	if d == nil {
+		return
+	}
+
+	changedPetEquip := false
+	for _, item := range changed {
+		if item.isPetEquip() {
+			changedPetEquip = true
+			break
+		}
+	}
+	if !changedPetEquip {
+		return
+	}
+
+	packets := make([]string, 0, 2)
+	if d.pet != nil && d.pet.spawned {
+		if d.inst != nil {
+			d.pet.pos = d.pos
+			d.pet.pos.y -= 15
+			d.inst.send(packetPetRemove(d.ID, constant.PetRemoveNone))
+			d.inst.send(packetPetSpawn(d.ID, d.pet, d.petAccessoryItemID()))
+			packets = append(packets, "map:pet_remove_spawn_refresh")
+		}
+	}
+	if d.inst != nil && (start < 0 || end < 0) {
+		packets = append(packets, "map:player_change_avatar")
+	}
+
+}
+
 func (d *Player) swapItems(item1, item2 Item, start, end int16) {
 	if item1.dbID != 0 && item2.dbID != 0 {
 		tx, err := common.DB.Begin()
@@ -1957,6 +2053,7 @@ func (d *Player) moveItem(start, end, amount int16, invID byte) error {
 
 		d.Send(packetInventoryChangeItemSlot(invID, start, end))
 		d.inst.broadcastAvatarChange(d)
+		d.onPetEquipVisualChange(start, end, item1, item2)
 		return nil
 	}
 
@@ -1995,6 +2092,7 @@ func (d *Player) moveItem(start, end, amount int16, invID byte) error {
 
 	if start < 0 || end < 0 {
 		d.inst.broadcastAvatarChange(d)
+		d.onPetEquipVisualChange(start, end, item1, item2)
 		// Recalculate stats when equipment changes
 		d.recalculateTotalStats()
 	}
@@ -2182,7 +2280,8 @@ func (d Player) avatarLookBytes() []byte {
 
 	pkt.WriteByte(0xFF)
 	pkt.WriteInt32(cashWeapon)
-	pkt.WriteInt32(0)
+	// v48 AvatarLook carries the currently visible pet accessory after the cash weapon.
+	pkt.WriteInt32(d.petAccessoryItemID())
 
 	return pkt
 }
@@ -2797,6 +2896,12 @@ func packetPetKeyMappedInit(hpItemID, mpItemID int32) mpacket.Packet {
 	return p
 }
 
+func petAutoPotionConfigMatch(itemID, configuredHPItemID, configuredMPItemID int32, hasHPRecovery, hasMPRecovery bool) (bool, bool) {
+	hpMatched := hasHPRecovery && configuredHPItemID == itemID
+	mpMatched := hasMPRecovery && configuredMPItemID == itemID
+	return hpMatched, mpMatched
+}
+
 func (d *Player) usePetAutoPotion(slot int16, itemID int32) error {
 	if d == nil || d.pet == nil || !d.pet.spawned {
 		return errors.New("no active pet")
@@ -2820,18 +2925,24 @@ func (d *Player) usePetAutoPotion(slot int16, itemID int32) error {
 	if !hasHPRecovery && !hasMPRecovery {
 		return fmt.Errorf("item %d is not a valid auto potion", itemID)
 	}
-	if hasHPRecovery {
-		if d.petConsumeItemID != itemID {
+
+	hpMatched, mpMatched := petAutoPotionConfigMatch(itemID, d.petConsumeItemID, d.petConsumeMPItemID, hasHPRecovery, hasMPRecovery)
+	if !hpMatched && !mpMatched {
+		if hasMPRecovery && !hasHPRecovery {
+			return fmt.Errorf("item %d is not the configured auto MP potion", itemID)
+		}
+		if hasHPRecovery && !hasMPRecovery {
 			return fmt.Errorf("item %d is not the configured auto HP potion", itemID)
 		}
+		return fmt.Errorf("item %d is not a configured auto potion", itemID)
+	}
+
+	if hpMatched {
 		if !d.hasEquipped(constant.ItemAutoHPPouch) {
 			return fmt.Errorf("auto HP pouch not equipped")
 		}
 	}
-	if hasMPRecovery {
-		if d.petConsumeMPItemID != itemID {
-			return fmt.Errorf("item %d is not the configured auto MP potion", itemID)
-		}
+	if mpMatched {
 		if !d.hasEquipped(constant.ItemAutoMPPouch) {
 			return fmt.Errorf("auto MP pouch not equipped")
 		}
@@ -4532,9 +4643,33 @@ func packetPlayerAvatarSummaryWindow(charID int32, plr Player) mpacket.Packet {
 		p.WriteString("")
 	}
 
+	petData := plr.characterInfoPetData()
+	hasPetInfo := petData != nil
+	p.WriteBool(hasPetInfo)
+	if hasPetInfo {
+		renderItemID := plr.petAccessoryItemID()
+		if renderItemID == 0 {
+			renderItemID = petData.itemID
+		}
+
+		// v48 CharacterInfo initializes a pet-specific UI block here. If an active
+		// pet omits this block, later UI refresh can dereference a null pet object.
+		p.WriteInt32(petData.itemID)
+		p.WriteString(petData.name)
+		p.WriteByte(petData.level)
+		p.WriteInt16(petData.closeness)
+		p.WriteByte(petData.fullness)
+		p.WriteInt16(0)
+		p.WriteInt32(renderItemID)
+	}
+
 	p.WriteBool(false)
-	p.WriteBool(false)
-	p.WriteByte(0)
+
+	petEquipIDs := plr.petCharacterInfoEquipIDs()
+	p.WriteByte(byte(len(petEquipIDs)))
+	for _, itemID := range petEquipIDs {
+		p.WriteInt32(itemID)
+	}
 
 	return p
 }

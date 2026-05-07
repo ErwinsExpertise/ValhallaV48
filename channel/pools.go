@@ -701,8 +701,9 @@ func (pool *lifePool) mobDamaged(poolID int32, damager *Player, dmg ...int32) {
 				if killer != nil {
 					if dropEntry, ok := dropTable[v.id]; ok {
 						now := time.Now()
-						mesos, drops := buildDropRewards(pool.rNumber, dropEntry, pool.dropPool.rates.drop*killer.dropCouponMultiplier(now), killer)
-						pool.dropPool.createDrop(dropSpawnNormal, dropFreeForAll, int32(killer.rates.mesos*killer.dropCouponMultiplier(now)*float32(mesos)), v.pos, true, false, 0, 0, drops...)
+						couponMultiplier := killer.dropCouponMultiplier(now)
+						mesos, drops := buildDropRewards(pool.rNumber, dropEntry, pool.dropPool.rates.drop, couponMultiplier, killer, v.id)
+						pool.dropPool.createDrop(dropSpawnNormal, dropFreeForAll, int32(killer.rates.mesos*sanitizeDropRateMultiplier(couponMultiplier)*float32(mesos)), v.pos, true, false, 0, 0, drops...)
 					}
 				}
 
@@ -779,34 +780,45 @@ func randRangeInclusive(r *rand.Rand, lo, hi int32) int32 {
 	return r.Int31n(delta) + lo
 }
 
-func rollDrop(r *rand.Rand, baseChance int64, rate float32) bool {
-	const denom int64 = 1000000
-
-	// Fast-path clamps
-	if baseChance <= 0 {
-		return false
-	}
-	if baseChance >= denom && rate >= 1 {
-		return true
+func sanitizeDropRateMultiplier(rate float32) float32 {
+	if math.IsNaN(float64(rate)) || math.IsInf(float64(rate), 0) || rate <= 0 {
+		return 1
 	}
 
-	// Scale with rounding in float domain, then convert back to int64
-	scaled := int64(math.Round(float64(baseChance) * float64(rate)))
-	if scaled <= 0 {
-		return false
-	}
-	if scaled >= denom {
-		return true
-	}
-
-	// Roll
-	return r.Int63n(denom) < scaled
+	return rate
 }
 
-func buildDropRewards(r *rand.Rand, entries []dropTableEntry, rate float32, plr *Player) (int32, []Item) {
+func rollDrop(r *rand.Rand, baseChance int64, rate float32) (bool, int64, int64) {
+	const denom int64 = 1000000
+
+	if baseChance <= 0 {
+		return false, 0, -1
+	}
+
+	rate = sanitizeDropRateMultiplier(rate)
+	if baseChance >= denom && rate >= 1 {
+		return true, denom, -1
+	}
+
+	// Drop table chances are stored in millionths. Apply all rate modifiers before
+	// clamping so coupons can only increase the effective chance, never wrap or zero it.
+	scaled := int64(math.Round(float64(baseChance) * float64(rate)))
+	if scaled <= 0 {
+		return false, 0, -1
+	}
+	if scaled >= denom {
+		return true, denom, -1
+	}
+
+	roll := r.Int63n(denom)
+	return roll < scaled, scaled, roll
+}
+
+func buildDropRewards(r *rand.Rand, entries []dropTableEntry, baseRate, couponMultiplier float32, plr *Player, mobID int32) (int32, []Item) {
 	if len(entries) == 0 {
 		return 0, nil
 	}
+	rate := baseRate * sanitizeDropRateMultiplier(couponMultiplier)
 
 	mesos := int32(0)
 	items := make([]Item, 0, len(entries))
@@ -816,7 +828,8 @@ func buildDropRewards(r *rand.Rand, entries []dropTableEntry, rate float32, plr 
 				continue
 			}
 		}
-		if !rollDrop(r, entry.Chance, rate) {
+		pass, _, _ := rollDrop(r, entry.Chance, rate)
+		if !pass {
 			continue
 		}
 
@@ -1984,7 +1997,7 @@ func (pool *reactorPool) processStateSideEffects(r *fieldReactor, plr *Player) {
 			}
 		case constant.ReactorDrop:
 			dropEntries := reactorDropTable[r.info.ID]
-			mesos, items := buildDropRewards(pool.instance.lifePool.rNumber, dropEntries, pool.instance.dropPool.rates.drop, plr)
+			mesos, items := buildDropRewards(pool.instance.lifePool.rNumber, dropEntries, pool.instance.dropPool.rates.drop, 1, plr, 0)
 			if mesos > 0 || len(items) > 0 {
 				pool.instance.dropPool.createDrop(dropSpawnNormal, dropFreeForAll, mesos, r.pos, true, false, 0, 0, items...)
 			}

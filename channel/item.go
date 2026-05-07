@@ -29,6 +29,19 @@ type dropTableEntry struct {
 	Chance  int64 `json:"chance"`
 }
 
+func (v Item) isPetEquip() bool {
+	if v.ID <= 0 || v.invID != constant.InventoryEquip {
+		return false
+	}
+
+	meta, err := nx.GetItem(v.ID)
+	if err != nil {
+		return false
+	}
+
+	return meta.SearchCategory == "petequip"
+}
+
 // DropTable is the global lookup table for drops
 var dropTable map[int32][]dropTableEntry
 

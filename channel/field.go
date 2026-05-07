@@ -761,14 +761,14 @@ func (inst *fieldInstance) addPlayer(plr *Player) error {
 		if plr.petCashID != 0 && plr.pet != nil && plr.pet.spawned {
 			plr.pet.pos = plr.pos
 			plr.pet.pos.y -= 15
-			petSpawn := packetPetSpawn(plr.ID, plr.pet)
+			petSpawn := packetPetSpawn(plr.ID, plr.pet, plr.petAccessoryItemID())
 			other.Send(petSpawn)
 		}
 
 		if other.petCashID != 0 && other.pet != nil && other.pet.spawned {
 			other.pet.pos = other.pos
 			other.pet.pos.y -= 15
-			petSpawn := packetPetSpawn(other.ID, other.pet)
+			petSpawn := packetPetSpawn(other.ID, other.pet, other.petAccessoryItemID())
 			plr.Send(petSpawn)
 		}
 	}

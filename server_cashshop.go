@@ -230,7 +230,7 @@ func (cs *cashShopServer) processEvent() {
 					log.Println("Client at", conn, "disconnected")
 					cs.gameState.ClientDisconnected(conn)
 				case mnet.MEClientPacket:
-					cs.gameState.HandleClientPacket(conn, mpacket.NewReader(&e.Packet, time.Now().UnixMilli()))
+					cs.gameState.HandleClientPacket(conn, mpacket.NewReader(&e.Packet, e.Time))
 				}
 
 			case mnet.Server:
@@ -240,7 +240,7 @@ func (cs *cashShopServer) processEvent() {
 					go cs.establishWorldConnection()
 
 				case mnet.MEServerPacket:
-					cs.gameState.HandleServerPacket(conn, mpacket.NewReader(&e.Packet, time.Now().UnixMilli()))
+					cs.gameState.HandleServerPacket(conn, mpacket.NewReader(&e.Packet, e.Time))
 				}
 			}
 
