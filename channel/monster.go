@@ -83,7 +83,9 @@ type monster struct {
 	controllerGeneration uint32
 	lastCtrlMoveID       int16
 	lastCtrlMoveIDValid  bool
+	lastCtrlMoveAtMS     int64
 	lastControllerChange int64
+	lastControllerSyncMS int64
 }
 
 func isVisibleMobSelfBuffStat(statMask int32) bool {
@@ -263,7 +265,11 @@ func (m *monster) setController(controller *Player, follow bool) {
 	}
 	m.controller = controller
 	m.controllerGeneration++
-	m.lastControllerChange = time.Now().UnixMilli()
+	nowMS := time.Now().UnixMilli()
+	m.lastControllerChange = nowMS
+	m.lastControllerSyncMS = nowMS
+	m.lastCtrlMoveIDValid = false
+	m.lastCtrlMoveAtMS = 0
 	controller.Send(packetMobControl(*m, follow))
 }
 
@@ -272,8 +278,20 @@ func (m *monster) removeController() {
 		m.controller.Send(packetMobEndControl(*m))
 		m.controller = nil
 		m.controllerGeneration++
-		m.lastControllerChange = time.Now().UnixMilli()
+		nowMS := time.Now().UnixMilli()
+		m.lastControllerChange = nowMS
+		m.lastControllerSyncMS = nowMS
+		m.lastCtrlMoveIDValid = false
+		m.lastCtrlMoveAtMS = 0
 	}
+}
+
+func (m *monster) refreshController(follow bool) {
+	if m.controller == nil {
+		return
+	}
+	m.lastControllerSyncMS = time.Now().UnixMilli()
+	m.controller.Send(packetMobControl(*m, follow))
 }
 
 func isNewerMobCtrlMoveID(prev, next int16) bool {
@@ -290,6 +308,7 @@ func (m *monster) acceptsCtrlMove(moveID int16) bool {
 func (m *monster) noteAcceptedCtrlMove(moveID int16) {
 	m.lastCtrlMoveID = moveID
 	m.lastCtrlMoveIDValid = true
+	m.lastCtrlMoveAtMS = time.Now().UnixMilli()
 }
 
 func (m *monster) acknowledgeController(moveID int16, movData movementFrag, allowedToUseSkill bool, skill, level byte) {

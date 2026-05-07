@@ -64,6 +64,8 @@ const (
 	mobControlDebug              = false
 	mobControllerHandoffWindowMS = int64(500)
 	mobControllerDistanceSlackSq = int64(20 * 20)
+	mobControllerStaleMoveMS     = int64(2500)
+	mobControllerRefreshGapMS    = int64(1500)
 )
 
 func isZakumBodyMob(id int32) bool {
@@ -345,6 +347,55 @@ func (pool *lifePool) shouldHandoffController(mob *monster, damager *Player, now
 		return false
 	}
 	return mobDistanceSq(mob, damager)+mobControllerDistanceSlackSq < mobDistanceSq(mob, mob.controller)
+}
+
+func (pool *lifePool) shouldMonitorMobController(mob *monster, nowMS int64) bool {
+	if mob == nil || mob.hp < 1 || mob.controller == nil {
+		return false
+	}
+	if !isUsableMobController(mob.controller, pool.instance) {
+		return true
+	}
+	if mob.lastTimeAttacked == 0 {
+		return false
+	}
+	return nowMS-time.Unix(mob.lastTimeAttacked, 0).UnixMilli() <= 8000
+}
+
+func (pool *lifePool) refreshStaleMobController(mob *monster, nowMS int64) {
+	if !pool.shouldMonitorMobController(mob, nowMS) {
+		return
+	}
+	if !isUsableMobController(mob.controller, pool.instance) {
+		oldController := mob.controller
+		mob.removeController()
+		if cont := pool.findMobController(mob); cont != nil {
+			pool.logMobControllerEvent("reassign", mob, oldController, cont, "controller invalid during watchdog")
+			mob.setController(cont, true)
+		}
+		return
+	}
+
+	if mob.lastCtrlMoveAtMS == 0 {
+		if nowMS-mob.lastControllerSyncMS >= mobControllerRefreshGapMS {
+			pool.logMobControllerEvent("refresh", mob, mob.controller, mob.controller, "waiting for first move ack")
+			mob.refreshController(true)
+		}
+		return
+	}
+
+	if nowMS-mob.lastCtrlMoveAtMS < mobControllerStaleMoveMS || nowMS-mob.lastControllerSyncMS < mobControllerRefreshGapMS {
+		return
+	}
+
+	if cont := pool.findMobController(mob); cont != nil && cont != mob.controller && mobDistanceSq(mob, cont)+mobControllerDistanceSlackSq < mobDistanceSq(mob, mob.controller) {
+		pool.logMobControllerEvent("reassign", mob, mob.controller, cont, "stale controller watchdog")
+		mob.setController(cont, true)
+		return
+	}
+
+	pool.logMobControllerEvent("refresh", mob, mob.controller, mob.controller, "stale move watchdog")
+	mob.refreshController(true)
 }
 
 func (pool *lifePool) npcAcknowledge(poolID int32, plr *Player, data []byte) {
@@ -918,6 +969,7 @@ func (pool lifePool) showMobBossHPBar(mob *monster, plr *Player) {
 func (pool *lifePool) update(t time.Time) {
 	for i := range pool.mobs {
 		pool.mobs[i].update(pool.instance, t)
+		pool.refreshStaleMobController(pool.mobs[i], t.UnixMilli())
 	}
 
 	pool.attemptMobSpawn(false)
