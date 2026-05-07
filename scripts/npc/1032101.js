@@ -5,7 +5,7 @@ var STATE_KEY = 8835;
 if (plr.questData(STATE_KEY) === "end") {
     npc.sendOk("I already received Maple Claws' present. Thank you again.");
 } else if (plr.questData(PRE_KEY) !== "ing") {
-    npc.sendOk("Please don't bother me unless you need me right this minute.");
+    npc.sendOk("Do you need me for something? Please don't bother me unless you need me right this minute.");
 } else if (plr.questData(STATE_KEY) !== "ing") {
     npc.sendOk("Maple Claws sent you? Then you must be carrying my present. Please speak with me again once you're ready to hand it over.");
     plr.setQuestData(STATE_KEY, "ing");
