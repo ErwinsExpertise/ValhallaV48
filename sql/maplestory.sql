@@ -360,6 +360,8 @@ CREATE TABLE `quickslot_keymap` (
   `characterID` int(11) NOT NULL,
   `key1` int(11) NOT NULL DEFAULT '0',
   `key2` int(11) NOT NULL DEFAULT '0',
+  `petConsumeItem` int(11) NOT NULL DEFAULT '0',
+  `petConsumeMPItem` int(11) NOT NULL DEFAULT '0',
   PRIMARY KEY (`characterID`),
   CONSTRAINT `quickslot_keymap_ibfk_1` FOREIGN KEY (`characterID`) REFERENCES `characters` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;

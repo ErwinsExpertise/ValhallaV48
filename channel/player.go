@@ -1720,6 +1720,23 @@ func (d *Player) GetItemByCashID(invID byte, cashID int64) (Item, int16, error) 
 	return Item{}, 0, fmt.Errorf("item not found with cashID: %d", cashID)
 }
 
+func (d *Player) activePetIndex() byte {
+	if d == nil || d.pet == nil || d.petCashID == 0 {
+		return 0
+	}
+	idx := byte(0)
+	for i := range d.cash {
+		if !d.cash[i].pet || d.cash[i].petData == nil || !d.cash[i].petData.spawned {
+			continue
+		}
+		if d.cash[i].cashID == d.petCashID {
+			return idx
+		}
+		idx++
+	}
+	return 0
+}
+
 func (d *Player) swapItems(item1, item2 Item, start, end int16) {
 	if item1.dbID != 0 && item2.dbID != 0 {
 		tx, err := common.DB.Begin()
@@ -2499,6 +2516,15 @@ func (d *Player) findUseItemBySlot(slot int16) *Item {
 	return nil
 }
 
+func (d *Player) findUseItemByID(itemID int32) *Item {
+	for i := range d.use {
+		if d.use[i].ID == itemID && d.use[i].amount > 0 {
+			return &d.use[i]
+		}
+	}
+	return nil
+}
+
 func (d *Player) findEtcItemBySlot(slot int16) *Item {
 	for i := range d.etc {
 		if d.etc[i].slotID == slot {
@@ -2663,6 +2689,7 @@ func LoadPlayerFromID(id int32, conn mnet.Client) Player {
 	c.regTeleportRocks = parseTeleportRocks(regRocksStr, constant.TeleportRockRegSlots)
 	c.vipTeleportRocks = parseTeleportRocks(vipRocksStr, constant.TeleportRockVIPSlots)
 	c.funcKeyMap = loadFuncKeyMap(c.ID)
+	c.petConsumeItemID, c.petConsumeMPItemID = loadPetConsumeSettings(c.ID)
 
 	c.quests = loadQuestsFromDB(c.ID)
 	c.quests.init()
@@ -2741,6 +2768,80 @@ func loadQuickslotKeys(characterID int32) [2]int32 {
 		}
 	}
 	return keys
+}
+
+func loadPetConsumeSettings(characterID int32) (int32, int32) {
+	var hpItemID, mpItemID int32
+	if err := common.DB.QueryRow("SELECT petConsumeItem, petConsumeMPItem FROM quickslot_keymap WHERE characterID=?", characterID).Scan(&hpItemID, &mpItemID); err != nil {
+		if err != sql.ErrNoRows {
+			log.Printf("loadPetConsumeSettings: characterID=%d err=%v", characterID, err)
+		}
+	}
+	return hpItemID, mpItemID
+}
+
+func savePetConsumeSettings(characterID int32, hpItemID, mpItemID int32) {
+	if _, err := common.DB.Exec(`
+		INSERT INTO quickslot_keymap (characterID, key1, key2, petConsumeItem, petConsumeMPItem)
+		VALUES (?, 0, 0, ?, ?)
+		AS new ON DUPLICATE KEY UPDATE petConsumeItem=new.petConsumeItem, petConsumeMPItem=new.petConsumeMPItem
+	`, characterID, hpItemID, mpItemID); err != nil {
+		log.Printf("savePetConsumeSettings: characterID=%d err=%v", characterID, err)
+	}
+}
+
+func packetPetKeyMappedInit(hpItemID, mpItemID int32) mpacket.Packet {
+	p := mpacket.CreateWithOpcode(opcode.SendChannelPetKeyMappedInit)
+	p.WriteInt32(hpItemID)
+	p.WriteInt32(mpItemID)
+	return p
+}
+
+func (d *Player) usePetAutoPotion(slot int16, itemID int32) error {
+	if d == nil || d.pet == nil || !d.pet.spawned {
+		return errors.New("no active pet")
+	}
+
+	item, err := d.getItem(constant.InventoryUse, slot)
+	if err != nil {
+		return err
+	}
+	if item.ID != itemID {
+		return fmt.Errorf("pet auto potion mismatch: slot=%d item=%d expected=%d", slot, item.ID, itemID)
+	}
+
+	nxData, err := item.validateConsumeUse(d)
+	if err != nil {
+		return err
+	}
+
+	hasHPRecovery := nxData.HP != 0 || nxData.HPR != 0
+	hasMPRecovery := nxData.MP != 0 || nxData.MPR != 0
+	if !hasHPRecovery && !hasMPRecovery {
+		return fmt.Errorf("item %d is not a valid auto potion", itemID)
+	}
+	if hasHPRecovery {
+		if d.petConsumeItemID != itemID {
+			return fmt.Errorf("item %d is not the configured auto HP potion", itemID)
+		}
+		if !d.hasEquipped(constant.ItemAutoHPPouch) {
+			return fmt.Errorf("auto HP pouch not equipped")
+		}
+	}
+	if hasMPRecovery {
+		if d.petConsumeMPItemID != itemID {
+			return fmt.Errorf("item %d is not the configured auto MP potion", itemID)
+		}
+		if !d.hasEquipped(constant.ItemAutoMPPouch) {
+			return fmt.Errorf("auto MP pouch not equipped")
+		}
+	}
+
+	if _, err := d.takeItem(item.ID, item.slotID, 1, constant.InventoryUse); err != nil {
+		return err
+	}
+	item.applyConsumeUse(d, nxData)
+	return nil
 }
 
 func saveQuickslotKeys(characterID int32, keys [2]int32) {
@@ -3701,7 +3802,7 @@ func (p *Player) hasActiveBuff(skillID int32) bool {
 
 func (p *Player) updatePet() {
 	p.MarkDirty(DirtyPet, time.Millisecond*300)
-	p.inst.send(packetPlayerPetUpdate(p.pet.lockerSN))
+	p.Send(packetPlayerPetUpdate(p.pet.lockerSN))
 }
 
 func (p *Player) petCanTakeDrop(drop fieldDrop) bool {

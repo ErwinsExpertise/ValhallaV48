@@ -94,8 +94,8 @@ func (server *Server) HandleClientPacket(conn mnet.Client, reader mpacket.Reader
 		server.playerMovement(conn, reader)
 	case opcode.RecvChannelPlayerStand:
 		server.playerStand(conn, reader)
-	case opcode.RecvChannelChairHeal:
-		server.playerChairHeal(conn, reader)
+	case opcode.RecvChannelPetFood:
+		server.playerPetFood(conn, reader)
 	case opcode.RecvChannelInvUseCashItem:
 		server.playerUseCash(conn, reader)
 	case opcode.RecvChannelPlayerUseChair:
@@ -207,6 +207,8 @@ func (server *Server) HandleClientPacket(conn mnet.Client, reader mpacket.Reader
 		server.playerPetInteraction(conn, reader)
 	case opcode.RecvChannelPetLoot:
 		server.playerPetLoot(conn, reader)
+	case opcode.RecvChannelPetAutoPot:
+		server.playerPetAutoPot(conn, reader)
 	case opcode.RecvChannelRingAction:
 		server.playerRingAction(conn, reader)
 	case opcode.RecvChannelWeddingAction:
@@ -292,6 +294,7 @@ func (server *Server) playerConnect(conn mnet.Client, reader mpacket.Reader) {
 
 	conn.Send(packetPlayerEnterGame(plr, int32(server.id)))
 	conn.Send(packetFuncKeyMappedInit(plr.funcKeyMap))
+	conn.Send(packetPetKeyMappedInit(plr.petConsumeItemID, plr.petConsumeMPItemID))
 	conn.Send(packetMessageScrollingHeader(server.header))
 	for _, name := range expiredItems {
 		conn.Send(packetMessageRedText(fmt.Sprintf("%s has expired and removed from your inventory", name)))
@@ -700,6 +703,40 @@ func (server Server) playerRequestAvatarInfoWindow(conn mnet.Client, reader mpac
 	conn.Send(packetPlayerAvatarSummaryWindow(plr.ID, *plr))
 }
 
+func (server Server) playerPetFood(conn mnet.Client, reader mpacket.Reader) {
+	plr, err := server.players.GetFromConn(conn)
+	if err != nil {
+		return
+	}
+
+	_ = reader.ReadInt32()
+	slot := reader.ReadInt16()
+	itemID := reader.ReadInt32()
+
+	item, err := plr.getItem(constant.InventoryUse, slot)
+	if err != nil {
+		log.Printf("petfood-handler missing item player=%s slot=%d itemID=%d err=%v packet=% X", plr.Name, slot, itemID, err, reader.GetBuffer())
+		plr.noChange()
+		return
+	}
+	if item.ID != itemID {
+		log.Printf("petfood-handler item mismatch player=%s slot=%d invItemID=%d reqItemID=%d packet=% X", plr.Name, slot, item.ID, itemID, reader.GetBuffer())
+		plr.noChange()
+		return
+	}
+
+	meta, err := nx.GetItem(item.ID)
+	if err != nil {
+		log.Printf("petfood-handler nx missing player=%s slot=%d itemID=%d err=%v", plr.Name, slot, itemID, err)
+		plr.noChange()
+		return
+	}
+	if err := handlePetFoodUse(plr, slot, item, meta); err != nil {
+		log.Printf("petfood-handler rejected player=%s slot=%d itemID=%d err=%v", plr.Name, slot, itemID, err)
+		plr.noChange()
+	}
+}
+
 func (server Server) playerPassiveRegen(conn mnet.Client, reader mpacket.Reader) {
 	flag := reader.ReadInt32()
 
@@ -722,13 +759,31 @@ func (server Server) playerPassiveRegen(conn mnet.Client, reader mpacket.Reader)
 		return
 	}
 
-	if player.hp == 0 || hp > 400 || mp > 1000 || (hp > 0 && mp > 0) {
+	if player.hp == 0 {
+		return
+	}
+
+	hpCap := int16(400)
+	mpCap := int16(1000)
+	if player.chairID != 0 {
+		if chair, err := nx.GetItem(player.chairID); err == nil {
+			if chair.RecoveryHP > 0 {
+				hpCap = int16(chair.RecoveryHP)
+			}
+			if chair.RecoveryMP > 0 {
+				mpCap = int16(chair.RecoveryMP)
+			}
+		}
+	}
+
+	if hp < 0 || mp < 0 || hp > hpCap || mp > mpCap {
 		return
 	}
 
 	if hp > 0 {
 		player.giveHP(hp)
-	} else if mp > 0 {
+	}
+	if mp > 0 {
 		player.giveMP(mp)
 	}
 }
@@ -1653,6 +1708,19 @@ func (server Server) playerUseInventoryItem(conn mnet.Client, reader mpacket.Rea
 			server.ac.LogInvalidItemViolation(plr.accountID)
 		}
 		plr.noChange()
+		return
+	}
+
+	meta, err := nx.GetItem(item.ID)
+	if err != nil {
+		plr.noChange()
+		return
+	}
+	if plr.pet != nil && plr.pet.spawned && plr.pet.canConsumeFood(meta) {
+		if err := handlePetFoodUse(plr, slot, item, meta); err != nil {
+			log.Printf("playerUseInventoryItem pet food rejected: player=%s itemID=%d slot=%d err=%v", plr.Name, itemid, slot, err)
+			plr.noChange()
+		}
 		return
 	}
 
@@ -3021,7 +3089,7 @@ type attackData struct {
 	skillID, summonType, totalDamage, projectileID int32
 	isMesoExplosion, facesLeft                     bool
 	option, action, attackType                     byte
-	targets, hits, skillLevel                      byte
+	partyCount, targets, hits, skillLevel          byte
 	mesoKillDelay                                  int16
 
 	attackInfo []attackInfo
@@ -3064,9 +3132,11 @@ func getAttackInfo(reader mpacket.Reader, player *Player, attackType int) (attac
 		tmp := reader.ReadByte()
 		data.action = tmp & 0x7F
 		data.facesLeft = (tmp >> 7) == 1
-		data.attackType = reader.ReadByte()
-
-		reader.Skip(5)
+		_ = reader.ReadByte() // client RNG / checksum byte
+		speedByte := reader.ReadByte()
+		data.partyCount = speedByte >> 4
+		data.attackType = speedByte & 0x0F
+		_ = reader.ReadInt32()
 		if attackType == attackRanged {
 			projectileSlot := reader.ReadInt16()
 			_ = reader.ReadInt16()
@@ -4751,6 +4821,82 @@ func getAffectedPartyMembers(p *party, src *Player, affected byte) []*Player {
 	return ret
 }
 
+func skillAffectsMobInRange(origin pos, mob *monster, skillData nx.PlayerSkill) bool {
+	if mob == nil {
+		return false
+	}
+	minX := origin.x + int16(skillData.Lt.X)
+	maxX := origin.x + int16(skillData.Rb.X)
+	if minX > maxX {
+		minX, maxX = maxX, minX
+	}
+	minY := origin.y + int16(skillData.Lt.Y)
+	maxY := origin.y + int16(skillData.Rb.Y)
+	if minY > maxY {
+		minY, maxY = maxY, minY
+	}
+	return mob.pos.x >= minX && mob.pos.x <= maxX && mob.pos.y >= minY && mob.pos.y <= maxY
+}
+
+func calculateHealUndeadDamage(plr *Player, mob *monster, skillID int32, skillLevel byte) int32 {
+	if plr == nil || mob == nil {
+		return 0
+	}
+	data := attackData{
+		skillID:    skillID,
+		skillLevel: skillLevel,
+		targets:    1,
+		hits:       1,
+		attackInfo: []attackInfo{{spawnID: mob.spawnID, damages: []int32{1}, isCritical: []bool{false}}},
+	}
+	calc := NewDamageCalculator(plr, &data, attackMagic)
+	rangeData := calc.CalculateBaseDamageRange(mob, 0)
+	if !rangeData.Valid {
+		return 0
+	}
+	minDmg, maxDmg := calc.ApplySkillModifiers(rangeData.Min, rangeData.Max, calc.GetElementAmplification(), mob)
+	defRatioMin, defRatioMax := calc.CalculateDefenseReductionBounds(mob)
+	if defRatioMax > 0 {
+		minDmg *= math.Max(0, 1.0-defRatioMax)
+		maxDmg *= math.Max(0, 1.0-defRatioMin)
+	}
+	if minDmg < 1 {
+		minDmg = 1
+	}
+	if maxDmg < 1 {
+		maxDmg = 1
+	}
+	if minDmg > maxDmg {
+		minDmg = maxDmg
+	}
+	dmg := int32(math.Floor((minDmg + maxDmg) / 2.0))
+	if dmg < 1 {
+		dmg = 1
+	}
+	return dmg
+}
+
+func (server *Server) applyHealUndeadDamage(plr *Player, skillID int32, skillLevel byte, skillData nx.PlayerSkill) {
+	if plr == nil || plr.inst == nil || skillData.MobCount <= 0 {
+		return
+	}
+	targeted := 0
+	for _, mob := range plr.inst.lifePool.mobs {
+		if mob == nil || mob.hp <= 0 || !mob.undead || !skillAffectsMobInRange(plr.pos, mob, skillData) {
+			continue
+		}
+		dmg := calculateHealUndeadDamage(plr, mob, skillID, skillLevel)
+		if dmg <= 0 {
+			continue
+		}
+		plr.inst.lifePool.mobDamaged(mob.spawnID, plr, dmg)
+		targeted++
+		if targeted >= int(skillData.MobCount) {
+			break
+		}
+	}
+}
+
 func isPartySkillRequest(skillID int32) bool {
 	switch skill.Skill(skillID) {
 	case skill.Haste, skill.BanditHaste,
@@ -4769,7 +4915,6 @@ func (server *Server) playerSpecialSkill(conn mnet.Client, reader mpacket.Reader
 	if err != nil {
 		return
 	}
-
 	// Dead players cannot cast
 	if plr.hp == 0 {
 		plr.Send(packetPlayerNoChange())
@@ -4785,12 +4930,12 @@ func (server *Server) playerSpecialSkill(conn mnet.Client, reader mpacket.Reader
 
 	if isPartySkillRequest(skillID) && len(reader.GetRestAsBytes()) > 2 {
 		partyMask = reader.ReadByte()
-		if skill.Skill(skillID) == skill.Dispel && len(reader.GetRestAsBytes()) >= 2 {
+		if len(reader.GetRestAsBytes()) >= 2 {
 			delay = reader.ReadInt16()
 		}
 	}
 
-	if len(reader.GetRestAsBytes()) > 2 {
+	if !isPartySkillRequest(skillID) && len(reader.GetRestAsBytes()) > 2 {
 		targetCount := int(reader.ReadByte())
 		targetIDs = make([]int32, 0, targetCount)
 		for i := 0; i < targetCount && len(reader.GetRestAsBytes()) >= 4; i++ {
@@ -4798,7 +4943,7 @@ func (server *Server) playerSpecialSkill(conn mnet.Client, reader mpacket.Reader
 		}
 	}
 
-	if len(reader.GetRestAsBytes()) == 2 {
+	if !isPartySkillRequest(skillID) && len(reader.GetRestAsBytes()) == 2 {
 		delay = reader.ReadInt16()
 	}
 
@@ -4808,7 +4953,6 @@ func (server *Server) playerSpecialSkill(conn mnet.Client, reader mpacket.Reader
 		plr.Send(packetPlayerNoChange())
 		return
 	}
-
 	switch skill.Skill(skillID) {
 	case skill.Haste, skill.BanditHaste, skill.Bless, skill.IronWill, skill.Rage,
 		skill.Meditation, skill.ILMeditation, skill.MesoUp, skill.HolySymbol, skill.HyperBody, skill.NimbleBody:
@@ -4948,13 +5092,12 @@ func (server *Server) playerSpecialSkill(conn mnet.Client, reader mpacket.Reader
 
 			if healAmount > 0 {
 				target.giveHP(healAmount)
-				if target.ID == plr.ID {
-					target.Send(packetPlayerEffectSkill(false, skillID, skillLevel))
-				} else {
-					target.Send(packetPlayerEffectSkill(true, skillID, skillLevel))
+				if target.ID != plr.ID {
+					sendSecondarySkillAnimation(target, skillID, skillLevel)
 				}
 			}
 		}
+		server.applyHealUndeadDamage(plr, skillID, skillLevel, skillData[idx])
 
 	case skill.Resurrection:
 		sendPrimarySkillAnimation(plr, skillID, skillLevel)
@@ -5894,7 +6037,7 @@ func (server *Server) playerPetInteraction(conn mnet.Client, reader mpacket.Read
 
 	petItem := plr.pet
 	success := handlePetInteraction(plr, petItem, interactionID, doMultiplier == 1)
-	plr.Send(packetPetInteraction(plr.ID, interactionID, success, false))
+	plr.inst.send(packetPetInteraction(plr.ID, interactionID, success, false))
 }
 
 func (server *Server) playerPetLoot(conn mnet.Client, reader mpacket.Reader) {
@@ -5949,6 +6092,23 @@ func (server *Server) playerPetLoot(conn mnet.Client, reader mpacket.Reader) {
 	plr.inst.dropPool.playerAttemptPickup(drop, plr, 5)
 }
 
+func (server *Server) playerPetAutoPot(conn mnet.Client, reader mpacket.Reader) {
+	plr, err := server.players.GetFromConn(conn)
+	if err != nil {
+		return
+	}
+
+	_ = reader.ReadByte()
+	_ = reader.ReadInt32()
+	slot := reader.ReadInt16()
+	itemID := reader.ReadInt32()
+
+	if err := plr.usePetAutoPotion(slot, itemID); err != nil {
+		log.Printf("playerPetAutoPot rejected: player=%s slot=%d itemID=%d err=%v", plr.Name, slot, itemID, err)
+		plr.noChange()
+	}
+}
+
 func (server *Server) playerQuickslotKeyMappedModified(conn mnet.Client, reader mpacket.Reader) {
 	plr, err := server.players.GetFromConn(conn)
 	if err != nil {
@@ -5972,8 +6132,10 @@ func (server *Server) playerQuickslotKeyMappedModified(conn mnet.Client, reader 
 		}
 	case 1: // pet consume HP item modified
 		plr.petConsumeItemID = reader.ReadInt32()
+		savePetConsumeSettings(plr.ID, plr.petConsumeItemID, plr.petConsumeMPItemID)
 	case 2: // pet consume MP item modified
 		plr.petConsumeMPItemID = reader.ReadInt32()
+		savePetConsumeSettings(plr.ID, plr.petConsumeItemID, plr.petConsumeMPItemID)
 	default:
 		for len(reader.GetRestAsBytes()) > 0 {
 			_ = reader.ReadByte()

@@ -434,6 +434,8 @@ const (
 const (
 	ItemMesoMagnet                     = 1812000
 	ItemItemPouch                      = 1812001
+	ItemAutoHPPouch                    = 1812002
+	ItemAutoMPPouch                    = 1812003
 	ItemSubwayTicketToNLC              = 4031711
 	ItemSubwayTicketToKerning          = 4031713
 	ItemRegTeleportRock                = 5040000

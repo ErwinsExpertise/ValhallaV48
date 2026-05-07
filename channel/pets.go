@@ -1,12 +1,14 @@
 package channel
 
 import (
+	"fmt"
 	"log"
 	"math/rand"
 	"time"
 
 	"github.com/Hucaru/Valhalla/common"
 	"github.com/Hucaru/Valhalla/common/opcode"
+	"github.com/Hucaru/Valhalla/constant"
 	"github.com/Hucaru/Valhalla/mpacket"
 	"github.com/Hucaru/Valhalla/nx"
 )
@@ -148,6 +150,7 @@ func packetPetAction(charID int32, op, action byte, text string) mpacket.Packet 
 	p.WriteByte(op)
 	p.WriteByte(action)
 	p.WriteString(text)
+	p.WriteByte(0)
 	return p
 }
 
@@ -158,14 +161,23 @@ func packetPetNameChange(charID int32, name string) mpacket.Packet {
 	return p
 }
 
-func packetPetInteraction(charID int32, interactionId byte, inc, food bool) mpacket.Packet {
+func packetPetFoodResponse(charID int32, success bool, balloon bool) mpacket.Packet {
 	p := mpacket.CreateWithOpcode(opcode.SendChannelPetInteraction)
 	p.WriteInt32(charID)
-	p.WriteBool(food)
-	if !food {
-		p.WriteByte(interactionId)
-	}
-	p.WriteBool(inc)
+	p.WriteByte(1)
+	p.WriteBool(success)
+	p.WriteBool(balloon)
+
+	return p
+}
+
+func packetPetInteraction(charID int32, interactionId byte, success bool, balloon bool) mpacket.Packet {
+	p := mpacket.CreateWithOpcode(opcode.SendChannelPetInteraction)
+	p.WriteInt32(charID)
+	p.WriteByte(0)
+	p.WriteByte(interactionId)
+	p.WriteBool(success)
+	p.WriteBool(balloon)
 
 	return p
 }
@@ -204,4 +216,63 @@ func packetPetRemove(charID int32, reason byte) mpacket.Packet {
 	p.WriteByte(reason)
 
 	return p
+}
+
+func (p *pet) canConsumeFood(meta nx.Item) bool {
+	if p == nil || meta.PetFoodInc <= 0 {
+		return false
+	}
+	for _, petID := range meta.PetFoodPets {
+		if petID == p.itemID {
+			return true
+		}
+	}
+	return false
+}
+
+func handlePetFoodUse(plr *Player, slot int16, item Item, meta nx.Item) error {
+	if plr == nil || plr.pet == nil || !plr.pet.spawned {
+		return fmt.Errorf("no active pet")
+	}
+	if !plr.pet.canConsumeFood(meta) {
+		return fmt.Errorf("item %d is not valid pet food for pet %d", item.ID, plr.pet.itemID)
+	}
+	if _, err := plr.takeItem(item.ID, slot, 1, constant.InventoryUse); err != nil {
+		return err
+	}
+
+	success := false
+	oldLevel := plr.pet.level
+	oldFullness := plr.pet.fullness
+	oldCloseness := plr.pet.closeness
+	if plr.pet.fullness < 100 {
+		gain := int(meta.PetFoodInc)
+		if gain > int(100-plr.pet.fullness) {
+			gain = int(100 - plr.pet.fullness)
+		}
+		plr.pet.fullness += byte(gain)
+		if plr.pet.closeness < 30000 {
+			plr.pet.closeness++
+		}
+		success = gain > 0
+	} else if plr.pet.closeness > 0 {
+		plr.pet.closeness--
+	}
+
+	plr.pet.level = petLevelFromCloseness(plr.pet.closeness)
+	plr.MarkDirty(DirtyPet, time.Millisecond*300)
+	petStateChanged := plr.pet.fullness != oldFullness || plr.pet.closeness != oldCloseness || plr.pet.level != oldLevel
+	if petStateChanged {
+		plr.Send(packetPlayerPetUpdate(plr.pet.lockerSN))
+		if petItem, _, err := plr.GetItemByCashID(constant.InventoryCash, plr.petCashID); err == nil {
+			plr.Send(packetInventoryAddItem(petItem, true))
+		}
+	}
+	plr.Send(packetPetFoodResponse(plr.ID, success, false))
+
+	if success && plr.pet.level > oldLevel {
+		// v48 pet level-up visuals still need live confirmation; keep the state update authoritative.
+	}
+
+	return nil
 }

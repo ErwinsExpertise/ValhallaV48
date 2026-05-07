@@ -139,10 +139,14 @@ func (d *party) syncPlayersHP() {
 
 func (d party) giveExp(playerID, amount int32, sameMap bool) {
 	var mapID int32 = 0
+	var instanceID int = -1
 
 	for i, id := range d.PlayerID {
 		if id == playerID {
 			mapID = d.MapID[i]
+			if d.players[i] != nil && d.players[i].inst != nil {
+				instanceID = d.players[i].inst.id
+			}
 			break
 		}
 	}
@@ -151,7 +155,7 @@ func (d party) giveExp(playerID, amount int32, sameMap bool) {
 		nPlayers := 0
 
 		for i, id := range d.PlayerID {
-			if id != playerID && d.players[i] != nil && d.MapID[i] == mapID && d.players[i].hp > 0 {
+			if id != playerID && d.players[i] != nil && d.MapID[i] == mapID && d.players[i].hp > 0 && d.players[i].inst != nil && d.players[i].inst.id == instanceID {
 				nPlayers++
 			}
 
@@ -162,7 +166,7 @@ func (d party) giveExp(playerID, amount int32, sameMap bool) {
 	}
 
 	for _, plr := range d.players {
-		if plr != nil && sameMap && plr.mapID == mapID {
+		if plr != nil && sameMap && plr.mapID == mapID && plr.inst != nil && plr.inst.id == instanceID {
 			plr.giveEXP(amount, false, true)
 		}
 	}

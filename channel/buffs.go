@@ -1601,7 +1601,9 @@ func (cb *CharacterBuffs) post(fn func()) {
 		case cb.plr.inst.dispatch <- fn:
 			return
 		default:
-			fn()
+			go func(dispatch chan func()) {
+				dispatch <- fn
+			}(cb.plr.inst.dispatch)
 			return
 		}
 	}

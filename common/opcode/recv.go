@@ -42,7 +42,7 @@ const (
 	// Empty v48 client packet emitted from the local timed regen/sit loop.
 	RecvChannelClientTick3A      int16 = 0x3A
 	RecvChannelUseSack           int16 = 0x3B
-	RecvChannelChairHeal         int16 = 0x3C
+	RecvChannelPetFood           int16 = 0x3C
 	RecvChannelInvUseCashItem    int16 = 0x3E
 	RecvChannelNearestTown       int16 = 0x41
 	RecvChannelUseScroll         int16 = 0x42
@@ -81,6 +81,7 @@ const (
 	RecvChannelPetAction         int16 = 0x72
 	RecvChannelPetInteraction    int16 = 0x73
 	RecvChannelPetLoot           int16 = 0x74
+	RecvChannelPetAutoPot        int16 = 0x75
 	RecvChannelSummonAck         int16 = 0x77
 	RecvChannelSummonMove        int16 = 0x78
 	RecvChannelSummonAttack      int16 = 0x79

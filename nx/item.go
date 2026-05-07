@@ -78,6 +78,8 @@ type Item struct {
 	Effect                                                         string
 	SoldInform, Direction, Emotion, ShowMessage                    int64
 	Interact                                                       map[byte]PetReaction
+	PetFoodInc                                                     int16
+	PetFoodPets                                                    []int32
 	SpawnMobs                                                      map[int32]int32
 	TimeEntries                                                    []string
 }
@@ -549,10 +551,17 @@ func (item *Item) getItem(node *gonx.Node, nodes []gonx.Node, textLookup []strin
 			item.ThawRate = gonx.DataToInt16(option.Data)
 		default:
 			if _, err := strconv.Atoi(optionName); err == nil {
+				if option.ChildCount == 0 {
+					if id := parseNumericNodeValue(option, textLookup); id > 0 {
+						item.PetFoodPets = append(item.PetFoodPets, id)
+					}
+					continue
+				}
 				item.loadSpawnMobs(&option, nodes, textLookup)
 				continue
 			}
 			if optionName == "inc" {
+				item.PetFoodInc = gonx.DataToInt16(option.Data)
 				continue
 			}
 			if optionName == "morph" {

@@ -639,7 +639,7 @@ func (pool *lifePool) mobDamaged(poolID int32, damager *Player, dmg ...int32) {
 				}
 
 				for plr, dealt := range pool.mobs[i].dmgTaken {
-					if killer == nil || plr == nil || killer.mapID != plr.mapID {
+					if killer == nil || plr == nil || killer.mapID != plr.mapID || killer.inst == nil || plr.inst == nil || killer.inst.id != plr.inst.id {
 						continue
 					}
 
