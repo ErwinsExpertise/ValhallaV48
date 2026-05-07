@@ -2506,13 +2506,14 @@ func (server Server) mobControl(conn mnet.Client, reader mpacket.Reader) {
 	}
 
 	moveData, finalData, _, _, valid := parseMobMovement(reader, mob.pos.x, mob.pos.y)
-	moveBytes := generateMovementBytes(moveData)
-
-	inst.lifePool.mobAcknowledge(mobSpawnID, plr, moveID, skillPossible, action, skillData, moveData, finalData, moveBytes)
 	if !valid {
-		log.Println("unknown mobControl data")
+		log.Println("invalid mobControl data alignment")
 		inst.send(packetPlayerNoChange())
+		return
 	}
+
+	moveBytes := generateMovementBytes(moveData)
+	inst.lifePool.mobAcknowledge(mobSpawnID, plr, moveID, skillPossible, action, skillData, moveData, finalData, moveBytes)
 }
 
 func (server Server) mobDamagePlayer(conn mnet.Client, reader mpacket.Reader, mobAttack int8) {

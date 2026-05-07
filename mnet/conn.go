@@ -1,6 +1,8 @@
 package mnet
 
 import (
+	"io"
+	"log"
 	"math/rand"
 	"net"
 	"sync"
@@ -27,7 +29,7 @@ func clientReader(conn net.Conn, eRecv chan *Event, mapleVersion int16, headerSi
 	for {
 		buffer := make([]byte, readSize)
 
-		if _, err := conn.Read(buffer); err != nil {
+		if _, err := io.ReadFull(conn, buffer); err != nil {
 			eRecv <- &Event{Type: MEClientDisconnect, Conn: conn}
 			break
 		}
@@ -57,7 +59,7 @@ func serverReader(conn net.Conn, eRecv chan *Event, headerSize int) {
 	for {
 		buffer := make([]byte, readSize)
 
-		if _, err := conn.Read(buffer); err != nil {
+		if _, err := io.ReadFull(conn, buffer); err != nil {
 			eRecv <- &Event{Type: MEServerDisconnect, Conn: conn}
 			break
 		}
@@ -140,7 +142,18 @@ func (bc *baseConn) Send(p mpacket.Packet) {
 		return
 	}
 
-	bc.eSend <- p
+	defer func() {
+		if r := recover(); r != nil {
+			// Another goroutine may close the queue while a send is in flight.
+		}
+	}()
+
+	select {
+	case bc.eSend <- p:
+	default:
+		log.Printf("disconnecting %s: send queue full", bc)
+		_ = bc.Close()
+	}
 }
 
 func (bc *baseConn) String() string {

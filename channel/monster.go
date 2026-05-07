@@ -76,6 +76,14 @@ type monster struct {
 	lastHeal         int64
 	lastTimeAttacked int64
 	lastPoisonTick   int64
+
+	// Controller packets are ordered by moveID on the client. Keep the latest
+	// accepted move serial so delayed packets from an old control epoch can no
+	// longer mutate server state after a handoff.
+	controllerGeneration uint32
+	lastCtrlMoveID       int16
+	lastCtrlMoveIDValid  bool
+	lastControllerChange int64
 }
 
 func isVisibleMobSelfBuffStat(statMask int32) bool {
@@ -247,7 +255,15 @@ func (m *monster) setController(controller *Player, follow bool) {
 	if controller == nil {
 		return
 	}
+	if m.controller == controller {
+		return
+	}
+	if m.controller != nil {
+		m.controller.Send(packetMobEndControl(*m))
+	}
 	m.controller = controller
+	m.controllerGeneration++
+	m.lastControllerChange = time.Now().UnixMilli()
 	controller.Send(packetMobControl(*m, follow))
 }
 
@@ -255,7 +271,25 @@ func (m *monster) removeController() {
 	if m.controller != nil {
 		m.controller.Send(packetMobEndControl(*m))
 		m.controller = nil
+		m.controllerGeneration++
+		m.lastControllerChange = time.Now().UnixMilli()
 	}
+}
+
+func isNewerMobCtrlMoveID(prev, next int16) bool {
+	return int16(next-prev) > 0
+}
+
+func (m *monster) acceptsCtrlMove(moveID int16) bool {
+	if !m.lastCtrlMoveIDValid {
+		return true
+	}
+	return isNewerMobCtrlMoveID(m.lastCtrlMoveID, moveID)
+}
+
+func (m *monster) noteAcceptedCtrlMove(moveID int16) {
+	m.lastCtrlMoveID = moveID
+	m.lastCtrlMoveIDValid = true
 }
 
 func (m *monster) acknowledgeController(moveID int16, movData movementFrag, allowedToUseSkill bool, skill, level byte) {

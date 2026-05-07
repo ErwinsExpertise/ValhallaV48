@@ -60,6 +60,12 @@ type lifePool struct {
 	rNumber *rand.Rand
 }
 
+const (
+	mobControlDebug              = false
+	mobControllerHandoffWindowMS = int64(500)
+	mobControllerDistanceSlackSq = int64(20 * 20)
+)
+
 func isZakumBodyMob(id int32) bool {
 	return id == constant.MobZakum1Body || id == constant.MobZakum2Body || id == constant.MobZakum3Body
 }
@@ -260,13 +266,12 @@ func (pool *lifePool) removePlayer(plr *Player, usedPortal bool) {
 
 	for i, v := range pool.mobs {
 		if v.controller != nil && v.controller.Conn == plr.Conn {
-			pool.mobs[i].removeController()
+			mob := pool.mobs[i]
+			mob.removeController()
 
-			// find new controller
-			if plr := pool.instance.findController(); plr != nil {
-				if cont, ok := plr.(*Player); ok {
-					pool.mobs[i].setController(cont, false)
-				}
+			if cont := pool.findMobController(mob); cont != nil {
+				pool.logMobControllerEvent("reassign", mob, plr, cont, "player removed")
+				mob.setController(cont, false)
 			}
 		}
 
@@ -276,6 +281,70 @@ func (pool *lifePool) removePlayer(plr *Player, usedPortal bool) {
 	}
 
 	delete(pool.activeMobCtrl, plr)
+}
+
+func (pool *lifePool) logMobControllerEvent(event string, mob *monster, packetOwner *Player, current *Player, reason string) {
+	if !mobControlDebug || mob == nil {
+		return
+	}
+	ownerID, currentID := int32(0), int32(0)
+	if packetOwner != nil {
+		ownerID = packetOwner.ID
+	}
+	if current != nil {
+		currentID = current.ID
+	}
+	log.Printf("mob-ctrl %s mob=%d spawn=%d owner=%d current=%d gen=%d move=%t reason=%s", event, mob.id, mob.spawnID, ownerID, currentID, mob.controllerGeneration, mob.lastCtrlMoveIDValid, reason)
+}
+
+func isUsableMobController(plr *Player, inst *fieldInstance) bool {
+	return plr != nil && plr.Conn != nil && plr.hp > 0 && plr.inst == inst
+}
+
+func mobDistanceSq(mob *monster, plr *Player) int64 {
+	if mob == nil || plr == nil {
+		return 1<<63 - 1
+	}
+	dx := int64(mob.pos.x) - int64(plr.pos.x)
+	dy := int64(mob.pos.y) - int64(plr.pos.y)
+	return dx*dx + dy*dy
+}
+
+func (pool *lifePool) findMobController(mob *monster) *Player {
+	if pool.instance == nil || mob == nil {
+		return nil
+	}
+	var (
+		best     *Player
+		bestDist = int64(1<<63 - 1)
+	)
+	for _, plr := range pool.instance.players {
+		if !isUsableMobController(plr, pool.instance) {
+			continue
+		}
+		dist := mobDistanceSq(mob, plr)
+		if best == nil || dist < bestDist {
+			best = plr
+			bestDist = dist
+		}
+	}
+	return best
+}
+
+func (pool *lifePool) shouldHandoffController(mob *monster, damager *Player, nowMS int64) bool {
+	if mob == nil || damager == nil {
+		return false
+	}
+	if mob.controller == damager {
+		return false
+	}
+	if !isUsableMobController(mob.controller, pool.instance) {
+		return true
+	}
+	if mob.lastControllerChange != 0 && nowMS-mob.lastControllerChange < mobControllerHandoffWindowMS {
+		return false
+	}
+	return mobDistanceSq(mob, damager)+mobControllerDistanceSlackSq < mobDistanceSq(mob, mob.controller)
 }
 
 func (pool *lifePool) npcAcknowledge(poolID int32, plr *Player, data []byte) {
@@ -288,73 +357,89 @@ func (pool *lifePool) npcAcknowledge(poolID int32, plr *Player, data []byte) {
 
 }
 
-func (pool *lifePool) mobAcknowledge(poolID int32, plr *Player, moveID int16, skillPossible bool, action int8, skillData uint32, moveData movement, finalData movementFrag, moveBytes []byte) {
-	for i, v := range pool.mobs {
-		mob := pool.mobs[i]
+func (pool *lifePool) mobAcknowledge(poolID int32, plr *Player, moveID int16, skillPossible bool, action int8, skillData uint32, moveData movement, finalData movementFrag, moveBytes []byte) bool {
+	mob, ok := pool.mobs[poolID]
+	if !ok {
+		return false
+	}
+	if mob.hp < 1 {
+		pool.logMobControllerEvent("reject", mob, plr, mob.controller, "dead mob movement")
+		return false
+	}
+	if mob.controller == nil {
+		pool.logMobControllerEvent("reject", mob, plr, nil, "no controller")
+		return false
+	}
+	if mob.controller != plr || mob.controller.Conn != plr.Conn {
+		pool.logMobControllerEvent("reject", mob, plr, mob.controller, "stale controller")
+		return false
+	}
+	if !mob.acceptsCtrlMove(moveID) {
+		pool.logMobControllerEvent("reject", mob, plr, mob.controller, "stale move id")
+		return false
+	}
 
-		if poolID == v.spawnID && v.controller.Conn == plr.Conn {
-			currentSkillID := byte(skillData)
-			currentSkillLevel := byte(skillData >> 8)
-			skillDelay := int16(skillData >> 16)
-			rawAction := int(uint8(action) >> 1)
-			isSkillAction := rawAction >= 21 && rawAction <= 25
-			hadVisibleSelfBuff := mob.hasVisibleSelfBuff()
-			// v48 only takes the mob-skill path in CMob::OnMove when action>>1 is in
-			// the skill range [21..25]. Align server-side application timing with that
-			// cast path instead of applying any non-zero skillData on arbitrary moves.
-			if isSkillAction {
-				if currentSkillID != 0 && currentSkillID == mob.skillID && currentSkillLevel == mob.skillLevel {
-					mobSkillID, mobSkillLevel, mobSkillData := pool.mobs[i].getMobSkill(skillDelay, currentSkillLevel, currentSkillID)
+	currentSkillID := byte(skillData)
+	currentSkillLevel := byte(skillData >> 8)
+	skillDelay := int16(skillData >> 16)
+	rawAction := int(uint8(action) >> 1)
+	isSkillAction := rawAction >= 21 && rawAction <= 25
+	hadVisibleSelfBuff := mob.hasVisibleSelfBuff()
 
-					if mobSkillID != 0 {
-						pool.performSkill(mob, mobSkillID, mobSkillLevel, mobSkillData)
-					}
-				}
-				mob.skillID = 0
-				mob.skillLevel = 0
-			} else if rawAction >= 12 && rawAction <= 20 && isZakumBodyMob(mob.id) {
-				attackIndex := rawAction - 12
-				if attackIndex >= 0 && attackIndex < len(mob.attacks) && mob.attacks[attackIndex].DeadlyAttack > 0 {
-					now := time.Now().UnixMilli()
-					for _, target := range pool.instance.players {
-						target.deadlyAttackActive = true
-						target.deadlyAttackTime = now
-					}
-				}
+	// v48 only takes the mob-skill path in CMob::OnMove when action>>1 is in
+	// the skill range [21..25]. Align server-side application timing with that
+	// cast path instead of applying any non-zero skillData on arbitrary moves.
+	if isSkillAction {
+		if currentSkillID != 0 && currentSkillID == mob.skillID && currentSkillLevel == mob.skillLevel {
+			mobSkillID, mobSkillLevel, mobSkillData := mob.getMobSkill(skillDelay, currentSkillLevel, currentSkillID)
+
+			if mobSkillID != 0 {
+				pool.performSkill(mob, mobSkillID, mobSkillLevel, mobSkillData)
 			}
-
-			// Brazil's OnMobMove keeps a prepared next skill command and only replaces
-			// it when there isn't already one pending. Mirror that behavior so the
-			// client isn't constantly fed a new skill intent every movement ack.
-			nextSkillID, nextSkillLevel := byte(0), byte(0)
-			if !isSkillAction {
-				if mob.skillID == 0 && (mob.lastSkillUseMS == 0 || time.Now().UnixMilli()-mob.lastSkillUseMS >= 3000) {
-					mob.skillID, mob.skillLevel = mob.chooseNextSkill()
-				}
-				nextSkillID, nextSkillLevel = mob.skillID, mob.skillLevel
+		}
+		mob.skillID = 0
+		mob.skillLevel = 0
+	} else if rawAction >= 12 && rawAction <= 20 && isZakumBodyMob(mob.id) {
+		attackIndex := rawAction - 12
+		if attackIndex >= 0 && attackIndex < len(mob.attacks) && mob.attacks[attackIndex].DeadlyAttack > 0 {
+			now := time.Now().UnixMilli()
+			for _, target := range pool.instance.players {
+				target.deadlyAttackActive = true
+				target.deadlyAttackTime = now
 			}
-			if hadVisibleSelfBuff && rawAction >= 12 && rawAction <= 20 {
-				mob.refreshVisibleSelfBuffSync(pool.instance)
-			}
-
-			mob.refreshVisibleSelfBuffSync(pool.instance)
-
-			if !moveData.validateMob(v) {
-				return
-			}
-
-			if !finalData.posSet {
-				finalData.x = moveData.origX
-				finalData.y = moveData.origY
-				finalData.foothold = v.pos.foothold
-				finalData.posSet = true
-			}
-
-			pool.mobs[i].acknowledgeController(moveID, finalData, skillPossible, nextSkillID, nextSkillLevel)
-			pool.instance.sendExcept(packetMobMove(poolID, skillPossible, action, skillData, moveBytes), v.controller.Conn)
-
 		}
 	}
+
+	// Keep control authoritative: validate ownership and sequence before
+	// broadcasting so delayed packets never move the mob for other clients.
+	nextSkillID, nextSkillLevel := byte(0), byte(0)
+	if !isSkillAction {
+		if mob.skillID == 0 && (mob.lastSkillUseMS == 0 || time.Now().UnixMilli()-mob.lastSkillUseMS >= 3000) {
+			mob.skillID, mob.skillLevel = mob.chooseNextSkill()
+		}
+		nextSkillID, nextSkillLevel = mob.skillID, mob.skillLevel
+	}
+	if hadVisibleSelfBuff && rawAction >= 12 && rawAction <= 20 {
+		mob.refreshVisibleSelfBuffSync(pool.instance)
+	}
+
+	mob.refreshVisibleSelfBuffSync(pool.instance)
+
+	if !moveData.validateMob(*mob) {
+		return false
+	}
+
+	if !finalData.posSet {
+		finalData.x = moveData.origX
+		finalData.y = moveData.origY
+		finalData.foothold = mob.pos.foothold
+		finalData.posSet = true
+	}
+
+	mob.noteAcceptedCtrlMove(moveID)
+	mob.acknowledgeController(moveID, finalData, skillPossible, nextSkillID, nextSkillLevel)
+	pool.instance.sendExcept(packetMobMove(poolID, skillPossible, action, skillData, moveBytes), plr.Conn)
+	return true
 }
 
 func (pool *lifePool) performSkill(mob *monster, skillID, skillLevel byte, skillData nx.MobSkill) {
@@ -443,8 +528,9 @@ func (pool *lifePool) mobDamaged(poolID int32, damager *Player, dmg ...int32) {
 			wasVisibleSelfBuff := v.hasVisibleSelfBuff()
 
 			if damager != nil {
-				if pool.mobs[i].controller == nil || pool.mobs[i].controller != damager {
-					pool.mobs[i].removeController()
+				nowMS := time.Now().UnixMilli()
+				if pool.shouldHandoffController(pool.mobs[i], damager, nowMS) {
+					pool.logMobControllerEvent("handoff", pool.mobs[i], damager, pool.mobs[i].controller, "damage")
 					pool.mobs[i].setController(damager, true)
 				}
 				pool.activeMobCtrl[damager] = true
@@ -752,6 +838,9 @@ func (pool *lifePool) spawnMob(m *monster, hasAgro bool) bool {
 
 	if plr := pool.instance.findController(); plr != nil {
 		if cont, ok := plr.(*Player); ok {
+			if nearest := pool.findMobController(m); nearest != nil {
+				cont = nearest
+			}
 			if m.controller == nil || m.controller != cont {
 				m.setController(cont, hasAgro)
 			}

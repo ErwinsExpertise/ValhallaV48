@@ -15,38 +15,45 @@ function hasQuestItems(target) {
     return false;
 }
 
+function tryStartGuildQuest() {
+    if (!plr.inGuild() || plr.guildRank() >= 3) {
+        npc.sendOk("Only a Master or Jr. Master of the guild can start a Guild Quest.");
+        return;
+    }
+    if (plr.guildQuestActive()) {
+        npc.sendOk("Your guild already has an active Guild Quest.");
+        return;
+    }
+
+    var members = plr.guildMembersOnMap();
+    if (members.length < 6) {
+        npc.sendOk("You need at least 6 guild members from the same guild here to begin.");
+        return;
+    }
+    if (members.length > 30) {
+        npc.sendOk("A Guild Quest can only start with up to 30 participants.");
+        return;
+    }
+
+    for (var i = 0; i < members.length; i++) {
+        if (hasQuestItems(members[i])) {
+            npc.sendOk("One of your guild members is already carrying Guild Quest items. Please clean up the party first.");
+            return;
+        }
+    }
+
+    for (var j = 0; j < members.length; j++) {
+        clearItems(members[j]);
+    }
+
+    plr.startGuildQuest("guild_pq", -1);
+}
+
 npc.sendSelection("The path to Sharenian starts here. What would you like to do?#b\r\n#L0#Start a Guild Quest#l\r\n#L1#Join your guild's Guild Quest#l");
 var selection = npc.selection();
 
 if (selection === 0) {
-    if (!plr.inGuild() || plr.guildRank() >= 3) {
-        npc.sendOk("Only a Master or Jr. Master of the guild can start a Guild Quest.");
-    } else if (plr.guildQuestActive()) {
-        npc.sendOk("Your guild already has an active Guild Quest.");
-    } else {
-        var members = plr.guildMembersOnMap();
-        if (members.length < 6) {
-            npc.sendOk("You need at least 6 guild members from the same guild here to begin.");
-            return;
-        }
-        if (members.length > 30) {
-            npc.sendOk("A Guild Quest can only start with up to 30 participants.");
-            return;
-        }
-
-        for (var i = 0; i < members.length; i++) {
-            if (hasQuestItems(members[i])) {
-                npc.sendOk("One of your guild members is already carrying Guild Quest items. Please clean up the party first.");
-                return;
-            }
-        }
-
-        for (var j = 0; j < members.length; j++) {
-            clearItems(members[j]);
-        }
-
-        plr.startGuildQuest("guild_pq", -1);
-    }
+    tryStartGuildQuest();
 } else if (selection === 1) {
     if (!plr.inGuild()) {
         npc.sendOk("You must be in a guild to join a Guild Quest.");
