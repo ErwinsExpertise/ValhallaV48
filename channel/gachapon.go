@@ -131,7 +131,8 @@ func (ctrl *npcChatController) RunGachapon() {
 		return
 	}
 
-	ctrl.plr.Send(packetBroadcastCase7(gachaponSystemMessage(granted), granted.ItemID))
+	ctrl.plr.Send(packetMessageDropPickUp(false, granted.ItemID, int32(granted.Count)))
+	ctrl.plr.Send(packetMessageRedText(gachaponSystemMessage(granted)))
 
 	ctrl.SendOk("You have obtained #b#t" + strconv.Itoa(int(granted.ItemID)) + "##k.")
 }
