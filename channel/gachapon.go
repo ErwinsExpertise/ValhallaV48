@@ -2,10 +2,12 @@ package channel
 
 import (
 	"encoding/json"
-	"log"
+	"fmt"
 	"math/rand"
 	"os"
 	"strconv"
+
+	"github.com/Hucaru/Valhalla/nx"
 )
 
 type gachaponNPCConfig struct {
@@ -95,52 +97,56 @@ func normalizeGachaponPools(pools []gachaponPoolConfig) []gachaponPoolConfig {
 }
 
 func (ctrl *npcChatController) RunGachapon() {
-	log.Printf("gachapon enter npc=%d script=%s map=%d", ctrl.npcID, ctrl.script, ctrl.plr.mapID)
 	config, ok := gachaponNPCByID[ctrl.npcID]
 	if !ok {
-		log.Printf("gachapon missing config npc=%d script=%s", ctrl.npcID, ctrl.script)
 		ctrl.SendOk("Here's Gachapon.")
 		return
 	}
-	log.Printf("gachapon config npc=%d town=%q ticket=%d pool=%d levelGate=%t minLevel=%d", ctrl.npcID, config.TownName, config.TicketItemID, config.PoolIndex, config.HasLevelGate, config.MinLevel)
 
 	if config.HasLevelGate && int(ctrl.plr.level) < config.MinLevel {
-		log.Printf("gachapon blocked by level npc=%d level=%d required=%d", ctrl.npcID, ctrl.plr.level, config.MinLevel)
 		ctrl.SendOk("You need to be at least Level 15 in order to use Gachapon.")
 		return
 	}
 
 	if ctrl.plr.countItem(config.TicketItemID) < 1 {
-		log.Printf("gachapon missing ticket npc=%d ticket=%d", ctrl.npcID, config.TicketItemID)
 		ctrl.SendOk("Here's Gachapon.")
 		return
 	}
 
 	state := ctrl.stateTracker.getCurrentState()
 	if state != npcYesState {
-		log.Printf("gachapon prompting yes/no npc=%d state=%d", ctrl.npcID, state)
 		ctrl.SendYesNo("You may use Gachapon. Would you like to use your Gachapon ticket?")
 		return
 	}
-	log.Printf("gachapon resumed-yes npc=%d", ctrl.npcID)
 
 	reward, ok := drawGachaponReward(config.PoolIndex, randomGachaponRoll(config.PoolIndex))
 	if !ok {
-		log.Printf("gachapon failed draw npc=%d pool=%d", ctrl.npcID, config.PoolIndex)
 		ctrl.SendOk("Please check your item inventory and see if you have the ticket, or if the inventory is full.")
 		return
 	}
-	log.Printf("gachapon drew reward npc=%d item=%d count=%d", ctrl.npcID, reward.ItemID, reward.Count)
 
 	granted, ok := executeGachaponGrant(gachaponPlayerOps{plr: ctrl.plr}, config.TicketItemID, reward)
 	if !ok {
-		log.Printf("gachapon failed grant npc=%d item=%d count=%d", ctrl.npcID, reward.ItemID, reward.Count)
 		ctrl.SendOk("Please make room on your item inventory and then try again.")
 		return
 	}
 
-	log.Printf("gachapon granted npc=%d item=%d count=%d", ctrl.npcID, granted.ItemID, granted.Count)
+	ctrl.plr.Send(packetBroadcastCase7(gachaponSystemMessage(granted), granted.ItemID))
+
 	ctrl.SendOk("You have obtained #b#t" + strconv.Itoa(int(granted.ItemID)) + "##k.")
+}
+
+func gachaponSystemMessage(reward gachaponRewardConfig) string {
+	name := fmt.Sprintf("item %d", reward.ItemID)
+	if item, err := nx.GetItem(reward.ItemID); err == nil && item.Name != "" {
+		name = item.Name
+	}
+
+	if reward.Count > 1 {
+		return fmt.Sprintf("You have gained %d %s.", reward.Count, name)
+	}
+
+	return fmt.Sprintf("You have gained %s.", name)
 }
 
 type gachaponPlayerOps struct {

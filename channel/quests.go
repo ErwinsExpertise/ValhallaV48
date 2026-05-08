@@ -13,7 +13,8 @@ type quests struct {
 	inProgress map[int16]quest
 	completed  map[int16]quest
 
-	mobKills map[int16]map[int32]int32
+	mobKills    map[int16]map[int32]int32
+	completable map[int16]struct{}
 }
 
 type quest struct {
@@ -38,6 +39,9 @@ func (q *quests) init() {
 	}
 	if q.mobKills == nil {
 		q.mobKills = make(map[int16]map[int32]int32, 16)
+	}
+	if q.completable == nil {
+		q.completable = make(map[int16]struct{}, 16)
 	}
 }
 
@@ -147,16 +151,19 @@ func clearQuestMobKills(charID int32, questID int16) {
 func (q *quests) add(id int16, name string) {
 	q.inProgress[id] = quest{id: id, name: name}
 	delete(q.completed, id)
+	delete(q.completable, id)
 
 }
 
 func (q *quests) remove(id int16) {
 	delete(q.inProgress, id)
+	delete(q.completable, id)
 }
 func (q *quests) complete(id int16, completedAt int64) {
 	delete(q.inProgress, id)
 	q.completed[id] = quest{id: id, completedAt: completedAt}
 	delete(q.mobKills, id)
+	delete(q.completable, id)
 }
 
 func (q *quests) hasInProgress(id int16) bool {

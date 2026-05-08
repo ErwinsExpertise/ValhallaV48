@@ -12,6 +12,7 @@ FROM alpine:3.20
 WORKDIR /app
 
 COPY drops.json /app/drops.json
+COPY gachapon.json /app/gachapon.json
 COPY reactors.json /app/reactors.json
 COPY reactor_drops.json /app/reactor_drops.json
 COPY scripts/ /app/scripts/

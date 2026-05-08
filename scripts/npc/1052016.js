@@ -1,5 +1,5 @@
-var towns = [104000000, 102000000, 101000000, 100000000, 120000000];
-var basePrices = [1000, 800, 1200, 1000, 1000];
+var towns = [104000000, 102000000, 101000000, 100000000];
+var basePrices = [1000, 800, 1200, 1000];
 
 npc.sendNext("What's up? I drive the Regular Cab. If you want to go from town to town safely and fast, then ride our cab. We'll glady take you to your destination with an affordable price.");
 

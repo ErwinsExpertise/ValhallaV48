@@ -826,10 +826,58 @@ func (d *Player) levelUp() {
 
 func (d *Player) levelUpSPGain() int16 {
 	if d != nil && d.job == constant.BeginnerJobID {
-		return 1
+		return 0
 	}
 
 	return 3
+}
+
+func (d *Player) remainingBeginnerSP() int16 {
+	if d == nil {
+		return 0
+	}
+	available := int16(d.level) - 1
+	if available > 6 {
+		available = 6
+	}
+	if available < 0 {
+		available = 0
+	}
+
+	spent := int16(0)
+	for skillID, ps := range d.skills {
+		if skillID/10000 == 0 {
+			spent += int16(ps.Level)
+		}
+	}
+
+	remaining := available - spent
+	if remaining < 0 {
+		return 0
+	}
+	return remaining
+}
+
+func (d *Player) refreshQuestCompletionNotifications(forceResend bool) {
+	if d == nil {
+		return
+	}
+	d.quests.init()
+
+	current := make(map[int16]struct{}, len(d.quests.inProgress))
+	for questID := range d.quests.inProgress {
+		q, err := nx.GetQuest(questID)
+		if err != nil || !d.canCompleteQuest(q) {
+			continue
+		}
+		current[questID] = struct{}{}
+		_, wasCompletable := d.quests.completable[questID]
+		if forceResend || !wasCompletable {
+			d.Send(packetQuestComplete(questID))
+		}
+	}
+
+	d.quests.completable = current
 }
 
 func (d *Player) setEXP(amount int32) {
@@ -1451,6 +1499,7 @@ func (d *Player) GiveItem(newItem Item) (Item, error) { // TODO: Refactor
 	if newItem.ringID > 0 {
 		d.refreshRingRecords()
 	}
+	d.refreshQuestCompletionNotifications(false)
 
 	return newItem, nil
 }
@@ -1534,6 +1583,7 @@ func (d *Player) takeItem(id int32, slot int16, amount int16, invID byte) (Item,
 	} else {
 		d.updateItemStack(item, false)
 	}
+	d.refreshQuestCompletionNotifications(false)
 
 	return item, nil
 
@@ -1565,6 +1615,7 @@ func (d *Player) TakeItemSilent(id int32, slot int16, amount int16, invID byte) 
 	} else {
 		d.updateItemStack(item, true)
 	}
+	d.refreshQuestCompletionNotifications(false)
 
 	return item, nil
 
@@ -2204,10 +2255,7 @@ func (d *Player) useSkill(id int32, level byte, projectileID int32) error {
 	}
 
 	if projectileID > 0 {
-		need := int32(si.BulletConsume)
-		if need <= 0 {
-			need = int32(si.BulletCount)
-		}
+		need := projectileItemsToConsume(si)
 		if need > 0 {
 			if !d.consumeItemsByID(projectileID, need) {
 				d.Conn.Send(packetMessageRedText("not enough projectiles to use this skill"))
@@ -2217,6 +2265,17 @@ func (d *Player) useSkill(id int32, level byte, projectileID int32) error {
 	}
 
 	return nil
+}
+
+func projectileItemsToConsume(si nx.PlayerSkill) int32 {
+	need := int32(si.BulletConsume)
+	if need <= 0 {
+		need = int32(si.BulletCount)
+	}
+	if need <= 0 {
+		need = 1
+	}
+	return need
 }
 
 func (d *Player) consumeItemsByID(itemID int32, reqCount int32) bool {
@@ -3698,6 +3757,7 @@ func (d *Player) tryStartQuestSelection(questID int16, selection int) bool {
 		nextQuests = append(nextQuests, q.ActOnStart.NextQuest)
 	}
 	d.Send(packetQuestActionResult(constant.QuestActionSuccess, questID, q.Start.NPC, nextQuests))
+	d.refreshQuestCompletionNotifications(false)
 
 	return true
 }
@@ -3745,6 +3805,7 @@ func (d *Player) tryCompleteQuestSelection(questID int16, selection int) bool {
 	}
 
 	d.Send(packetQuestActionResult(constant.QuestActionSuccess, questID, q.Complete.NPC, nextQuests))
+	d.refreshQuestCompletionNotifications(false)
 
 	return true
 }
@@ -3813,6 +3874,7 @@ func (d *Player) onMobKilled(mobID int32) {
 
 		d.Send(packetQuestUpdateMobKills(qid, d.buildQuestKillString(q)))
 	}
+	d.refreshQuestCompletionNotifications(false)
 }
 
 func (d *Player) meetsMobKills(questID int16, reqs []nx.ReqMob) bool {

@@ -786,6 +786,7 @@ func (ctrl *scriptPlayerWrapper) SetQuestData(id int16, data string) {
 	// Persist + notify client
 	upsertQuestRecord(ctrl.plr.ID, id, data)
 	ctrl.plr.Send(packetQuestUpdate(id, data))
+	ctrl.plr.refreshQuestCompletionNotifications(false)
 }
 
 func (ctrl *scriptPlayerWrapper) StartQuest(id int16) bool {
@@ -803,6 +804,7 @@ func (ctrl *scriptPlayerWrapper) ForceCompleteQuest(id int16) {
 	clearQuestMobKills(ctrl.plr.ID, id)
 	ctrl.plr.Send(packetQuestUpdate(id, ""))
 	ctrl.plr.Send(packetQuestComplete(id))
+	ctrl.plr.refreshQuestCompletionNotifications(false)
 }
 
 func (ctrl *scriptPlayerWrapper) ForfeitQuest(id int16) {
@@ -814,6 +816,7 @@ func (ctrl *scriptPlayerWrapper) ForfeitQuest(id int16) {
 	deleteQuest(ctrl.plr.ID, id)
 	ctrl.plr.Send(packetQuestRemove(id))
 	clearQuestMobKills(ctrl.plr.ID, id)
+	ctrl.plr.refreshQuestCompletionNotifications(false)
 }
 
 func (ctrl *scriptPlayerWrapper) TakeItem(id int32, slot int16, amount int16, invID byte) bool {
@@ -2313,17 +2316,13 @@ func (ctrl *npcChatController) run() bool {
 
 	if err != nil {
 		if _, isInterrupted := err.(*goja.InterruptedError); isInterrupted {
-			log.Printf("npc script interrupted npc=%d script=%s map=%d pos=%d last=%d disposed=%t", ctrl.npcID, ctrl.script, ctrl.plr.mapID, ctrl.stateTracker.currentPos, ctrl.stateTracker.lastPos, ctrl.disposed)
 			if ctrl.disposed {
 				return true
 			}
 			return false
 		}
-		log.Printf("npc script runtime error npc=%d script=%s map=%d pos=%d last=%d err=%v", ctrl.npcID, ctrl.script, ctrl.plr.mapID, ctrl.stateTracker.currentPos, ctrl.stateTracker.lastPos, err)
 		return true
 	}
-
-	log.Printf("npc script completed npc=%d script=%s map=%d pos=%d last=%d disposed=%t", ctrl.npcID, ctrl.script, ctrl.plr.mapID, ctrl.stateTracker.currentPos, ctrl.stateTracker.lastPos, ctrl.disposed)
 
 	if ctrl.stateTracker.currentPos >= ctrl.stateTracker.lastPos {
 		return true

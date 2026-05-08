@@ -697,9 +697,17 @@ func (m *monster) applyBuff(ownerID, skillID int32, skillLevel byte, statMask in
 	}
 
 	si := skillData[skillLevel-1]
+	if !shouldApplyPlayerMobDebuff(si.Prop) {
+		return
+	}
 
 	var value int16
 	switch skill.Skill(skillID) {
+	case skill.ArrowBomb:
+		if m.boss {
+			return
+		}
+		value = 1
 	case skill.Threaten, skill.ArmorCrash, skill.PowerCrash, skill.MagicCrash:
 		value = int16(si.X)
 	case skill.Slow, skill.ILSlow:
@@ -772,6 +780,13 @@ func (m *monster) applyBuff(ownerID, skillID int32, skillLevel byte, statMask in
 	}
 
 	inst.send(packetMobStatSet(m.spawnID, statMask, value, skillID, duration, 0, m.advanceCalcDamageStatIndex(statMask)))
+}
+
+func shouldApplyPlayerMobDebuff(prop int64) bool {
+	if prop <= 0 {
+		return true
+	}
+	return rand.Intn(100) < int(prop)
 }
 
 // removeDebuff removes a debuff from the mob

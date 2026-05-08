@@ -436,6 +436,7 @@ func (server *Server) playerConnect(conn mnet.Client, reader mpacket.Reader) {
 		}
 		newPlr.Send(packetQuestUpdateMobKills(q.id, newPlr.buildQuestKillString(questData)))
 	}
+	newPlr.refreshQuestCompletionNotifications(true)
 
 	common.MetricsGauges["player_count"].With(prometheus.Labels{"channel": strconv.Itoa(int(server.id)), "world": server.worldName}).Inc()
 	server.world.Send(internal.PacketChannelPopUpdate(server.id, int16(server.players.count())))
@@ -908,14 +909,19 @@ func (server Server) playerAddSkillPoint(conn mnet.Client, reader mpacket.Reader
 		return
 	}
 
-	if plr.sp < 1 {
-		return // hacker
-	}
-
 	tick := reader.ReadInt32() // leading tick/unknown int
 
 	skillID := reader.ReadInt32()
 	_ = tick
+	baseSkillID := skillID / 10000
+	if baseSkillID == 0 {
+		if plr.remainingBeginnerSP() < 1 {
+			return
+		}
+	} else if plr.sp < 1 {
+		return // hacker
+	}
+
 	skill, ok := plr.skills[skillID]
 
 	if ok {
@@ -929,7 +935,6 @@ func (server Server) playerAddSkillPoint(conn mnet.Client, reader mpacket.Reader
 		plr.updateSkill(skill)
 	} else {
 		// check if class can have skill
-		baseSkillID := skillID / 10000
 		if !validateSkillWithJob(plr.job, baseSkillID) {
 			log.Printf("playerAddSkillPoint invalid for job: player=%s job=%d skillID=%d baseSkillID=%d", plr.Name, plr.job, skillID, baseSkillID)
 			conn.Send(packetPlayerNoChange())
@@ -946,7 +951,9 @@ func (server Server) playerAddSkillPoint(conn mnet.Client, reader mpacket.Reader
 		plr.updateSkill(skill)
 	}
 
-	plr.giveSP(-1)
+	if baseSkillID != 0 {
+		plr.giveSP(-1)
+	}
 }
 
 func validateSkillWithJob(jobID int16, baseSkillID int32) bool {
@@ -1623,6 +1630,7 @@ func (server Server) warpPlayerToInstance(plr *Player, dstField *field, dstPorta
 	if err = dstInst.addPlayer(plr); err != nil {
 		return err
 	}
+	plr.refreshQuestCompletionNotifications(false)
 
 	if hadStarterVisualOverride != isStarterEquipOverrideMap(plr.mapID) {
 		plr.refreshStarterVisualEquipSlots()
@@ -2840,6 +2848,8 @@ func playerSkillMobStatMask(skillID int32) (int32, bool) {
 		return skill.MobStat.Speed, true
 	case skill.Seal, skill.ILSeal:
 		return skill.MobStat.Seal, true
+	case skill.ArrowBomb:
+		return skill.MobStat.Stun, true
 	case skill.ShadowWeb:
 		return skill.MobStat.Web, true
 	case skill.Doom:
@@ -3422,7 +3432,6 @@ func (server *Server) npcChatStart(conn mnet.Client, reader mpacket.Reader) {
 
 	server.npcChat[conn] = controller
 	server.updateNPCInteractionMetric(1)
-	log.Printf("npc chat start npc=%d script=%s map=%d spawn=%d", controller.npcID, controller.script, plr.mapID, npcSpawnID)
 
 	// Run the script. If it returns true, chat flow ended.
 	if ended := controller.run(); ended {
@@ -5686,6 +5695,7 @@ func (server *Server) playerUseStorage(conn mnet.Client, reader mpacket.Reader) 
 	}
 
 	const (
+		storageItemDepositFee           = 100
 		actionWithdraw             byte = 4
 		actionDeposit                   = 5
 		actionStoreMesos                = 6
@@ -5774,6 +5784,11 @@ func (server *Server) playerUseStorage(conn mnet.Client, reader mpacket.Reader) 
 			return
 		}
 
+		if plr.mesos < storageItemDepositFee {
+			plr.Send(packetNpcStorageResult(storagePutNoMoney))
+			return
+		}
+
 		if isRechargeable(itemID) {
 			amt = itemOnChar.amount
 		} else if !itemOnChar.isStackable() {
@@ -5786,6 +5801,13 @@ func (server *Server) playerUseStorage(conn mnet.Client, reader mpacket.Reader) 
 		storeCopy.amount = amt
 		storeCopy.dbID = 0
 		storeCopy.slotID = 0
+		storageSlot := -1
+		for i := range plr.storageInventory.items {
+			if plr.storageInventory.items[i].ID == 0 {
+				storageSlot = i
+				break
+			}
+		}
 
 		if _, remErr := plr.takeItem(itemID, srcSlot, amt, tab); remErr != nil {
 			plr.Send(packetNpcStorageResult(storageDueToAnError))
@@ -5798,7 +5820,13 @@ func (server *Server) playerUseStorage(conn mnet.Client, reader mpacket.Reader) 
 			return
 		}
 
+		plr.giveMesos(-storageItemDepositFee)
+
 		if err := plr.storageInventory.save(plr.accountID); err != nil {
+			plr.giveMesos(storageItemDepositFee)
+			if storageSlot >= 0 {
+				plr.storageInventory.removeAt(byte(storageSlot))
+			}
 			_, _ = plr.GiveItem(storeCopy)
 			plr.Send(packetNpcStorageResult(storageDueToAnError))
 			return
