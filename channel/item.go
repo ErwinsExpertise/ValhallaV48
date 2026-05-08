@@ -656,14 +656,14 @@ func (v *Item) save(charID int32) (bool, error) {
 			return false, err
 		}
 	} else {
-		props := "slotNumber=?,amount=?,flag=?,upgradeSlots=?,`level`=?," +
+		props := "itemID=?,slotNumber=?,amount=?,flag=?,upgradeSlots=?,`level`=?," +
 			"str=?,dex=?,intt=?,luk=?,hp=?,mp=?,watk=?,matk=?,wdef=?,mdef=?,accuracy=?,avoid=?,hands=?,speed=?,jump=?," +
 			"expireTime=?,cashID=?,cashSN=?,ringID=?"
 
 		query := "UPDATE items SET " + props + " WHERE ID=?"
 
 		_, err := common.DB.Exec(query,
-			v.slotID, v.amount, v.flag, v.upgradeSlots, v.scrollLevel,
+			v.ID, v.slotID, v.amount, v.flag, v.upgradeSlots, v.scrollLevel,
 			v.str, v.dex, v.intt, v.luk, v.hp, v.mp, v.watk, v.matk, v.wdef, v.mdef, v.accuracy, v.avoid, v.hands, v.speed, v.jump,
 			v.expireTime, sql.NullInt64{Int64: v.cashID, Valid: v.cashID != 0}, sql.NullInt32{Int32: v.cashSN, Valid: v.cashSN != 0}, sql.NullInt32{Int32: v.ringID, Valid: v.ringID > 0}, v.dbID)
 

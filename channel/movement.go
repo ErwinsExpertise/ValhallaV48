@@ -318,7 +318,56 @@ type mob interface {
 
 // ValidateMob movement
 func (data movement) validateMob(mob mob) bool {
-	// run through the movement data and make sure monsters are not moving too fast
+	const (
+		mobMaxMoveStepX   = int32(1800)
+		mobMaxMoveStepY   = int32(1200)
+		mobMaxMoveRangeX  = int32(2400)
+		mobMaxMoveRangeY  = int32(1600)
+		mobMaxBoundsSpanX = int32(2800)
+		mobMaxBoundsSpanY = int32(1800)
+	)
+
+	abs32 := func(v int32) int32 {
+		if v < 0 {
+			return -v
+		}
+		return v
+	}
+
+	lastX, lastY := int32(data.origX), int32(data.origY)
+	minX, maxX := lastX, lastX
+	minY, maxY := lastY, lastY
+
+	for _, frag := range data.frags {
+		if !frag.posSet {
+			continue
+		}
+
+		x, y := int32(frag.x), int32(frag.y)
+		if abs32(x-lastX) > mobMaxMoveStepX || abs32(y-lastY) > mobMaxMoveStepY {
+			return false
+		}
+		if abs32(x-int32(data.origX)) > mobMaxMoveRangeX || abs32(y-int32(data.origY)) > mobMaxMoveRangeY {
+			return false
+		}
+
+		if x < minX {
+			minX = x
+		} else if x > maxX {
+			maxX = x
+		}
+		if y < minY {
+			minY = y
+		} else if y > maxY {
+			maxY = y
+		}
+
+		lastX, lastY = x, y
+	}
+
+	if maxX-minX > mobMaxBoundsSpanX || maxY-minY > mobMaxBoundsSpanY {
+		return false
+	}
 
 	return true
 }

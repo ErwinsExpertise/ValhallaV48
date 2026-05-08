@@ -148,13 +148,8 @@ func (server *Server) handlePlayerConnectedNotifications(conn mnet.Server, reade
 
 	server.players.observe(func(plr *Player) {
 		if plr.hasBuddy(playerID) {
-			if changeChannel {
-				plr.Send(packetBuddyChangeChannel(playerID, int32(channelID)))
-				plr.addOnlineBuddy(playerID, name, int32(channelID))
-			} else {
-				plr.Send(packetBuddyOnlineStatus(playerID, int32(channelID)))
-				plr.addOnlineBuddy(playerID, name, int32(channelID))
-			}
+			plr.addOnlineBuddy(playerID, name, int32(channelID), false)
+			plr.Send(packetBuddyStatus(playerID, int32(channelID), false))
 		}
 	})
 }
@@ -175,6 +170,7 @@ func (server *Server) handlePlayerDisconnectNotifications(conn mnet.Server, read
 	server.players.observe(func(plr *Player) {
 		if plr.hasBuddy(playerID) {
 			plr.addOfflineBuddy(playerID, name)
+			plr.Send(packetBuddyStatus(playerID, -1, false))
 		}
 	})
 }
@@ -199,6 +195,7 @@ func (server *Server) handleBuddyEvent(conn mnet.Server, reader mpacket.Reader) 
 			return
 		}
 
+		plr.addPendingBuddy(fromID, fromName, int32(channelID), false)
 		plr.Send(packetBuddyReceiveRequest(fromID, fromName, int32(channelID)))
 	case 2:
 		recepientID := reader.ReadInt32()
@@ -216,9 +213,8 @@ func (server *Server) handleBuddyEvent(conn mnet.Server, reader mpacket.Reader) 
 			return
 		}
 
-		plr.addOfflineBuddy(fromID, fromName)
-		plr.Send(packetBuddyOnlineStatus(fromID, int32(channelID)))
-		plr.addOnlineBuddy(fromID, fromName, int32(channelID))
+		plr.addOnlineBuddy(fromID, fromName, int32(channelID), false)
+		plr.Send(packetBuddySetDone(plr.buddyList))
 	case 3:
 		recepientID := reader.ReadInt32()
 		fromID := reader.ReadInt32()
@@ -234,7 +230,10 @@ func (server *Server) handleBuddyEvent(conn mnet.Server, reader mpacket.Reader) 
 			return
 		}
 
-		plr.removeBuddy(fromID)
+		if plr.hasBuddy(fromID) {
+			plr.removeBuddy(fromID)
+			plr.Send(packetBuddyDeleteDone(plr.buddyList))
+		}
 	default:
 		log.Println("Unknown buddy event type:", op)
 	}

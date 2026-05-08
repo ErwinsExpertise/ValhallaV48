@@ -333,6 +333,7 @@ func (server *Server) playerConnect(conn mnet.Client, reader mpacket.Reader) {
 	}
 
 	plr := LoadPlayerFromID(charID, conn)
+	plr.server = server
 	plr.rates = &server.rates
 	plr.petConsumeLoadedAt = time.Now()
 	plr.restoreActivePetFromCashInventory()
@@ -449,6 +450,118 @@ func (server *Server) playerConnect(conn mnet.Client, reader mpacket.Reader) {
 	log.Printf("[CHANNEL %d] consumed migration account=%d char=%d ip=%s", server.id, pending.AccountID, pending.CharacterID, clientIP)
 }
 
+func (server *Server) startChannelMigrationAsync(conn mnet.Client, player *Player, channelID byte, ip []byte, port int16) {
+	if player == nil {
+		return
+	}
+	accountID := player.accountID
+	playerID := player.ID
+	playerName := player.Name
+	worldID := player.worldID
+	clientIP := common.RemoteIPFromConn(conn)
+	guildID := int32(0)
+	if player.guild != nil {
+		guildID = player.guild.id
+	}
+
+	go func() {
+		if _, err := common.DB.Exec("UPDATE characters SET migrationID=? WHERE ID=?", channelID, playerID); err != nil {
+			server.post(func() {
+				delete(server.migrating, conn)
+				log.Println(err)
+			})
+			return
+		}
+
+		pending, err := common.CreatePendingMigration(accountID, playerID, worldID, common.MigrationTypeChannel, int(channelID), clientIP, 30*time.Second)
+		if err != nil {
+			go func() {
+				_, _ = common.DB.Exec("UPDATE characters SET migrationID=? WHERE ID=?", -1, playerID)
+			}()
+			server.post(func() {
+				delete(server.migrating, conn)
+				log.Println("playerChangeChannel pending migration create failed:", err)
+			})
+			return
+		}
+
+		server.post(func() {
+			if !server.migrating[conn] {
+				go func() {
+					common.DeletePendingMigrationForCharacter(playerID)
+					_, _ = common.DB.Exec("UPDATE characters SET migrationID=? WHERE ID=?", -1, playerID)
+					_, _ = common.DB.Exec("UPDATE characters SET channelID=? WHERE ID=?", -1, playerID)
+					common.DeletePendingMigrationsForAccount(accountID)
+					_, _ = common.DB.Exec("UPDATE accounts SET isLogedIn=0 WHERE accountID=?", accountID)
+					if server != nil && server.world != nil {
+						server.world.Send(internal.PacketChannelPlayerDisconnect(playerID, playerName, guildID))
+					}
+				}()
+				return
+			}
+
+			log.Printf("[CHANNEL %d] created migration account=%d char=%d targetChannel=%d nonce=%s ip=%s", server.id, pending.AccountID, pending.CharacterID, channelID, pending.Nonce, pending.ClientIP)
+			conn.Send(packetChangeChannel(ip, port))
+		})
+	}()
+}
+
+func (server *Server) startCashShopMigrationAsync(conn mnet.Client, player *Player) {
+	if player == nil {
+		return
+	}
+	accountID := player.accountID
+	playerID := player.ID
+	playerName := player.Name
+	worldID := player.worldID
+	clientIP := common.RemoteIPFromConn(conn)
+	guildID := int32(0)
+	if player.guild != nil {
+		guildID = player.guild.id
+	}
+
+	go func() {
+		if _, err := common.DB.Exec("UPDATE characters SET migrationID=?, previousChannelID=?, inCashShop=1 WHERE ID=?", 50, server.id, playerID); err != nil {
+			server.post(func() {
+				delete(server.migrating, conn)
+				log.Println(err)
+			})
+			return
+		}
+
+		pending, err := common.CreatePendingMigration(accountID, playerID, worldID, common.MigrationTypeCashShop, 50, clientIP, 30*time.Second)
+		if err != nil {
+			go func() {
+				_, _ = common.DB.Exec("UPDATE characters SET migrationID=?, inCashShop=0 WHERE ID=?", -1, playerID)
+			}()
+			server.post(func() {
+				delete(server.migrating, conn)
+				log.Println("playerEnterCashShop pending migration create failed:", err)
+			})
+			return
+		}
+
+		server.post(func() {
+			if !server.migrating[conn] {
+				go func() {
+					common.DeletePendingMigrationForCharacter(playerID)
+					_, _ = common.DB.Exec("UPDATE characters SET migrationID=?, inCashShop=0 WHERE ID=?", -1, playerID)
+					_, _ = common.DB.Exec("UPDATE characters SET channelID=? WHERE ID=?", -1, playerID)
+					common.DeletePendingMigrationsForAccount(accountID)
+					_, _ = common.DB.Exec("UPDATE accounts SET isLogedIn=0 WHERE accountID=?", accountID)
+					if server != nil && server.world != nil {
+						server.world.Send(internal.PacketChannelPlayerDisconnect(playerID, playerName, guildID))
+					}
+				}()
+				return
+			}
+
+			log.Printf("[CHANNEL %d] created cashshop migration account=%d char=%d nonce=%s ip=%s", server.id, pending.AccountID, pending.CharacterID, pending.Nonce, pending.ClientIP)
+			conn.Send(packetChangeChannel(server.cashShop.IP, server.cashShop.Port))
+		})
+	}()
+}
+
 func (server *Server) playerChangeChannel(conn mnet.Client, reader mpacket.Reader) {
 	id := reader.ReadByte()
 
@@ -473,21 +586,7 @@ func (server *Server) playerChangeChannel(conn mnet.Client, reader mpacket.Reade
 			delete(server.migrating, conn)
 			conn.Send(packetCannotChangeChannel())
 		} else {
-			if _, err := common.DB.Exec("UPDATE characters SET migrationID=? WHERE ID=?", id, player.ID); err != nil {
-				delete(server.migrating, conn)
-				log.Println(err)
-				return
-			}
-
-			pending, err := common.CreatePendingMigration(player.accountID, player.ID, player.worldID, common.MigrationTypeChannel, int(id), common.RemoteIPFromConn(conn), 30*time.Second)
-			if err != nil {
-				delete(server.migrating, conn)
-				log.Println("playerChangeChannel pending migration create failed:", err)
-				return
-			}
-			log.Printf("[CHANNEL %d] created migration account=%d char=%d targetChannel=%d nonce=%s ip=%s", server.id, pending.AccountID, pending.CharacterID, id, pending.Nonce, pending.ClientIP)
-
-			conn.Send(packetChangeChannel(server.channels[id].IP, server.channels[id].Port))
+			server.startChannelMigrationAsync(conn, player, id, server.channels[id].IP, server.channels[id].Port)
 		}
 	}
 }
@@ -1087,21 +1186,7 @@ func (server *Server) playerEnterCashShop(conn mnet.Client, reader mpacket.Reade
 	player.saveBuffSnapshot()
 
 	if len(server.cashShop.IP) == 4 && server.cashShop.Port != 0 {
-		if _, err := common.DB.Exec("UPDATE characters SET migrationID=?, previousChannelID=?, inCashShop=1 WHERE ID=?", 50, server.id, player.ID); err != nil {
-			delete(server.migrating, conn)
-			log.Println(err)
-			return
-		}
-
-		pending, err := common.CreatePendingMigration(player.accountID, player.ID, player.worldID, common.MigrationTypeCashShop, 50, common.RemoteIPFromConn(conn), 30*time.Second)
-		if err != nil {
-			delete(server.migrating, conn)
-			log.Println("playerEnterCashShop pending migration create failed:", err)
-			return
-		}
-		log.Printf("[CHANNEL %d] created cashshop migration account=%d char=%d nonce=%s ip=%s", server.id, pending.AccountID, pending.CharacterID, pending.Nonce, pending.ClientIP)
-
-		conn.Send(packetChangeChannel(server.cashShop.IP, server.cashShop.Port))
+		server.startCashShopMigrationAsync(conn, player)
 	} else {
 		delete(server.migrating, conn)
 		conn.Send(packetCannotEnterCashShop())
@@ -2130,11 +2215,14 @@ func (server Server) getPlayerInstance(conn mnet.Client, reader mpacket.Reader) 
 	if err != nil {
 		return nil, err
 	}
+	if plr == nil || plr.inst == nil {
+		return nil, fmt.Errorf("player has no active instance")
+	}
 
 	field, ok := server.fields[plr.mapID]
 
 	if !ok {
-		return nil, err
+		return nil, fmt.Errorf("field %d not found", plr.mapID)
 	}
 
 	inst, err := field.getInstance(plr.inst.id)
@@ -2146,150 +2234,219 @@ func (server Server) getPlayerInstance(conn mnet.Client, reader mpacket.Reader) 
 	return inst, nil
 }
 
+func buddyCount(characterID int32) (int32, error) {
+	var count int32
+	err := common.DB.QueryRow("SELECT COUNT(*) FROM buddy WHERE characterID=?", characterID).Scan(&count)
+	return count, err
+}
+
+func loadBuddyCharacterByID(id int32) (string, int32, bool, byte, error) {
+	var name string
+	var channelID int32
+	var cashShop bool
+	var worldID byte
+	err := common.DB.QueryRow("SELECT Name,channelID,inCashShop,worldID FROM characters WHERE ID=?", id).Scan(&name, &channelID, &cashShop, &worldID)
+	return name, channelID, cashShop, worldID, err
+}
+
+func (server *Server) acceptBuddyRequest(plr *Player, friendID int32) error {
+	friendName, friendChannel, cashShop, _, err := loadBuddyCharacterByID(friendID)
+	if err != nil {
+		return err
+	}
+
+	var friendBuddySize int32
+	if err := common.DB.QueryRow("SELECT buddyListSize FROM characters WHERE ID=?", friendID).Scan(&friendBuddySize); err != nil {
+		return err
+	}
+
+	friendBuddyCount, err := buddyCount(friendID)
+	if err != nil {
+		return err
+	}
+
+	if friendBuddyCount >= friendBuddySize {
+		plr.Send(packetBuddyOtherFullList())
+		return nil
+	}
+
+	tx, err := common.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	res, err := tx.Exec("UPDATE buddy SET accepted=1 WHERE characterID=? AND friendID=? AND accepted=0", plr.ID, friendID)
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return nil
+	}
+
+	res, err = tx.Exec("UPDATE buddy SET accepted=1 WHERE characterID=? AND friendID=?", friendID, plr.ID)
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err = res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		if _, err := tx.Exec("INSERT INTO buddy(characterID,friendID,accepted) VALUES(?,?,1)", friendID, plr.ID); err != nil {
+			return err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	if friendChannel == -1 {
+		plr.addOfflineBuddy(friendID, friendName)
+	} else {
+		plr.addOnlineBuddy(friendID, friendName, friendChannel, cashShop)
+	}
+	plr.Send(packetBuddySetDone(plr.buddyList))
+
+	if recipient, err := server.players.GetFromID(friendID); err != nil {
+		server.world.Send(internal.PacketChannelBuddyEvent(2, friendID, plr.ID, plr.Name, server.id))
+	} else {
+		recipient.addOnlineBuddy(plr.ID, plr.Name, int32(server.id), false)
+		recipient.Send(packetBuddySetDone(recipient.buddyList))
+	}
+
+	return nil
+}
+
 func (server *Server) playerBuddyOperation(conn mnet.Client, reader mpacket.Reader) {
 	op := reader.ReadByte()
 
+	plr, err := server.players.GetFromConn(conn)
+	if err != nil {
+		return
+	}
+
 	switch op {
 	case 1: // Add
-		plr, err := server.players.GetFromConn(conn)
-
-		if err != nil {
-			return
-		}
-
 		if plr.buddyListFull() {
 			conn.Send(packetBuddyPlayerFullList())
 			return
 		}
 
 		name := reader.ReadString(reader.ReadInt16())
+		if len(name) < 4 || len(name) > 12 {
+			return
+		}
 
 		var charID int32
 		var accountID int32
 		var buddyListSize int32
-
-		err = common.DB.QueryRow("SELECT ID,accountID,buddyListSize FROM characters WHERE BINARY Name=? and worldID=?", name, conn.GetWorldID()).Scan(&charID, &accountID, &buddyListSize)
-
-		if err != nil || accountID == conn.GetAccountID() {
-			conn.Send(packetBuddyNameNotRegistered())
+		err = common.DB.QueryRow(
+			"SELECT ID,accountID,buddyListSize FROM characters WHERE BINARY Name=? AND worldID=?",
+			name,
+			conn.GetWorldID(),
+		).Scan(&charID, &accountID, &buddyListSize)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				conn.Send(packetBuddyNameNotRegistered())
+				return
+			}
+			log.Println(err)
 			return
 		}
 
-		if plr.hasBuddy(charID) {
+		if accountID == conn.GetAccountID() {
+			return
+		}
+
+		if idx := plr.buddyIndex(charID); idx >= 0 {
+			if plr.buddyList[idx].status == buddyStatusPending {
+				if err := server.acceptBuddyRequest(plr, charID); err != nil {
+					log.Println(err)
+				}
+				return
+			}
+
 			conn.Send(packetBuddyAlreadyAdded())
 			return
 		}
 
-		var recepientBuddyCount int32
-		err = common.DB.QueryRow("SELECT COUNT(*) FROM buddy WHERE characterID=1 and accepted=1").Scan(&recepientBuddyCount)
-
-		if err != nil {
-			log.Fatal(err)
+		var pendingAccepted bool
+		err = common.DB.QueryRow("SELECT accepted FROM buddy WHERE characterID=? AND friendID=?", charID, plr.ID).Scan(&pendingAccepted)
+		if err == nil {
+			if !pendingAccepted {
+				conn.Send(packetBuddyAlreadyAdded())
+				return
+			}
+			conn.Send(packetBuddyAlreadyAdded())
+			return
+		}
+		if err != nil && err != sql.ErrNoRows {
+			log.Println(err)
 			return
 		}
 
-		if recepientBuddyCount >= buddyListSize {
+		recipientBuddyCount, err := buddyCount(charID)
+		if err != nil {
+			log.Println(err)
+			return
+		}
+		if recipientBuddyCount >= buddyListSize {
 			conn.Send(packetBuddyOtherFullList())
 			return
 		}
 
 		if conn.GetAdminLevel() == 0 {
-			var gm bool
-			err = common.DB.QueryRow("SELECT adminLevel from accounts where accountID=?", accountID).Scan(&gm)
-
+			var adminLevel int
+			err = common.DB.QueryRow("SELECT adminLevel FROM accounts WHERE accountID=?", accountID).Scan(&adminLevel)
 			if err != nil {
-				log.Fatal(err)
+				log.Println(err)
 				return
 			}
-
-			if gm {
+			if adminLevel > 0 {
 				conn.Send(packetBuddyIsGM())
 				return
 			}
 		}
 
-		query := "INSERT INTO buddy(characterID,friendID) VALUES(?,?)"
-
-		if _, err = common.DB.Exec(query, charID, plr.ID); err != nil {
-			log.Fatal(err)
+		if _, err = common.DB.Exec("INSERT INTO buddy(characterID,friendID,accepted) VALUES(?,?,0)", charID, plr.ID); err != nil {
+			log.Println(err)
 			return
 		}
 
-		if recepient, err := server.players.GetFromID(charID); err != nil {
+		if recipient, err := server.players.GetFromID(charID); err != nil {
 			server.world.Send(internal.PacketChannelBuddyEvent(1, charID, plr.ID, plr.Name, server.id))
 		} else {
-			recepient.Send(packetBuddyReceiveRequest(plr.ID, plr.Name, int32(server.id)))
+			recipient.addPendingBuddy(plr.ID, plr.Name, int32(server.id), false)
+			recipient.Send(packetBuddyReceiveRequest(plr.ID, plr.Name, int32(server.id)))
 		}
 	case 2: // Accept request
-		plr, err := server.players.GetFromConn(conn)
-
-		if err != nil {
-			return
-		}
-
 		friendID := reader.ReadInt32()
-
-		var friendName string
-		var friendChannel int32
-		var cashShop bool
-
-		err = common.DB.QueryRow("SELECT Name,channelID,inCashShop FROM characters WHERE ID=?", friendID).Scan(&friendName, &friendChannel, &cashShop)
-
-		if err != nil {
-			log.Fatal(err)
-			return
-		}
-
-		query := "UPDATE buddy set accepted=1 WHERE characterID=? and friendID=?"
-
-		if _, err := common.DB.Exec(query, plr.ID, friendID); err != nil {
-			log.Fatal(err)
-			return
-		}
-
-		query = "INSERT INTO buddy(characterID,friendID,accepted) VALUES(?,?,?)"
-
-		if _, err := common.DB.Exec(query, friendID, plr.ID, 1); err != nil {
-			log.Fatal(err)
-			return
-		}
-
-		if friendChannel == -1 {
-			plr.addOfflineBuddy(friendID, friendName)
-		} else {
-			plr.addOnlineBuddy(friendID, friendName, friendChannel)
-		}
-
-		if recepient, err := server.players.GetFromID(friendID); err != nil {
-			server.world.Send(internal.PacketChannelBuddyEvent(2, friendID, plr.ID, plr.Name, server.id))
-		} else {
-			// Need to set the buddy to be offline for the logged in message to appear before setting online
-			recepient.addOfflineBuddy(plr.ID, plr.Name)
-			recepient.Send(packetBuddyOnlineStatus(plr.ID, int32(server.id)))
-			recepient.addOnlineBuddy(plr.ID, plr.Name, int32(server.id))
+		if err := server.acceptBuddyRequest(plr, friendID); err != nil {
+			log.Println(err)
 		}
 	case 3: // Delete/reject friend
-		plr, err := server.players.GetFromConn(conn)
-
-		if err != nil {
-			return
-		}
-
 		id := reader.ReadInt32()
-
-		query := "DELETE FROM buddy WHERE (characterID=? AND friendID=?) OR (characterID=? AND friendID=?)"
-
-		if _, err = common.DB.Exec(query, id, plr.ID, plr.ID, id); err != nil {
-			log.Fatal(err)
+		if _, err = common.DB.Exec("DELETE FROM buddy WHERE (characterID=? AND friendID=?) OR (characterID=? AND friendID=?)", id, plr.ID, plr.ID, id); err != nil {
+			log.Println(err)
 			return
 		}
 
 		plr.removeBuddy(id)
+		plr.Send(packetBuddyDeleteDone(plr.buddyList))
 
-		if recepient, err := server.players.GetFromID(id); err != nil {
+		if recipient, err := server.players.GetFromID(id); err != nil {
 			server.world.Send(internal.PacketChannelBuddyEvent(3, id, plr.ID, "", server.id))
-		} else {
-			recepient.removeBuddy(plr.ID)
+		} else if recipient.hasBuddy(plr.ID) {
+			recipient.removeBuddy(plr.ID)
+			recipient.Send(packetBuddyDeleteDone(recipient.buddyList))
 		}
 	default:
 		log.Println("Unknown buddy operation:", op)
@@ -6041,8 +6198,20 @@ func (server *Server) playerPetSpawn(conn mnet.Client, reader mpacket.Reader) {
 	_ = reader.ReadInt32() // updateTime?
 	slot := reader.ReadInt16()
 
-	petItem, err := plr.getItem(5, slot)
-	if !petItem.pet || err != nil {
+	petIndex := -1
+	for i := range plr.cash {
+		if plr.cash[i].slotID == slot {
+			petIndex = i
+			break
+		}
+	}
+	if petIndex < 0 {
+		plr.Send(packetPlayerNoChange())
+		return
+	}
+
+	petItem := &plr.cash[petIndex]
+	if !petItem.pet {
 		plr.Send(packetPlayerNoChange())
 		return
 	}
@@ -6050,7 +6219,7 @@ func (server *Server) playerPetSpawn(conn mnet.Client, reader mpacket.Reader) {
 	if petItem.petData == nil {
 		sn, _ := nx.GetCommoditySNByItemID(petItem.ID)
 		petItem.petData = newPet(petItem.ID, sn, petItem.dbID, petItem.cashID)
-		savePet(&petItem)
+		savePet(petItem)
 	}
 	petItem.petData.lockerSN = petItem.cashID
 
@@ -6058,7 +6227,9 @@ func (server *Server) playerPetSpawn(conn mnet.Client, reader mpacket.Reader) {
 	changePet := petEquipped && plr.petCashID == petItem.petData.lockerSN
 
 	if petEquipped {
-		plr.inst.send(packetPetRemove(plr.ID, constant.PetRemoveNone))
+		if plr.inst != nil {
+			plr.inst.send(packetPetRemove(plr.ID, constant.PetRemoveNone))
+		}
 		if plr.pet != nil {
 			plr.pet.spawned = false
 			plr.pet.spawnDate = 0
@@ -6086,7 +6257,9 @@ func (server *Server) playerPetSpawn(conn mnet.Client, reader mpacket.Reader) {
 		}
 
 		plr.pet.pos = plr.pos
-		plr.inst.send(packetPetSpawn(plr.ID, plr.pet, plr.petAccessoryItemID()))
+		if plr.inst != nil {
+			plr.inst.send(packetPetSpawn(plr.ID, plr.pet, plr.petAccessoryItemID()))
+		}
 
 		plr.Send(packetPlayerPetUpdate(plr.pet.lockerSN))
 		plr.Send(packetPetKeyMappedInit(plr.petConsumeItemID, plr.petConsumeMPItemID))

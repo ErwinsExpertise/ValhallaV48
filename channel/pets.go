@@ -154,6 +154,7 @@ func (d *Player) RequestPetEvol() int {
 	oldItem := *petItem
 	oldPet := *petItem.petData
 	newSN, _ := nx.GetCommoditySNByItemID(newPetID)
+	wasSpawned := d.pet != nil && d.pet.spawned
 
 	petItem.ID = newPetID
 	petItem.cashSN = newSN
@@ -176,6 +177,10 @@ func (d *Player) RequestPetEvol() int {
 			_, _ = petItem.save(d.ID)
 			return petEvolResultGenericFailure
 		}
+	}
+
+	if wasSpawned && d.inst != nil {
+		d.inst.send(packetPetRemove(d.ID, constant.PetRemoveNone))
 	}
 
 	d.pet = petItem.petData

@@ -30,6 +30,17 @@ type buddy struct {
 	cashShop  int32 // > 0 means is in cash shop
 }
 
+const (
+	buddyStatusOnline  byte = 0
+	buddyStatusPending byte = 1
+	buddyStatusOffline byte = 2
+
+	buddyOpUpdate         byte = 0x08
+	buddyOpReceiveRequest byte = 0x09
+	buddyOpNotify         byte = 0x14
+	buddyOpUpdateCapacity byte = 0x15
+)
+
 type playerSkill struct {
 	ID             int32
 	Level, Mastery byte
@@ -352,8 +363,9 @@ func (p Players) Flush() {
 }
 
 type Player struct {
-	Conn mnet.Client
-	inst *fieldInstance
+	Conn   mnet.Client
+	inst   *fieldInstance
+	server *Server
 
 	ID          int32 // Unique identifier of the character
 	accountID   int32
@@ -785,6 +797,26 @@ func (d *Player) Send(packet mpacket.Packet) {
 	d.Conn.Send(packet)
 }
 
+func (d *Player) postFieldMutation(context string, fn func()) {
+	if d == nil || fn == nil {
+		return
+	}
+	if d.inst != nil {
+		d.inst.post(fn)
+		return
+	}
+	if d.server != nil {
+		d.server.post(fn)
+		return
+	}
+	// Tests and offline-only helpers may construct Players without a live server.
+	// Production field-visible mutation must not rely on this fallback.
+	if debugDispatchOwnershipAssertions {
+		log.Printf("field mutation fallback without dispatch context player=%d name=%s context=%s", d.ID, d.Name, context)
+	}
+	fn()
+}
+
 func (d *Player) setJob(id int16) {
 	d.job = id
 	d.Conn.Send(packetPlayerStatChange(true, constant.JobID, int32(id)))
@@ -873,7 +905,7 @@ func (d *Player) refreshQuestCompletionNotifications(forceResend bool) {
 		current[questID] = struct{}{}
 		_, wasCompletable := d.quests.completable[questID]
 		if forceResend || !wasCompletable {
-			d.Send(packetQuestComplete(questID))
+			d.Send(packetQuestCompletionReady(questID))
 		}
 	}
 
@@ -2604,54 +2636,61 @@ func (d *Player) sendBuddyList() {
 }
 
 func (d Player) buddyListFull() bool {
-	count := 0
-	for _, v := range d.buddyList {
-		if v.status != 1 {
-			count++
-		}
-	}
-
-	return count >= int(d.buddyListSize)
+	return len(d.buddyList) >= int(d.buddyListSize)
 }
 
-func (d *Player) addOnlineBuddy(id int32, name string, channel int32) {
-	if d.buddyListFull() {
-		return
-	}
-
+func (d *Player) buddyIndex(id int32) int {
 	for i, v := range d.buddyList {
 		if v.id == id {
-			d.buddyList[i].status = 0
-			d.buddyList[i].channelID = channel
-			d.Send(packetBuddyUpdate(id, name, d.buddyList[i].status, channel, false))
-			return
+			return i
 		}
 	}
 
-	newBuddy := buddy{id: id, name: name, status: 0, channelID: channel}
+	return -1
+}
 
+func (d *Player) setBuddy(id int32, name string, status byte, channel int32, cashShop bool) bool {
+	idx := d.buddyIndex(id)
+	if idx >= 0 {
+		d.buddyList[idx].name = name
+		d.buddyList[idx].status = status
+		d.buddyList[idx].channelID = channel
+		if cashShop {
+			d.buddyList[idx].cashShop = 1
+		} else {
+			d.buddyList[idx].cashShop = 0
+		}
+		return false
+	}
+
+	if d.buddyListFull() {
+		return false
+	}
+
+	newBuddy := buddy{id: id, name: name, status: status, channelID: channel}
+	if cashShop {
+		newBuddy.cashShop = 1
+	}
 	d.buddyList = append(d.buddyList, newBuddy)
-	d.Send(packetBuddyInfo(d.buddyList))
+	return true
+}
+
+func (d *Player) addOnlineBuddy(id int32, name string, channel int32, cashShop bool) {
+	d.setBuddy(id, name, buddyStatusOnline, channel, cashShop)
 }
 
 func (d *Player) addOfflineBuddy(id int32, name string) {
-	if d.buddyListFull() {
-		return
+	d.setBuddy(id, name, buddyStatusOffline, -1, false)
+	idx := d.buddyIndex(id)
+	if idx >= 0 {
+		d.buddyList[idx].cashShop = 0
 	}
 
-	for i, v := range d.buddyList {
-		if v.id == id {
-			d.buddyList[i].status = 2
-			d.buddyList[i].channelID = -1
-			d.Send(packetBuddyUpdate(id, name, d.buddyList[i].status, -1, false))
-			return
-		}
-	}
+	return
+}
 
-	newBuddy := buddy{id: id, name: name, status: 2, channelID: -1}
-
-	d.buddyList = append(d.buddyList, newBuddy)
-	d.Send(packetBuddyInfo(d.buddyList))
+func (d *Player) addPendingBuddy(id int32, name string, channel int32, cashShop bool) {
+	d.setBuddy(id, name, buddyStatusPending, channel, cashShop)
 }
 
 func (d Player) hasBuddy(id int32) bool {
@@ -2665,14 +2704,13 @@ func (d Player) hasBuddy(id int32) bool {
 }
 
 func (d *Player) removeBuddy(id int32) {
-	for i, v := range d.buddyList {
-		if v.id == id {
-			d.buddyList[i] = d.buddyList[len(d.buddyList)-1]
-			d.buddyList = d.buddyList[:len(d.buddyList)-1]
-			d.Send(packetBuddyInfo(d.buddyList))
-			return
-		}
+	idx := d.buddyIndex(id)
+	if idx < 0 {
+		return
 	}
+
+	d.buddyList[idx] = d.buddyList[len(d.buddyList)-1]
+	d.buddyList = d.buddyList[:len(d.buddyList)-1]
 }
 
 // removeEquipAtSlot removes the equip from the given slot (equipped negative or inventory positive).
@@ -3092,11 +3130,11 @@ func getBuddyList(playerID int32, buddySize byte) []buddy {
 		}
 
 		if !accepted {
-			newBuddy.status = 1 // pending buddy request
+			newBuddy.status = buddyStatusPending
 		} else if newBuddy.channelID == -1 {
-			newBuddy.status = 2 // offline
+			newBuddy.status = buddyStatusOffline
 		} else {
-			newBuddy.status = 0 // online
+			newBuddy.status = buddyStatusOnline
 		}
 
 		buddies = append(buddies, newBuddy)
@@ -4743,7 +4781,7 @@ func packetBuddyInfo(buddyList []buddy) mpacket.Packet {
 // client when selecting an option in notification, therefore the ID has not been allowed to change
 func packetBuddyUpdate(id int32, name string, status byte, channelID int32, cashShop bool) mpacket.Packet {
 	p := mpacket.CreateWithOpcode(opcode.SendChannelBuddyInfo)
-	p.WriteByte(0x08)
+	p.WriteByte(buddyOpUpdate)
 	p.WriteInt32(id) // original ID
 	p.WriteInt32(id)
 	p.WritePaddedString(name, 13)
@@ -4756,7 +4794,7 @@ func packetBuddyUpdate(id int32, name string, status byte, channelID int32, cash
 
 func packetBuddyListSizeUpdate(size byte) mpacket.Packet {
 	p := mpacket.CreateWithOpcode(opcode.SendChannelBuddyInfo)
-	p.WriteByte(0x15)
+	p.WriteByte(buddyOpUpdateCapacity)
 	p.WriteByte(size)
 
 	return p
@@ -4849,13 +4887,16 @@ func packetBuddyNameNotRegistered() mpacket.Packet {
 func packetBuddyRequestResult(code byte) mpacket.Packet {
 	p := mpacket.CreateWithOpcode(opcode.SendChannelBuddyInfo)
 	p.WriteByte(code)
+	if code == 0x10 || code == 0x11 || code == 0x13 || code == 0x16 {
+		p.WriteByte(0)
+	}
 
 	return p
 }
 
 func packetBuddyReceiveRequest(fromID int32, fromName string, fromChannelID int32) mpacket.Packet {
 	p := mpacket.CreateWithOpcode(opcode.SendChannelBuddyInfo)
-	p.WriteByte(0x9)
+	p.WriteByte(buddyOpReceiveRequest)
 	p.WriteInt32(fromID)
 	p.WriteString(fromName)
 	p.WriteInt32(fromID)
@@ -4867,24 +4908,22 @@ func packetBuddyReceiveRequest(fromID int32, fromName string, fromChannelID int3
 	return p
 }
 
-func packetBuddyOnlineStatus(id int32, channelID int32) mpacket.Packet {
+func packetBuddyStatus(id int32, channelID int32, cashShop bool) mpacket.Packet {
 	p := mpacket.CreateWithOpcode(opcode.SendChannelBuddyInfo)
-	p.WriteByte(0x14)
+	p.WriteByte(buddyOpNotify)
 	p.WriteInt32(id)
-	p.WriteInt8(0)
+	p.WriteBool(cashShop)
 	p.WriteInt32(channelID)
 
 	return p
 }
 
-func packetBuddyChangeChannel(id int32, channelID int32) mpacket.Packet {
-	p := mpacket.CreateWithOpcode(opcode.SendChannelBuddyInfo)
-	p.WriteByte(0x14)
-	p.WriteInt32(id)
-	p.WriteInt8(1)
-	p.WriteInt32(channelID)
+func packetBuddySetDone(buddyList []buddy) mpacket.Packet {
+	return packetBuddyInfo(buddyList)
+}
 
-	return p
+func packetBuddyDeleteDone(buddyList []buddy) mpacket.Packet {
+	return packetBuddyInfo(buddyList)
 }
 
 func packetMapChange(mapID int32, channelID int32, mapPos byte, hp int16) mpacket.Packet {

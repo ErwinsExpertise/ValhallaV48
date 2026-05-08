@@ -773,9 +773,9 @@ func (m *monster) applyBuff(ownerID, skillID int32, skillLevel byte, statMask in
 
 	if inst != nil && inst.dispatch != nil {
 		m.buffExpireTimers[statMask] = time.AfterFunc(time.Duration(duration)*time.Second, func() {
-			inst.dispatch <- func() {
+			inst.post(func() {
 				m.removeDebuff(statMask, inst)
-			}
+			})
 		})
 	}
 
@@ -843,9 +843,9 @@ func (m *monster) applyTimedStat(statMask int32, value int16, skillID int32, dur
 	}
 	if inst.dispatch != nil {
 		m.buffExpireTimers[statMask] = time.AfterFunc(time.Duration(duration)*time.Second, func() {
-			inst.dispatch <- func() {
+			inst.post(func() {
 				m.removeDebuff(statMask, inst)
-			}
+			})
 		})
 	}
 

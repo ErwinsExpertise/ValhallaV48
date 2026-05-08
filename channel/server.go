@@ -1,9 +1,12 @@
 package channel
 
 import (
+	"bytes"
 	"context"
 	"log"
+	"runtime"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/dop251/goja"
@@ -27,9 +30,13 @@ type rates struct {
 
 // Server state
 type Server struct {
-	id                 byte
-	worldName          string
+	id        byte
+	worldName string
+	// All field/map-visible state is owned by this dispatch loop. Mutable field
+	// collections intentionally rely on that ownership model rather than heavy
+	// per-pool locking.
 	dispatch           chan func()
+	dispatchOwnerGID   int64
 	world              mnet.Server
 	ip                 []byte
 	port               int16
@@ -56,6 +63,112 @@ type Server struct {
 	avatarMegaphoneSeq uint64
 	merchantShops      map[int64]*merchantRoom
 	merchantByChar     map[int32]*merchantRoom
+}
+
+const debugDispatchOwnershipAssertions = false
+
+func currentDebugGID() int64 {
+	buf := make([]byte, 64)
+	n := runtime.Stack(buf, false)
+	fields := bytes.Fields(buf[:n])
+	if len(fields) < 2 {
+		return 0
+	}
+	gid, err := strconv.ParseInt(string(fields[1]), 10, 64)
+	if err != nil {
+		return 0
+	}
+	return gid
+}
+
+// post queues work onto the channel dispatch loop. If the queue is not ready to
+// receive immediately, a helper goroutine waits so the caller never mutates
+// field-owned state directly.
+func (server *Server) post(fn func()) {
+	if server == nil || fn == nil {
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil && debugDispatchOwnershipAssertions {
+			log.Printf("server.post recovered: %v", r)
+		}
+	}()
+	if server.dispatch == nil {
+		fn()
+		return
+	}
+
+	select {
+	case server.dispatch <- fn:
+	default:
+		go func(dispatch chan func()) {
+			defer func() {
+				if r := recover(); r != nil && debugDispatchOwnershipAssertions {
+					log.Printf("server.post async recovered: %v", r)
+				}
+			}()
+			dispatch <- fn
+		}(server.dispatch)
+	}
+}
+
+func (server *Server) MarkDispatchOwner() {
+	if !debugDispatchOwnershipAssertions || server == nil {
+		return
+	}
+	atomic.StoreInt64(&server.dispatchOwnerGID, currentDebugGID())
+}
+
+func (server *Server) assertDispatchOwnership(context string) {
+	if !debugDispatchOwnershipAssertions || server == nil {
+		return
+	}
+	owner := atomic.LoadInt64(&server.dispatchOwnerGID)
+	if owner == 0 {
+		return
+	}
+	current := currentDebugGID()
+	if current == 0 || current == owner {
+		return
+	}
+	log.Printf("dispatch ownership violation context=%s current_g=%d owner_g=%d", context, current, owner)
+}
+
+func prepareLogoutSnapshot(plr *Player) Player {
+	if plr == nil {
+		return Player{}
+	}
+	if plr.inst != nil {
+		if pos, err := plr.inst.calculateNearestSpawnPortalID(plr.pos); err == nil {
+			plr.mapPos = pos
+		}
+	}
+
+	snapshot := *plr
+	snapshot.inst = nil
+	return snapshot
+}
+
+func (server *Server) finalizeDisconnectAsync(plrSnapshot Player, accountID int32, guildID int32, expectedMigration bool) {
+	go func() {
+		plrSnapshot.Logout()
+
+		if expectedMigration {
+			return
+		}
+
+		if server != nil && server.world != nil {
+			server.world.Send(internal.PacketChannelPlayerDisconnect(plrSnapshot.ID, plrSnapshot.Name, guildID))
+		}
+
+		if _, dbErr := common.DB.Exec("UPDATE characters SET channelID=? WHERE ID=?", -1, plrSnapshot.ID); dbErr != nil {
+			log.Println(dbErr)
+		}
+		common.DeletePendingMigrationsForAccount(accountID)
+		if _, dbErr := common.DB.Exec("UPDATE accounts SET isLogedIn=0 WHERE accountID=?", accountID); dbErr != nil {
+			log.Println("Unable to complete logout for ", accountID)
+		}
+	}()
 }
 
 // Initialise the server
@@ -338,8 +451,6 @@ func (server *Server) ClientDisconnected(conn mnet.Client) {
 				log.Println("Unable to find instance for player on disconnect:", ierr)
 			}
 		}
-
-		plr.Logout()
 	}
 
 	expectedMigration := server.migrating[conn]
@@ -360,17 +471,8 @@ func (server *Server) ClientDisconnected(conn mnet.Client) {
 	if plr.guild != nil {
 		guildID = plr.guild.id
 	}
-	if expectedMigration {
-		return
-	}
-	server.world.Send(internal.PacketChannelPlayerDisconnect(plr.ID, plr.Name, guildID))
-
-	if _, dbErr := common.DB.Exec("UPDATE characters SET channelID=? WHERE ID=?", -1, plr.ID); dbErr != nil {
-		log.Println(dbErr)
-	}
-	common.DeletePendingMigrationsForAccount(conn.GetAccountID())
-	if _, dbErr := common.DB.Exec("UPDATE accounts SET isLogedIn=0 WHERE accountID=?", conn.GetAccountID()); dbErr != nil {
-		log.Println("Unable to complete logout for ", conn.GetAccountID())
+	if plr != nil {
+		server.finalizeDisconnectAsync(prepareLogoutSnapshot(plr), conn.GetAccountID(), guildID, expectedMigration)
 	}
 }
 

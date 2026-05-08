@@ -58,10 +58,11 @@ CREATE TABLE `buddy` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
   `characterID` int(11) NOT NULL,
   `friendID` int(11) NOT NULL,
-  `accepted` tinyint(4) NOT NULL DEFAULT '0' COMMENT '0 is accepted, 1 is request pending',
+  `accepted` tinyint(4) NOT NULL DEFAULT '0' COMMENT '0 is request pending, 1 is accepted',
   PRIMARY KEY (`id`),
   KEY `characterID` (`characterID`),
   KEY `friendID` (`friendID`),
+  UNIQUE KEY `idx_buddy_pair` (`characterID`,`friendID`),
   CONSTRAINT `buddy_ibfk_4` FOREIGN KEY (`characterID`) REFERENCES `characters` (`id`) ON DELETE CASCADE,
   CONSTRAINT `buddy_ibfk_5` FOREIGN KEY (`friendID`) REFERENCES `characters` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;

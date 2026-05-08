@@ -207,6 +207,12 @@ func packetQuestComplete(questID int16) mpacket.Packet {
 	p.WriteInt64(toFileTime(time.Now()))
 	return p
 }
+
+func packetQuestCompletionReady(questID int16) mpacket.Packet {
+	p := mpacket.CreateWithOpcode(opcode.SendChannelQuestComplete)
+	p.WriteInt16(questID)
+	return p
+}
 func packetQuestUpdate(questID int16, data string) mpacket.Packet {
 	p := mpacket.CreateWithOpcode(opcode.SendChannelMessage)
 	p.WriteByte(0x01)

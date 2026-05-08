@@ -220,6 +220,7 @@ func (cs *channelServer) processEvent() {
 		close(cs.dispatchReady)
 		cs.dispatchReady = nil
 	}
+	cs.gameState.MarkDispatchOwner()
 
 	for {
 		select {

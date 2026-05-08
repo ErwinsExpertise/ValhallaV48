@@ -139,6 +139,20 @@ type fhHistogram struct {
 	bins      [][]*foothold
 }
 
+func (data fhHistogram) hasFoothold(id int16) bool {
+	if id == 0 {
+		return false
+	}
+
+	for _, fh := range data.footholds {
+		if fh.id == id {
+			return true
+		}
+	}
+
+	return false
+}
+
 func createFootholdHistogram(footholds []foothold) fhHistogram {
 	var minX int16
 	var maxX int16
@@ -317,6 +331,7 @@ type field struct {
 	Dispatch chan func()
 
 	vrLimit                        fieldRectangle
+	mobBounds                      fieldRectangle
 	mobCapacityMin, mobCapacityMax int
 
 	footholds []foothold
@@ -339,6 +354,7 @@ func (f *field) createInstance(rates *rates, server *Server) int {
 		pendingDoorSync: make(map[int32]bool),
 		messageBoxes:    make(map[int32]*messageBox),
 		fhHist:          f.fhHist,
+		mobBounds:       f.mobBounds,
 		server:          server,
 	}
 
@@ -479,6 +495,7 @@ func (f *field) calculateFieldLimits() {
 
 	f.mobCapacityMin = mobCapacityMin
 	f.mobCapacityMax = mobCapacityMax
+	f.mobBounds = mbr
 }
 
 func (f field) validInstance(instance int) bool {
@@ -618,6 +635,9 @@ type fieldInstance struct {
 	idCounter int32
 	town      bool
 
+	// Field-visible state is map-thread-owned. Timers and goroutines must always
+	// re-enter through post() before mutating mobs, drops, reactors, players,
+	// summons, pets, or broadcasting packets derived from mutable field state.
 	dispatch chan func()
 
 	fieldTimer *time.Ticker
@@ -637,9 +657,45 @@ type fieldInstance struct {
 	messageBoxes      map[int32]*messageBox
 	messageBoxCounter int32
 
-	fhHist fhHistogram
+	fhHist    fhHistogram
+	mobBounds fieldRectangle
 
 	server *Server // reference to server for metrics
+}
+
+func (inst *fieldInstance) post(fn func()) {
+	if inst == nil || fn == nil {
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil && debugDispatchOwnershipAssertions {
+			log.Printf("fieldInstance.post recovered field=%d inst=%d err=%v", inst.fieldID, inst.id, r)
+		}
+	}()
+	if inst.dispatch == nil {
+		fn()
+		return
+	}
+
+	select {
+	case inst.dispatch <- fn:
+	default:
+		go func(dispatch chan func()) {
+			defer func() {
+				if r := recover(); r != nil && debugDispatchOwnershipAssertions {
+					log.Printf("fieldInstance.post async recovered field=%d inst=%d err=%v", inst.fieldID, inst.id, r)
+				}
+			}()
+			dispatch <- fn
+		}(inst.dispatch)
+	}
+}
+
+func (inst *fieldInstance) assertMapOwnership(context string) {
+	if inst == nil || inst.server == nil {
+		return
+	}
+	inst.server.assertDispatchOwnership("field=" + strconv.Itoa(int(inst.fieldID)) + " inst=" + strconv.Itoa(inst.id) + " context=" + context)
 }
 
 type mysticDoorInfo struct {
@@ -733,6 +789,8 @@ func (inst fieldInstance) findController() interface{} {
 }
 
 func (inst *fieldInstance) addPlayer(plr *Player) error {
+	inst.assertMapOwnership("fieldInstance.addPlayer")
+
 	plr.inst = inst
 	plr.nextMapDamageAtMs = time.Now().Add(time.Second).UnixMilli()
 
@@ -886,6 +944,8 @@ func (inst *fieldInstance) sendPartyDoorBindings(viewer *Player) {
 }
 
 func (inst *fieldInstance) removePlayer(plr *Player, usedPortal bool) error {
+	inst.assertMapOwnership("fieldInstance.removePlayer")
+
 	filtered := inst.players[:0]
 	removed := false
 
@@ -1154,7 +1214,7 @@ func (inst *fieldInstance) startFieldTimer() {
 
 	go func() {
 		for t := range inst.fieldTimer.C {
-			inst.dispatch <- func() { inst.fieldUpdate(t) }
+			inst.post(func() { inst.fieldUpdate(t) })
 		}
 	}()
 }

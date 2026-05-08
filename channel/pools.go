@@ -66,7 +66,33 @@ const (
 	mobControllerDistanceSlackSq = int64(20 * 20)
 	mobControllerStaleMoveMS     = int64(2500)
 	mobControllerRefreshGapMS    = int64(1500)
+	mobMaxGroundMoveDeltaX       = int32(2200)
+	mobMaxGroundMoveDeltaY       = int32(1200)
+	mobMaxAirMoveDeltaX          = int32(2600)
+	mobMaxAirMoveDeltaY          = int32(1800)
 )
+
+func absInt32(v int32) int32 {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
+func clampInt16ToRange(v int16, lo, hi int64) int16 {
+	if lo > hi {
+		lo, hi = hi, lo
+	}
+
+	vv := int64(v)
+	if vv < lo {
+		vv = lo
+	} else if vv > hi {
+		vv = hi
+	}
+
+	return int16(vv)
+}
 
 func isZakumBodyMob(id int32) bool {
 	return id == constant.MobZakum1Body || id == constant.MobZakum2Body || id == constant.MobZakum3Body
@@ -244,12 +270,69 @@ func (pool *lifePool) addPlayer(plr *Player) {
 	for i, m := range pool.mobs {
 		plr.Send(packetMobShow(m))
 
-		if m.controller == nil {
-			pool.mobs[i].setController(plr, false)
+		if !isUsableMobController(m.controller, pool.instance) {
+			pool.mobs[i].removeController()
+			if cont := pool.findMobController(pool.mobs[i]); cont != nil {
+				pool.mobs[i].setController(cont, false)
+			} else {
+				pool.mobs[i].setController(plr, false)
+			}
 		}
 
 		pool.showMobBossHPBar(m, plr)
 	}
+}
+
+func (pool *lifePool) normalizeMobMovement(mob *monster, finalData movementFrag) (movementFrag, bool) {
+	if mob == nil || pool.instance == nil {
+		return finalData, false
+	}
+
+	if !finalData.posSet {
+		finalData.x = mob.pos.x
+		finalData.y = mob.pos.y
+		finalData.foothold = mob.pos.foothold
+		finalData.posSet = true
+	}
+
+	candidate := newPos(finalData.x, finalData.y, finalData.foothold)
+	grounded := mob.flySpeed <= 0
+
+	if !pool.instance.mobBounds.empty() {
+		candidate.x = clampInt16ToRange(candidate.x, pool.instance.mobBounds.Left, pool.instance.mobBounds.Right)
+		candidate.y = clampInt16ToRange(candidate.y, pool.instance.mobBounds.Top, pool.instance.mobBounds.Bottom)
+	}
+
+	if grounded && len(pool.instance.fhHist.footholds) > 0 {
+		groundSample := pool.instance.fhHist.getFinalPosition(newPos(candidate.x, mob.pos.y, mob.pos.foothold))
+		if !pool.instance.fhHist.hasFoothold(candidate.foothold) {
+			candidate = groundSample
+		} else {
+			snapped := pool.instance.fhHist.getFinalPosition(candidate)
+			if !pool.instance.fhHist.hasFoothold(snapped.foothold) || absInt32(int32(snapped.y)-int32(candidate.y)) > 100 {
+				candidate = groundSample
+			} else {
+				candidate = snapped
+			}
+		}
+	} else if candidate.foothold == 0 {
+		candidate.foothold = mob.pos.foothold
+	}
+
+	maxDX, maxDY := mobMaxGroundMoveDeltaX, mobMaxGroundMoveDeltaY
+	if !grounded {
+		maxDX, maxDY = mobMaxAirMoveDeltaX, mobMaxAirMoveDeltaY
+	}
+	if absInt32(int32(candidate.x)-int32(mob.pos.x)) > maxDX || absInt32(int32(candidate.y)-int32(mob.pos.y)) > maxDY {
+		pool.logMobControllerEvent("reject", mob, mob.controller, mob.controller, "movement too far from current state")
+		return finalData, false
+	}
+
+	finalData.x = candidate.x
+	finalData.y = candidate.y
+	finalData.foothold = candidate.foothold
+	finalData.posSet = true
+	return finalData, true
 }
 
 func (pool *lifePool) removePlayer(plr *Player, usedPortal bool) {
@@ -409,6 +492,10 @@ func (pool *lifePool) npcAcknowledge(poolID int32, plr *Player, data []byte) {
 }
 
 func (pool *lifePool) mobAcknowledge(poolID int32, plr *Player, moveID int16, skillPossible bool, action int8, skillData uint32, moveData movement, finalData movementFrag, moveBytes []byte) bool {
+	if pool.instance != nil {
+		pool.instance.assertMapOwnership("lifePool.mobAcknowledge")
+	}
+
 	mob, ok := pool.mobs[poolID]
 	if !ok {
 		return false
@@ -477,14 +564,13 @@ func (pool *lifePool) mobAcknowledge(poolID int32, plr *Player, moveID int16, sk
 	mob.refreshVisibleSelfBuffSync(pool.instance)
 
 	if !moveData.validateMob(*mob) {
+		pool.logMobControllerEvent("reject", mob, plr, mob.controller, "movement validation failed")
 		return false
 	}
 
-	if !finalData.posSet {
-		finalData.x = moveData.origX
-		finalData.y = moveData.origY
-		finalData.foothold = mob.pos.foothold
-		finalData.posSet = true
+	finalData, ok = pool.normalizeMobMovement(mob, finalData)
+	if !ok {
+		return false
 	}
 
 	mob.noteAcceptedCtrlMove(moveID)
@@ -574,6 +660,10 @@ func (pool *lifePool) performSkill(mob *monster, skillID, skillLevel byte, skill
 }
 
 func (pool *lifePool) mobDamaged(poolID int32, damager *Player, dmg ...int32) {
+	if pool.instance != nil {
+		pool.instance.assertMapOwnership("lifePool.mobDamaged")
+	}
+
 	for i, v := range pool.mobs {
 		if v.spawnID == poolID {
 			wasVisibleSelfBuff := v.hasVisibleSelfBuff()
@@ -897,6 +987,10 @@ func (pool *lifePool) eraseMobs() {
 }
 
 func (pool *lifePool) spawnMob(m *monster, hasAgro bool) bool {
+	if pool.instance != nil {
+		pool.instance.assertMapOwnership("lifePool.spawnMob")
+	}
+
 	pool.mobs[m.spawnID] = m
 	pool.instance.send(packetMobShow(m))
 
@@ -948,6 +1042,10 @@ func (pool *lifePool) spawnReviveMob(m *monster, cont *Player) {
 }
 
 func (pool *lifePool) removeMob(poolID int32, deathType byte) {
+	if pool.instance != nil {
+		pool.instance.assertMapOwnership("lifePool.removeMob")
+	}
+
 	if mob, ok := pool.mobs[poolID]; !ok {
 		return
 	} else {
@@ -1327,6 +1425,10 @@ func (pool dropPool) playerShowDrops(plr *Player) {
 }
 
 func (pool *dropPool) removeDrop(dropType int8, id ...int32) {
+	if pool.instance != nil {
+		pool.instance.assertMapOwnership("dropPool.removeDrop")
+	}
+
 	for _, id := range id {
 		pool.instance.send(packetRemoveDrop(dropType, id, 0))
 
@@ -1383,6 +1485,10 @@ const itemDisppearTimeout = time.Minute * 2
 const itemLootableByAllTimeout = time.Minute * 1
 
 func (pool *dropPool) createDrop(spawnType byte, dropType byte, mesos int32, dropFrom pos, expire, byPlayer bool, ownerID, partyID int32, items ...Item) {
+	if pool.instance != nil {
+		pool.instance.assertMapOwnership("dropPool.createDrop")
+	}
+
 	iCount := len(items)
 	var offset int16 = 0
 
@@ -1432,12 +1538,12 @@ func (pool *dropPool) createDrop(spawnType byte, dropType byte, mesos int32, dro
 
 				d := drop
 				time.AfterFunc(5*time.Second, func() {
-					pool.instance.dispatch <- func() {
+					pool.instance.post(func() {
 						if _, ok := pool.drops[d.ID]; !ok {
 							return
 						}
 						pool.instance.reactorPool.tryTriggerByDrop(d)
-					}
+					})
 				})
 			}
 		}
@@ -1714,6 +1820,10 @@ func (r *fieldReactor) isTerminal() bool {
 }
 
 func (pool *reactorPool) changeState(r *fieldReactor, next byte, frameDelay int16, cause byte, server *Server, plr *Player) {
+	if pool.instance != nil {
+		pool.instance.assertMapOwnership("reactorPool.changeState")
+	}
+
 	r.state = next
 	r.frameDelay = frameDelay
 	pool.instance.send(packetMapReactorChangeState(r.spawnID, r.state, r.pos.x, r.pos.y, r.frameDelay, r.faceLeft, cause))
@@ -1728,7 +1838,7 @@ func (pool *reactorPool) leaveAndMaybeRespawn(r *fieldReactor, _ int) {
 	pool.instance.send(packetMapReactorLeaveField(r.spawnID, r.state, r.pos.x, r.pos.y))
 	respawnDelay := r.respawnDelay()
 	time.AfterFunc(respawnDelay, func() {
-		pool.instance.dispatch <- func() {
+		pool.instance.post(func() {
 			current, ok := pool.reactors[r.spawnID]
 			if !ok || !current.hidden {
 				return
@@ -1737,11 +1847,15 @@ func (pool *reactorPool) leaveAndMaybeRespawn(r *fieldReactor, _ int) {
 			current.frameDelay = 0
 			current.hidden = false
 			pool.instance.send(packetMapReactorEnterField(current.spawnID, current.templateID, current.state, current.pos.x, current.pos.y, current.faceLeft))
-		}
+		})
 	})
 }
 
 func (pool *reactorPool) triggerHit(spawnID int32, cause byte, server *Server, plr *Player) {
+	if pool.instance != nil {
+		pool.instance.assertMapOwnership("reactorPool.triggerHit")
+	}
+
 	r, ok := pool.reactors[spawnID]
 	if !ok {
 		return

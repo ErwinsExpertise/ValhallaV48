@@ -1595,19 +1595,7 @@ func (cb *CharacterBuffs) post(fn func()) {
 	if cb == nil || cb.plr == nil {
 		return
 	}
-
-	if cb.plr.inst != nil && cb.plr.inst.dispatch != nil {
-		select {
-		case cb.plr.inst.dispatch <- fn:
-			return
-		default:
-			go func(dispatch chan func()) {
-				dispatch <- fn
-			}(cb.plr.inst.dispatch)
-			return
-		}
-	}
-	fn()
+	cb.plr.postFieldMutation("CharacterBuffs.post", fn)
 }
 
 func (cb *CharacterBuffs) scheduleExpiryLocked(skillID int32, after time.Duration) {
