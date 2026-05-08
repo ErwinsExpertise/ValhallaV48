@@ -56,6 +56,27 @@ func logAttackApplied(kind string, skillID int32, attacks []attackInfo) {
 	}
 }
 
+func applyMagicGuardDamage(damage, currentMP, absorbPercent int32) (hpDamage, mpDamage int32) {
+	if damage <= 0 || currentMP <= 0 || absorbPercent <= 0 {
+		return damage, 0
+	}
+
+	mpDamage = (damage * absorbPercent) / 100
+	if mpDamage <= 0 {
+		return damage, 0
+	}
+	if mpDamage > currentMP {
+		mpDamage = currentMP
+	}
+
+	hpDamage = damage - mpDamage
+	if hpDamage < 0 {
+		hpDamage = 0
+	}
+
+	return hpDamage, mpDamage
+}
+
 func shouldRejectAttackPacket(player *Player, recvTime int64, clientTick int32) (string, bool) {
 	if player == nil || player.hp == 0 {
 		return "dead_or_missing_player", true
@@ -313,6 +334,8 @@ func (server *Server) playerConnect(conn mnet.Client, reader mpacket.Reader) {
 
 	plr := LoadPlayerFromID(charID, conn)
 	plr.rates = &server.rates
+	plr.petConsumeLoadedAt = time.Now()
+	plr.restoreActivePetFromCashInventory()
 	expiredItems := plr.cleanupExpiredInventoryItems(time.Now(), false)
 
 	server.players.Add(&plr)
@@ -2674,9 +2697,7 @@ func (server Server) mobDamagePlayer(conn mnet.Client, reader mpacket.Reader, mo
 					if idx < len(skillData) {
 						absorbPercent := int32(skillData[idx].X)
 						if absorbPercent > 0 {
-							mpDamage := (damage * absorbPercent) / 100
-							hpDamage := damage - mpDamage
-
+							hpDamage, mpDamage := applyMagicGuardDamage(damage, int32(plr.mp), absorbPercent)
 							if mpDamage > 0 {
 								plr.giveMP(-int16(mpDamage))
 							}
@@ -6009,6 +6030,10 @@ func (server *Server) playerPetSpawn(conn mnet.Client, reader mpacket.Reader) {
 
 	if petEquipped {
 		plr.inst.send(packetPetRemove(plr.ID, constant.PetRemoveNone))
+		if plr.pet != nil {
+			plr.pet.spawned = false
+			plr.pet.spawnDate = 0
+		}
 		plr.petCashID = 0
 	}
 
@@ -6023,6 +6048,7 @@ func (server *Server) playerPetSpawn(conn mnet.Client, reader mpacket.Reader) {
 		plr.inst.send(packetPetSpawn(plr.ID, plr.pet, plr.petAccessoryItemID()))
 
 		plr.Send(packetPlayerPetUpdate(plr.pet.lockerSN))
+		plr.Send(packetPetKeyMappedInit(plr.petConsumeItemID, plr.petConsumeMPItemID))
 		plr.pet.spawnDate = time.Now().Unix()
 		plr.pet.spawned = true
 	}
@@ -6184,16 +6210,47 @@ func (server *Server) playerQuickslotKeyMappedModified(conn mnet.Client, reader 
 			saveFuncKeyMapEntry(plr.ID, index, plr.funcKeyMap.Entries[index])
 		}
 	case 1: // pet consume HP item modified
-		plr.petConsumeItemID = reader.ReadInt32()
+		hpItemID := reader.ReadInt32()
+		mpItemID := reader.ReadInt32()
+		if shouldIgnorePetConsumeInitClear(plr, hpItemID, mpItemID) {
+			break
+		}
+		plr.petConsumeItemID = hpItemID
+		plr.petConsumeMPItemID = mpItemID
 		savePetConsumeSettings(plr.ID, plr.petConsumeItemID, plr.petConsumeMPItemID)
-	case 2: // pet consume MP item modified
-		plr.petConsumeMPItemID = reader.ReadInt32()
-		savePetConsumeSettings(plr.ID, plr.petConsumeItemID, plr.petConsumeMPItemID)
+
 	default:
 		for len(reader.GetRestAsBytes()) > 0 {
 			_ = reader.ReadByte()
 		}
 	}
+}
+
+func shouldIgnorePetConsumeInitClear(plr *Player, hpItemID, mpItemID int32) bool {
+	if plr == nil {
+		return false
+	}
+	prevHP := plr.petConsumeItemID
+	prevMP := plr.petConsumeMPItemID
+	if prevHP == 0 && prevMP == 0 {
+		return false
+	}
+
+	clearsHP := prevHP != 0 && hpItemID == 0
+	clearsMP := prevMP != 0 && mpItemID == 0
+	if !clearsHP && !clearsMP {
+		return false
+	}
+
+	if plr.pet == nil || !plr.pet.spawned {
+		return true
+	}
+
+	if time.Since(plr.petConsumeLoadedAt) > 10*time.Second {
+		return false
+	}
+
+	return true
 }
 
 func (server *Server) playerPing(conn mnet.Client, reader mpacket.Reader) {

@@ -486,6 +486,8 @@ type Player struct {
 
 	lastChairHeal time.Time
 
+	petConsumeLoadedAt time.Time
+
 	deadlyAttackActive bool
 	deadlyAttackTime   int64
 
@@ -795,11 +797,7 @@ func (d *Player) setJob(id int16) {
 
 func (d *Player) levelUp() {
 	d.giveAP(5)
-	if d.level < 10 {
-		d.giveSP(1)
-	} else {
-		d.giveSP(3)
-	}
+	d.giveSP(d.levelUpSPGain())
 
 	// Use per-Player RNG and job-based helper for deterministic gains.
 	hpGain, mpGain := d.levelUpGains()
@@ -824,6 +822,14 @@ func (d *Player) levelUp() {
 	d.setMP(newMaxMP)
 
 	d.giveLevel(1)
+}
+
+func (d *Player) levelUpSPGain() int16 {
+	if d != nil && d.job == constant.BeginnerJobID {
+		return 1
+	}
+
+	return 3
 }
 
 func (d *Player) setEXP(amount int32) {
@@ -1737,6 +1743,38 @@ func (d *Player) activePetIndex() byte {
 		idx++
 	}
 	return 0
+}
+
+func (d *Player) restoreActivePetFromCashInventory() {
+	if d == nil {
+		return
+	}
+
+	var active *Item
+	for i := range d.cash {
+		it := &d.cash[i]
+		if !it.pet || it.petData == nil {
+			continue
+		}
+
+		it.petData.spawned = false
+		if it.petData.spawnDate <= 0 {
+			continue
+		}
+
+		if active == nil || it.petData.spawnDate > active.petData.spawnDate {
+			active = it
+		}
+	}
+
+	if active == nil {
+		d.petCashID = 0
+		return
+	}
+
+	active.petData.spawned = true
+	d.petCashID = active.cashID
+	d.pet = active.petData
 }
 
 func (d *Player) petAccessoryItemID() int32 {
@@ -2703,6 +2741,35 @@ func LoadPlayerFromID(id int32, conn mnet.Client) Player {
 		return c
 	}
 
+	statsHealed := false
+	if c.maxHP < 1 {
+		c.maxHP = 1
+		statsHealed = true
+	}
+	if c.maxMP < 1 {
+		c.maxMP = 1
+		statsHealed = true
+	}
+	if c.hp < 0 {
+		c.hp = 0
+		statsHealed = true
+	} else if c.hp > c.maxHP {
+		c.hp = c.maxHP
+		statsHealed = true
+	}
+	if c.mp < 0 {
+		c.mp = 0
+		statsHealed = true
+	} else if c.mp > c.maxMP {
+		c.mp = c.maxMP
+		statsHealed = true
+	}
+	if statsHealed {
+		if _, healErr := common.DB.Exec("UPDATE characters SET hp=?, maxHP=?, mp=?, maxMP=? WHERE ID=?", c.hp, c.maxHP, c.mp, c.maxMP, c.ID); healErr != nil {
+			log.Printf("LoadPlayerFromID: failed to heal vitals for char %d: %v", c.ID, healErr)
+		}
+	}
+
 	c.partnerID = -1
 	if partnerID.Valid {
 		c.partnerID = partnerID.Int32
@@ -2896,12 +2963,6 @@ func packetPetKeyMappedInit(hpItemID, mpItemID int32) mpacket.Packet {
 	return p
 }
 
-func petAutoPotionConfigMatch(itemID, configuredHPItemID, configuredMPItemID int32, hasHPRecovery, hasMPRecovery bool) (bool, bool) {
-	hpMatched := hasHPRecovery && configuredHPItemID == itemID
-	mpMatched := hasMPRecovery && configuredMPItemID == itemID
-	return hpMatched, mpMatched
-}
-
 func (d *Player) usePetAutoPotion(slot int16, itemID int32) error {
 	if d == nil || d.pet == nil || !d.pet.spawned {
 		return errors.New("no active pet")
@@ -2926,23 +2987,12 @@ func (d *Player) usePetAutoPotion(slot int16, itemID int32) error {
 		return fmt.Errorf("item %d is not a valid auto potion", itemID)
 	}
 
-	hpMatched, mpMatched := petAutoPotionConfigMatch(itemID, d.petConsumeItemID, d.petConsumeMPItemID, hasHPRecovery, hasMPRecovery)
-	if !hpMatched && !mpMatched {
-		if hasMPRecovery && !hasHPRecovery {
-			return fmt.Errorf("item %d is not the configured auto MP potion", itemID)
-		}
-		if hasHPRecovery && !hasMPRecovery {
-			return fmt.Errorf("item %d is not the configured auto HP potion", itemID)
-		}
-		return fmt.Errorf("item %d is not a configured auto potion", itemID)
-	}
-
-	if hpMatched {
+	if hasHPRecovery {
 		if !d.hasEquipped(constant.ItemAutoHPPouch) {
 			return fmt.Errorf("auto HP pouch not equipped")
 		}
 	}
-	if mpMatched {
+	if hasMPRecovery {
 		if !d.hasEquipped(constant.ItemAutoMPPouch) {
 			return fmt.Errorf("auto MP pouch not equipped")
 		}
@@ -2953,16 +3003,6 @@ func (d *Player) usePetAutoPotion(slot int16, itemID int32) error {
 	}
 	item.applyConsumeUse(d, nxData)
 	return nil
-}
-
-func saveQuickslotKeys(characterID int32, keys [2]int32) {
-	if _, err := common.DB.Exec(`
-		INSERT INTO quickslot_keymap (characterID, key1, key2)
-		VALUES (?, ?, ?)
-		AS new ON DUPLICATE KEY UPDATE key1=new.key1, key2=new.key2
-	`, characterID, keys[0], keys[1]); err != nil {
-		log.Printf("saveQuickslotKeys: characterID=%d err=%v", characterID, err)
-	}
 }
 
 func getBuddyList(playerID int32, buddySize byte) []buddy {
