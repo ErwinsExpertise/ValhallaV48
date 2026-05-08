@@ -42,6 +42,7 @@ type Server struct {
 	header             string
 	npcChat            map[mnet.Client]*npcChatController
 	questDialogs       map[mnet.Client]*questDialog
+	questScriptStore   *scriptStore
 	npcScriptStore     *scriptStore
 	portalScriptStore  *scriptStore
 	reactorScriptStore *scriptStore
@@ -206,6 +207,14 @@ func (server *Server) loadScripts() {
 	log.Println("Loaded npc scripts in", elapsed)
 
 	go server.npcScriptStore.monitor(func(name string, program *goja.Program) {})
+
+	server.questScriptStore = createScriptStore("scripts/quest", server.dispatch)
+	start = time.Now()
+	_ = server.questScriptStore.loadScripts()
+	elapsed = time.Since(start)
+	log.Println("Loaded quest scripts in", elapsed)
+
+	go server.questScriptStore.monitor(func(name string, program *goja.Program) {})
 
 	server.eventScriptStore = createScriptStore("scripts/event", server.dispatch) // make folder a config param
 	start = time.Now()

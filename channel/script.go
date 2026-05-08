@@ -970,6 +970,13 @@ func (ctrl *scriptPlayerWrapper) GiveSP(amount int16) {
 	ctrl.plr.giveSP(amount)
 }
 
+func (ctrl *scriptPlayerWrapper) RequestPetEvol() int {
+	if ctrl == nil || ctrl.plr == nil {
+		return 1
+	}
+	return ctrl.plr.RequestPetEvol()
+}
+
 func (ctrl *scriptPlayerWrapper) GiveEXP(amount int32) {
 	ctrl.plr.giveEXP(amount, false, false)
 }
@@ -1961,6 +1968,33 @@ func createNpcChatController(npcID int32, scriptName string, conn mnet.Client, p
 	_ = ctrl.vm.Set("map", mapWrapper)
 
 	return ctrl, nil
+}
+
+func (server *Server) runQuestEndScript(conn mnet.Client, plr *Player, npcID int32, questID int16) bool {
+	if server == nil || server.questScriptStore == nil {
+		return false
+	}
+	q, err := nx.GetQuest(questID)
+	if err != nil || q.Complete.EndScript == "" {
+		return false
+	}
+	program, ok := server.questScriptStore.scripts[q.Complete.EndScript]
+	if !ok || program == nil {
+		return false
+	}
+
+	controller, err := createNpcChatController(npcID, q.Complete.EndScript, conn, program, plr, server)
+	if err != nil || controller == nil {
+		return false
+	}
+
+	server.npcChat[conn] = controller
+	server.updateNPCInteractionMetric(1)
+	if ended := controller.run(); ended {
+		delete(server.npcChat, conn)
+		server.updateNPCInteractionMetric(-1)
+	}
+	return true
 }
 
 func (ctrl *npcChatController) Id() int32 {

@@ -32,6 +32,17 @@ type pet struct {
 	spawned bool
 }
 
+const (
+	petEvolResultSuccess        = 0
+	petEvolResultGenericFailure = 1
+	petEvolResultLowLevel       = 3
+	petEvolResultNotEvolvingPet = 4
+	petEvolResultMissingRock    = 5
+	petEvolResultNoEvolution    = 6
+	petEvolResultSameEvolution  = 7
+	petEvolResultNoActivePet    = 8
+)
+
 func newPet(itemID, sn int32, dbID int64, lockerSN int64) *pet {
 	itemInfo, err := nx.GetItem(itemID)
 	if err != nil {
@@ -52,6 +63,133 @@ func newPet(itemID, sn int32, dbID int64, lockerSN int64) *pet {
 		spawnDate:       0,
 		lastInteraction: 0,
 	}
+}
+
+func pickPetEvolutionID(meta nx.Item) (int32, bool) {
+	if len(meta.EvolIDs) == 0 {
+		return 0, false
+	}
+	total := int32(0)
+	for _, prob := range meta.EvolProb {
+		if prob > 0 {
+			total += prob
+		}
+	}
+	if total <= 0 {
+		return 0, false
+	}
+	roll := rand.Int31n(total)
+	cumulative := int32(0)
+	for i, id := range meta.EvolIDs {
+		if i >= len(meta.EvolProb) || meta.EvolProb[i] <= 0 {
+			continue
+		}
+		cumulative += meta.EvolProb[i]
+		if roll < cumulative {
+			return id, true
+		}
+	}
+	return 0, false
+}
+
+func shouldAutoEvolvePetOnSummon(itemID int32) bool {
+	meta, err := nx.GetItem(itemID)
+	if err != nil {
+		return false
+	}
+	return meta.Evol != 0 && len(meta.EvolIDs) > 0 && meta.EvolReqItemID == 0
+}
+
+func (d *Player) RequestPetEvol() int {
+	if d == nil || d.pet == nil || d.petCashID == 0 {
+		return petEvolResultNoActivePet
+	}
+
+	petIndex := -1
+	for i := range d.cash {
+		if d.cash[i].cashID == d.petCashID && d.cash[i].pet && d.cash[i].petData != nil {
+			petIndex = i
+			break
+		}
+	}
+	if petIndex < 0 {
+		return petEvolResultGenericFailure
+	}
+
+	petItem := &d.cash[petIndex]
+	meta, err := nx.GetItem(petItem.ID)
+	if err != nil || meta.Evol == 0 || len(meta.EvolIDs) == 0 {
+		return petEvolResultNotEvolvingPet
+	}
+
+	rockIndex := -1
+	if meta.EvolReqItemID != 0 {
+		for i := range d.cash {
+			if d.cash[i].ID == meta.EvolReqItemID {
+				rockIndex = i
+				break
+			}
+		}
+		if rockIndex < 0 {
+			return petEvolResultMissingRock
+		}
+	}
+
+	if meta.EvolReqPetLvl > 0 && int32(petItem.petData.level) < meta.EvolReqPetLvl {
+		return petEvolResultLowLevel
+	}
+
+	newPetID, ok := pickPetEvolutionID(meta)
+	if !ok {
+		return petEvolResultNoEvolution
+	}
+	if newPetID == petItem.ID {
+		return petEvolResultSameEvolution
+	}
+	newMeta, err := nx.GetItem(newPetID)
+	if err != nil || !newMeta.Pet {
+		return petEvolResultGenericFailure
+	}
+
+	oldItem := *petItem
+	oldPet := *petItem.petData
+	newSN, _ := nx.GetCommoditySNByItemID(newPetID)
+
+	petItem.ID = newPetID
+	petItem.cashSN = newSN
+	petItem.petData.itemID = newPetID
+	petItem.petData.sn = newSN
+	petItem.petData.itemDBID = petItem.dbID
+	petItem.petData.lockerSN = petItem.cashID
+
+	if _, err := petItem.save(d.ID); err != nil {
+		*petItem = oldItem
+		petItem.petData = &oldPet
+		return petEvolResultGenericFailure
+	}
+
+	if rockIndex >= 0 {
+		rock := d.cash[rockIndex]
+		if _, err := d.takeItem(rock.ID, rock.slotID, 1, constant.InventoryCash); err != nil {
+			*petItem = oldItem
+			petItem.petData = &oldPet
+			_, _ = petItem.save(d.ID)
+			return petEvolResultGenericFailure
+		}
+	}
+
+	d.pet = petItem.petData
+	d.petCashID = petItem.cashID
+	d.pet.pos = d.pos
+	d.pet.spawnDate = time.Now().Unix()
+	d.pet.spawned = true
+	d.Send(packetInventoryPetEvolved(petItem.slotID))
+	d.Send(packetPlayerPetUpdate(petItem.cashID))
+	if d.inst != nil {
+		d.inst.send(packetPetSpawn(d.ID, d.pet, d.petAccessoryItemID()))
+	}
+	d.MarkDirty(DirtyPet, time.Millisecond*300)
+	return petEvolResultSuccess
 }
 
 func petExpiryTime() int64 {

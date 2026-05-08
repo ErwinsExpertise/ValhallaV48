@@ -3450,7 +3450,7 @@ func (server *Server) npcChatContinue(conn mnet.Client, reader mpacket.Reader) {
 		}
 
 		plr, err := server.players.GetFromConn(conn)
-		if err != nil || dialog.handle(plr, action, selection) {
+		if err != nil || dialog.handle(server, conn, plr, action, selection) {
 			delete(server.questDialogs, conn)
 		}
 		_ = lastMsg
@@ -6071,6 +6071,18 @@ func (server *Server) playerPetSpawn(conn mnet.Client, reader mpacket.Reader) {
 
 		if plr.pet == nil || plr.pet.sn != petItem.petData.sn {
 			plr.pet = petItem.petData
+		}
+
+		if shouldAutoEvolvePetOnSummon(petItem.ID) {
+			plr.pet = petItem.petData
+			plr.petCashID = petItem.petData.lockerSN
+			plr.pet.pos = plr.pos
+			if plr.RequestPetEvol() == petEvolResultSuccess {
+				plr.Send(packetPetKeyMappedInit(plr.petConsumeItemID, plr.petConsumeMPItemID))
+				plr.MarkDirty(DirtyPet, time.Millisecond*300)
+				plr.Send(packetPlayerNoChange())
+				return
+			}
 		}
 
 		plr.pet.pos = plr.pos

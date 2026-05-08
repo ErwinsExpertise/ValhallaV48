@@ -32,16 +32,19 @@ type Quest struct {
 }
 
 type CheckBlock struct {
-	NPC   int32
-	Job   int32
-	Jobs  []int32
-	LvMin int32
-	LvMax int32
-	Pop   int32
+	NPC            int32
+	Job            int32
+	Jobs           []int32
+	LvMin          int32
+	LvMax          int32
+	Pop            int32
+	PetTamenessMin int32
+	EndScript      string
 
 	PrevQuests []QuestStateReq
 	Items      []ReqItem
 	Mobs       []ReqMob
+	Pets       []int32
 }
 
 type QuestStateReq struct {
@@ -173,12 +176,18 @@ func parseQuestCheck(out map[int16]Quest, nodes []gonx.Node, text []string) {
 						block.LvMax = gonx.DataToInt32(entry.Data)
 					case "pop":
 						block.Pop = gonx.DataToInt32(entry.Data)
+					case "pettamenessmin":
+						block.PetTamenessMin = gonx.DataToInt32(entry.Data)
+					case "endscript":
+						block.EndScript = text[gonx.DataToUint32(entry.Data)]
 					case "item":
 						block.Items = append(block.Items, parseReqItems(&entry, nodes, text)...)
 					case "mob":
 						block.Mobs = append(block.Mobs, parseReqMobs(&entry, nodes, text)...)
 					case "quest":
 						block.PrevQuests = append(block.PrevQuests, parseReqQuests(&entry, nodes, text)...)
+					case "pet":
+						block.Pets = append(block.Pets, parseReqPets(&entry, nodes, text)...)
 					}
 				}
 				if phaseName == "0" {
@@ -255,6 +264,23 @@ func parseReqMobs(node *gonx.Node, nodes []gonx.Node, text []string) []ReqMob {
 		}
 	}
 	return ret
+}
+
+func parseReqPets(node *gonx.Node, nodes []gonx.Node, text []string) []int32 {
+	out := make([]int32, 0, node.ChildCount)
+	for i := uint32(0); i < uint32(node.ChildCount); i++ {
+		dir := nodes[node.ChildID+i]
+		for j := uint32(0); j < uint32(dir.ChildCount); j++ {
+			f := nodes[dir.ChildID+j]
+			if text[f.NameID] == "id" {
+				id := gonx.DataToInt32(f.Data)
+				if id != 0 {
+					out = append(out, id)
+				}
+			}
+		}
+	}
+	return out
 }
 
 func parseReqQuests(node *gonx.Node, nodes []gonx.Node, text []string) []QuestStateReq {

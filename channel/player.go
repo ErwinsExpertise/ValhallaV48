@@ -3395,6 +3395,26 @@ func (d *Player) meetsQuestBlock(blk nx.CheckBlock) bool {
 			return false
 		}
 	}
+	if len(blk.Pets) > 0 {
+		if d.pet == nil || d.petCashID == 0 {
+			return false
+		}
+		matched := false
+		for _, petID := range blk.Pets {
+			if d.pet.itemID == petID {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+	if blk.PetTamenessMin > 0 {
+		if d.pet == nil || int32(d.pet.closeness) < blk.PetTamenessMin {
+			return false
+		}
+	}
 	return true
 }
 
@@ -4604,6 +4624,16 @@ func packetInventoryModifyItemAmount(item Item) mpacket.Packet {
 	p.WriteInt16(item.slotID)
 	p.WriteInt16(item.amount)
 
+	return p
+}
+
+func packetInventoryPetEvolved(slot int16) mpacket.Packet {
+	p := mpacket.CreateWithOpcode(opcode.SendChannelInventoryOperation)
+	p.WriteByte(0x01)
+	p.WriteByte(0x01)
+	p.WriteByte(0x04)
+	p.WriteByte(0x03)
+	p.WriteInt16(slot)
 	return p
 }
 

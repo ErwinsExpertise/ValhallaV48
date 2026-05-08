@@ -3,6 +3,8 @@ package channel
 import (
 	"fmt"
 	"strings"
+
+	"github.com/Hucaru/Valhalla/mnet"
 )
 
 type questDialogKind byte
@@ -70,7 +72,7 @@ func (d *questDialog) start(plr *Player) {
 	d.sendActivePrompt(plr)
 }
 
-func (d *questDialog) handle(plr *Player, action byte, selection int) bool {
+func (d *questDialog) handle(server *Server, conn mnet.Client, plr *Player, action byte, selection int) bool {
 	if action == 0 {
 		return true
 	}
@@ -92,6 +94,9 @@ func (d *questDialog) handle(plr *Player, action byte, selection int) bool {
 			_ = plr.tryStartQuest(d.active.questID)
 			return true
 		case questDialogComplete:
+			if server != nil && server.runQuestEndScript(conn, plr, d.npcID, d.active.questID) {
+				return true
+			}
 			d.rewardChoices = plr.questSelectableRewards(d.active.questID)
 			if len(d.rewardChoices) > 0 {
 				d.state = questDialogStateRewardSelection
