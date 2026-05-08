@@ -1682,6 +1682,7 @@ type npcChatController struct {
 	conn   mnet.Client
 	plr    *Player
 	server *Server
+	script string
 
 	goods [][]int32
 
@@ -1930,12 +1931,13 @@ func runPortalScript(program *goja.Program, plr *Player, server *Server, src por
 	return portalCtrl.warped, portalCtrl.blocked, err
 }
 
-func createNpcChatController(npcID int32, conn mnet.Client, program *goja.Program, plr *Player, server *Server) (*npcChatController, error) {
+func createNpcChatController(npcID int32, scriptName string, conn mnet.Client, program *goja.Program, plr *Player, server *Server) (*npcChatController, error) {
 	ctrl := &npcChatController{
 		npcID:   npcID,
 		conn:    conn,
 		plr:     plr,
 		server:  server,
+		script:  scriptName,
 		vm:      goja.New(),
 		program: program,
 	}
@@ -2311,13 +2313,17 @@ func (ctrl *npcChatController) run() bool {
 
 	if err != nil {
 		if _, isInterrupted := err.(*goja.InterruptedError); isInterrupted {
+			log.Printf("npc script interrupted npc=%d script=%s map=%d pos=%d last=%d disposed=%t", ctrl.npcID, ctrl.script, ctrl.plr.mapID, ctrl.stateTracker.currentPos, ctrl.stateTracker.lastPos, ctrl.disposed)
 			if ctrl.disposed {
 				return true
 			}
 			return false
 		}
+		log.Printf("npc script runtime error npc=%d script=%s map=%d pos=%d last=%d err=%v", ctrl.npcID, ctrl.script, ctrl.plr.mapID, ctrl.stateTracker.currentPos, ctrl.stateTracker.lastPos, err)
 		return true
 	}
+
+	log.Printf("npc script completed npc=%d script=%s map=%d pos=%d last=%d disposed=%t", ctrl.npcID, ctrl.script, ctrl.plr.mapID, ctrl.stateTracker.currentPos, ctrl.stateTracker.lastPos, ctrl.disposed)
 
 	if ctrl.stateTracker.currentPos >= ctrl.stateTracker.lastPos {
 		return true

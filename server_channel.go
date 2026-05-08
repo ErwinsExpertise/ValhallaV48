@@ -81,7 +81,8 @@ func (cs *channelServer) run() {
 		cs.dbConfig.toCommon(),
 		"drops.json",
 		"reactors.json",
-		"reactor_drops.json")
+		"reactor_drops.json",
+		"gachapon.json")
 
 	cs.wg.Add(1)
 	go cs.acceptNewConnections()

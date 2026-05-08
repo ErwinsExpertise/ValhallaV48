@@ -58,7 +58,7 @@ type Server struct {
 }
 
 // Initialise the server
-func (server *Server) Initialise(work chan func(), dbConfig common.DBConfig, dropsJson, reactorJson, reactorDropsJson string) {
+func (server *Server) Initialise(work chan func(), dbConfig common.DBConfig, dropsJson, reactorJson, reactorDropsJson, gachaponJson string) {
 	server.dispatch = work
 
 	if err := common.ConnectToDB(dbConfig); err != nil {
@@ -97,6 +97,13 @@ func (server *Server) Initialise(work chan func(), dbConfig common.DBConfig, dro
 	}
 	elapsed = time.Since(start)
 	log.Println("Loaded and parsed reactor drop data in", elapsed)
+
+	start = time.Now()
+	if err := populateGachaponTable(gachaponJson); err != nil {
+		log.Fatal(err)
+	}
+	elapsed = time.Since(start)
+	log.Println("Loaded and parsed gachapon data in", elapsed)
 
 	for fieldID, nxMap := range nx.GetMaps() {
 		server.fields[fieldID] = &field{

@@ -3405,10 +3405,10 @@ func (server *Server) npcChatStart(conn mnet.Client, reader mpacket.Reader) {
 	var controller *npcChatController
 
 	if program, ok := server.npcScriptStore.scripts[strconv.Itoa(int(npcData.id))]; ok {
-		controller, err = createNpcChatController(npcData.id, conn, program, plr, server)
+		controller, err = createNpcChatController(npcData.id, strconv.Itoa(int(npcData.id)), conn, program, plr, server)
 	} else {
 		if program, ok := server.npcScriptStore.scripts["default"]; ok {
-			controller, err = createNpcChatController(npcData.id, conn, program, plr, server)
+			controller, err = createNpcChatController(npcData.id, "default", conn, program, plr, server)
 		}
 	}
 
@@ -3422,6 +3422,7 @@ func (server *Server) npcChatStart(conn mnet.Client, reader mpacket.Reader) {
 
 	server.npcChat[conn] = controller
 	server.updateNPCInteractionMetric(1)
+	log.Printf("npc chat start npc=%d script=%s map=%d spawn=%d", controller.npcID, controller.script, plr.mapID, npcSpawnID)
 
 	// Run the script. If it returns true, chat flow ended.
 	if ended := controller.run(); ended {

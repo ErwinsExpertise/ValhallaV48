@@ -1446,7 +1446,7 @@ func (server *Server) gmCommand(conn mnet.Client, msg string) {
 		var controller *npcChatController
 
 		if program, ok := server.npcScriptStore.scripts["2010007"]; ok {
-			controller, err = createNpcChatController(2010007, conn, program, plr, server)
+			controller, err = createNpcChatController(2010007, "2010007", conn, program, plr, server)
 
 			if err != nil {
 				conn.Send(packetMessageRedText(err.Error()))
