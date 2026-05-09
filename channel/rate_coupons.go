@@ -1,11 +1,18 @@
 package channel
 
 import (
+	"math"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Hucaru/Valhalla/nx"
+)
+
+const (
+	// Verified against v48 NX Cash/0536.img.
+	dropCouponItemMin = 5360000
+	dropCouponItemMax = 5360014
 )
 
 var pacificLocation = func() *time.Location {
@@ -21,18 +28,21 @@ func isExpCouponItem(itemID int32) bool {
 }
 
 func isDropCouponItem(itemID int32) bool {
-	return itemID >= 5360000 && itemID <= 5360012
+	return itemID >= dropCouponItemMin && itemID <= dropCouponItemMax
 }
 
 func (p *Player) expCouponMultiplier(now time.Time) float32 {
-	return p.rateCouponMultiplier(now, isExpCouponItem)
+	_, rate := p.rateCouponState(now, isExpCouponItem)
+	return rate
 }
 
 func (p *Player) dropCouponMultiplier(now time.Time) float32 {
-	return p.rateCouponMultiplier(now, isDropCouponItem)
+	_, rate := p.rateCouponState(now, isDropCouponItem)
+	return rate
 }
 
-func (p *Player) rateCouponMultiplier(now time.Time, match func(int32) bool) float32 {
+func (p *Player) rateCouponState(now time.Time, match func(int32) bool) (int32, float32) {
+	bestID := int32(0)
 	best := float32(1)
 
 	for _, item := range p.cash {
@@ -41,17 +51,31 @@ func (p *Player) rateCouponMultiplier(now time.Time, match func(int32) bool) flo
 		}
 
 		nxItem, err := nx.GetItem(item.ID)
-		if err != nil || nxItem.Rate <= 0 || !couponScheduleActive(item.ID, now) {
+		rate := couponRateMultiplier(nxItem.Rate)
+		if err != nil || rate <= 0 || !couponScheduleActive(item.ID, now) {
 			continue
 		}
 
-		rate := float32(nxItem.Rate)
 		if rate > best {
+			bestID = item.ID
 			best = rate
 		}
 	}
 
-	return best
+	return bestID, best
+}
+
+func couponRateMultiplier(rawRate int64) float32 {
+	if rawRate > 0 && rawRate < 1024 {
+		return float32(rawRate)
+	}
+
+	decoded := math.Float64frombits(uint64(rawRate))
+	if math.IsNaN(decoded) || math.IsInf(decoded, 0) || decoded <= 0 || decoded >= 1024 {
+		return 0
+	}
+
+	return float32(decoded)
 }
 
 func couponScheduleActive(itemID int32, now time.Time) bool {

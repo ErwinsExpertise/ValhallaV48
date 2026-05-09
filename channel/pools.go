@@ -792,7 +792,7 @@ func (pool *lifePool) mobDamaged(poolID int32, damager *Player, dmg ...int32) {
 					if dropEntry, ok := dropTable[v.id]; ok {
 						now := time.Now()
 						couponMultiplier := killer.dropCouponMultiplier(now)
-						mesos, drops := buildDropRewards(pool.rNumber, dropEntry, pool.dropPool.rates.drop, couponMultiplier, killer, v.id)
+						mesos, drops := buildDropRewards(pool.rNumber, dropEntry, pool.dropPool.rates.drop, couponMultiplier, killer)
 						pool.dropPool.createDrop(dropSpawnNormal, dropFreeForAll, int32(killer.rates.mesos*sanitizeDropRateMultiplier(couponMultiplier)*float32(mesos)), v.pos, true, false, 0, 0, drops...)
 					}
 				}
@@ -878,16 +878,16 @@ func sanitizeDropRateMultiplier(rate float32) float32 {
 	return rate
 }
 
-func rollDrop(r *rand.Rand, baseChance int64, rate float32) (bool, int64, int64) {
-	const denom int64 = 1000000
+const dropRollDenominator int64 = 1000000
 
+func rollDrop(r *rand.Rand, baseChance int64, rate float32) (bool, int64, int64) {
 	if baseChance <= 0 {
 		return false, 0, -1
 	}
 
 	rate = sanitizeDropRateMultiplier(rate)
-	if baseChance >= denom && rate >= 1 {
-		return true, denom, -1
+	if baseChance >= dropRollDenominator && rate >= 1 {
+		return true, dropRollDenominator, -1
 	}
 
 	// Drop table chances are stored in millionths. Apply all rate modifiers before
@@ -896,15 +896,15 @@ func rollDrop(r *rand.Rand, baseChance int64, rate float32) (bool, int64, int64)
 	if scaled <= 0 {
 		return false, 0, -1
 	}
-	if scaled >= denom {
-		return true, denom, -1
+	if scaled >= dropRollDenominator {
+		return true, dropRollDenominator, -1
 	}
 
-	roll := r.Int63n(denom)
+	roll := r.Int63n(dropRollDenominator)
 	return roll < scaled, scaled, roll
 }
 
-func buildDropRewards(r *rand.Rand, entries []dropTableEntry, baseRate, couponMultiplier float32, plr *Player, mobID int32) (int32, []Item) {
+func buildDropRewards(r *rand.Rand, entries []dropTableEntry, baseRate, couponMultiplier float32, plr *Player) (int32, []Item) {
 	if len(entries) == 0 {
 		return 0, nil
 	}
@@ -2111,7 +2111,7 @@ func (pool *reactorPool) processStateSideEffects(r *fieldReactor, plr *Player) {
 			}
 		case constant.ReactorDrop:
 			dropEntries := reactorDropTable[r.info.ID]
-			mesos, items := buildDropRewards(pool.instance.lifePool.rNumber, dropEntries, pool.instance.dropPool.rates.drop, 1, plr, 0)
+			mesos, items := buildDropRewards(pool.instance.lifePool.rNumber, dropEntries, pool.instance.dropPool.rates.drop, 1, plr)
 			if mesos > 0 || len(items) > 0 {
 				pool.instance.dropPool.createDrop(dropSpawnNormal, dropFreeForAll, mesos, r.pos, true, false, 0, 0, items...)
 			}
