@@ -880,6 +880,10 @@ func (inst *fieldInstance) addPlayer(plr *Player) error {
 		plr.party.syncPlayersHP()
 	}
 
+	if inst.server != nil && inst.server.transports != nil {
+		inst.server.transports.scheduleMuLungArrival(plr)
+	}
+
 	return nil
 }
 

@@ -63,6 +63,7 @@ type Server struct {
 	avatarMegaphoneSeq uint64
 	merchantShops      map[int64]*merchantRoom
 	merchantByChar     map[int32]*merchantRoom
+	transports         *transportScheduler
 }
 
 const debugDispatchOwnershipAssertions = false
@@ -302,10 +303,8 @@ func (server *Server) Initialise(work chan func(), dbConfig common.DBConfig, dro
 	})
 	log.Println("Anti-cheat initialized")
 
-	go scheduleBoats(server)
-	go scheduleMuLungTransport(server)
-	go scheduleSubway(server)
-	go scheduleHeliosElevator(server)
+	server.transports = newTransportScheduler(server)
+	go server.transports.run()
 	go scheduleMerchantExpiry(server)
 	go scheduleItemExpiry(server)
 }

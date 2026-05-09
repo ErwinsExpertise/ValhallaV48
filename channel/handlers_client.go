@@ -1571,8 +1571,18 @@ func (server Server) playerUseScriptedPortal(conn mnet.Client, reader mpacket.Re
 	case constant.PortalPapulatus:
 		switch plr.mapID {
 		case constant.MapHeliosTower2ndFloor:
+			if server.transports != nil && !server.transports.canBoardFromMap(plr.mapID) {
+				plr.Send(packetMessageRedText("The elevator is not available for this route right now."))
+				plr.Send(packetPlayerNoChange())
+				return
+			}
 			warp(plr, constant.MapHeliosTowerLudiWaitingRoom, "sp")
 		case constant.MapHeliosTower99thFloor:
+			if server.transports != nil && !server.transports.canBoardFromMap(plr.mapID) {
+				plr.Send(packetMessageRedText("The elevator is not available for this route right now."))
+				plr.Send(packetPlayerNoChange())
+				return
+			}
 			warp(plr, constant.MapHeliosTowerKFTWaitingRoom, "sp")
 		case 222080000:
 			if !checkMap(plr, constant.MapBossPapulatus, true, 0, 120) {
