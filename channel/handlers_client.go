@@ -3047,7 +3047,7 @@ func (server Server) playerMeleeSkill(conn mnet.Client, reader mpacket.Reader) {
 		return
 	}
 
-	err = plr.useSkill(data.skillID, data.skillLevel, data.projectileID)
+	err = plr.useSkill(data.skillID, data.skillLevel, data.projectileSlot, data.projectileID)
 	if err != nil {
 		if server.ac != nil {
 			server.ac.LogSkillAbuseViolation(plr.accountID, data.skillID)
@@ -3174,7 +3174,7 @@ func (server Server) playerRangedSkill(conn mnet.Client, reader mpacket.Reader) 
 		return
 	}
 
-	err = plr.useSkill(data.skillID, data.skillLevel, data.projectileID)
+	err = plr.useSkill(data.skillID, data.skillLevel, data.projectileSlot, data.projectileID)
 	if err != nil {
 		if server.ac != nil {
 			server.ac.LogSkillAbuseViolation(plr.accountID, data.skillID)
@@ -3237,7 +3237,7 @@ func (server Server) playerMagicSkill(conn mnet.Client, reader mpacket.Reader) {
 		return
 	}
 
-	err = plr.useSkill(data.skillID, data.skillLevel, data.projectileID)
+	err = plr.useSkill(data.skillID, data.skillLevel, data.projectileSlot, data.projectileID)
 	if err != nil {
 		if server.ac != nil {
 			server.ac.LogSkillAbuseViolation(plr.accountID, data.skillID)
@@ -3321,6 +3321,7 @@ type attackData struct {
 	option, action, attackType                                 byte
 	partyCount, targets, hits, skillLevel                      byte
 	mesoKillDelay                                              int16
+	projectileSlot                                             int16
 
 	attackInfo []attackInfo
 	playerPos  pos
@@ -3364,6 +3365,7 @@ func getAttackInfo(reader mpacket.Reader, player *Player, attackType int) (attac
 		data.clientTick = reader.ReadInt32()
 		if attackType == attackRanged {
 			projectileSlot := reader.ReadInt16()
+			data.projectileSlot = projectileSlot
 			_ = reader.ReadInt16()
 			_ = reader.ReadByte()
 
@@ -3761,6 +3763,9 @@ func (server *Server) npcShop(conn mnet.Client, reader mpacket.Reader) {
 			plr.Send(packetNpcShopResult(shopBuyUnknown))
 			return
 		}
+		if isRechargeable(itemID) {
+			newItem.amount = plr.getRechargeableSlotMax(itemID)
+		}
 		if _, err := plr.GiveItem(newItem); err != nil {
 			plr.Send(packetNpcShopResult(shopBuyUnknown))
 			return
@@ -3855,27 +3860,18 @@ func (server *Server) npcShop(conn mnet.Client, reader mpacket.Reader) {
 			return
 		}
 
-		slotMax := meta.SlotMax
+		slotMax := plr.getRechargeableSlotMax(it.ID)
 		if slotMax <= 0 || it.amount < 0 || it.amount >= slotMax {
 			plr.Send(packetNpcShopResult(shopRechargeIncorrectRequest))
 			return
 		}
 
-		// Calculate base amount to fill (to slotMax)
 		baseToFill := int(slotMax - it.amount)
 
-		// Don't allow recharge if already at max
 		if baseToFill <= 0 {
 			plr.Send(packetNpcShopResult(shopRechargeIncorrectRequest))
 			return
 		}
-
-		// Apply recharge bonus from passive skills
-		// The bonus allows exceeding slotMax (e.g., slotMax=600, bonus=200 -> final=800)
-		bonus := plr.getRechargeBonus()
-
-		// Final amount is slotMax + bonus (not capped)
-		newAmount := int(slotMax) + int(bonus)
 
 		unitPrice := meta.UnitPrice
 		if unitPrice <= 0 {
@@ -3883,14 +3879,13 @@ func (server *Server) npcShop(conn mnet.Client, reader mpacket.Reader) {
 			return
 		}
 
-		// Cost is based on base amount to fill to slotMax, not including bonus
 		cost := int(math.Ceil(unitPrice * float64(baseToFill)))
 		if cost < 0 || int(plr.mesos) < cost {
 			plr.Send(packetNpcShopResult(shopRechargeNoMoney))
 			return
 		}
 
-		it.amount = int16(newAmount)
+		it.amount = slotMax
 		plr.updateItemStack(*it, false)
 		plr.giveMesos(int32(-cost))
 		plr.Send(packetNpcShopResult(shopRechargeSuccess))
@@ -5466,7 +5461,7 @@ func (server *Server) playerSpecialSkill(conn mnet.Client, reader mpacket.Reader
 	}
 
 	// Apply MP cost/cooldown, if any (reuses the same flow as attack skills).
-	plr.useSkill(skillID, skillLevel, 0)
+	plr.useSkill(skillID, skillLevel, 0, 0)
 	plr.Send(packetPlayerNoChange()) // catch all for things like GM teleport
 }
 
@@ -5902,7 +5897,7 @@ func (server *Server) playerUseStorage(conn mnet.Client, reader mpacket.Reader) 
 		}
 
 		out := *it
-		if !out.isStackable() || out.amount <= 0 {
+		if !out.isRechargeable() && (!out.isStackable() || out.amount <= 0) {
 			out.amount = 1
 		}
 		out.dbID = 0
@@ -5924,10 +5919,6 @@ func (server *Server) playerUseStorage(conn mnet.Client, reader mpacket.Reader) 
 		srcSlot := reader.ReadInt16()
 		itemID := reader.ReadInt32()
 		amt := reader.ReadInt16()
-		if amt <= 0 {
-			plr.Send(packetNpcStorageResult(storagePutIncorrectRequest))
-			return
-		}
 
 		tab := byte(itemID / 1000000)
 		itemOnChar, getErr := plr.getItem(tab, srcSlot)
@@ -5948,10 +5939,17 @@ func (server *Server) playerUseStorage(conn mnet.Client, reader mpacket.Reader) 
 
 		if isRechargeable(itemID) {
 			amt = itemOnChar.amount
+		} else if amt <= 0 {
+			plr.Send(packetNpcStorageResult(storagePutIncorrectRequest))
+			return
 		} else if !itemOnChar.isStackable() {
 			amt = 1
 		} else if amt > itemOnChar.amount {
 			amt = itemOnChar.amount
+		}
+		if amt < 0 {
+			plr.Send(packetNpcStorageResult(storagePutIncorrectRequest))
+			return
 		}
 
 		storeCopy := itemOnChar
@@ -5966,9 +5964,13 @@ func (server *Server) playerUseStorage(conn mnet.Client, reader mpacket.Reader) 
 			}
 		}
 
-		if _, remErr := plr.takeItem(itemID, srcSlot, amt, tab); remErr != nil {
-			plr.Send(packetNpcStorageResult(storageDueToAnError))
-			return
+		if itemOnChar.isRechargeable() && amt == 0 {
+			plr.removeItem(itemOnChar, false)
+		} else {
+			if _, remErr := plr.takeItem(itemID, srcSlot, amt, tab); remErr != nil {
+				plr.Send(packetNpcStorageResult(storageDueToAnError))
+				return
+			}
 		}
 
 		if !plr.storageInventory.addItem(storeCopy) {

@@ -290,6 +290,14 @@ func getItemSlotMax(itemID int32) int16 {
 	return constant.MaxItemStack
 }
 
+func (d *Player) getRechargeableSlotMax(itemID int32) int16 {
+	max := getItemSlotMax(itemID)
+	if !isRechargeableItem(itemID) {
+		return max
+	}
+	return max + d.getRechargeBonus()
+}
+
 func NewPlayers() Players {
 	return Players{
 		conn: make(map[mnet.Client]*Player),
@@ -1642,7 +1650,7 @@ func (d *Player) TakeItemSilent(id int32, slot int16, amount int16, invID byte) 
 	}
 
 	item.amount -= amount
-	if item.amount == 0 || item.isRechargeable() {
+	if item.amount == 0 {
 		d.removeItem(item, true)
 	} else {
 		d.updateItemStack(item, true)
@@ -1654,11 +1662,12 @@ func (d *Player) TakeItemSilent(id int32, slot int16, amount int16, invID byte) 
 }
 
 func (d Player) updateItemStack(item Item, silent bool) {
-	if item.amount <= 0 {
+	if item.amount < 0 || (item.amount == 0 && !item.keepsSlotAtZero()) {
 		d.removeItem(item, silent)
 		return
 	}
 
+	// Rechargeables need to persist at 0 so they can be recharged later.
 	item.save(d.ID)
 	d.updateItem(item)
 
@@ -2221,6 +2230,38 @@ func (d *Player) moveItem(start, end, amount int16, invID byte) error {
 	return nil
 }
 
+func consumeRechargeableFromSlot(items []Item, slot int16, itemID int32, amount int16) (Item, bool) {
+	if amount <= 0 {
+		return Item{}, false
+	}
+
+	for i := range items {
+		if items[i].slotID != slot || items[i].ID != itemID || !items[i].isRechargeable() {
+			continue
+		}
+		if items[i].amount < amount {
+			return Item{}, false
+		}
+
+		items[i].amount -= amount
+		return items[i], true
+	}
+
+	return Item{}, false
+}
+
+func (d *Player) consumeRechargeableProjectile(slot int16, itemID int32, amount int16) bool {
+	item, ok := consumeRechargeableFromSlot(d.use, slot, itemID, amount)
+	if !ok {
+		return false
+	}
+
+	// BMS wastes stars from the selected slot and keeps the stack at 0.
+	d.updateItemStack(item, false)
+	d.refreshQuestCompletionNotifications(false)
+	return true
+}
+
 func (d *Player) updateSkill(updatedSkill playerSkill) {
 	if d.skills == nil {
 		d.skills = make(map[int32]playerSkill)
@@ -2239,7 +2280,7 @@ func (d *Player) removeSkill(skillID int32) {
 	d.MarkDirty(DirtySkills, 800*time.Millisecond)
 }
 
-func (d *Player) useSkill(id int32, level byte, projectileID int32) error {
+func (d *Player) useSkill(id int32, level byte, projectileSlot int16, projectileID int32) error {
 	skillInfo, _ := nx.GetPlayerSkill(id)
 
 	skillUsed, ok := d.skills[id]
@@ -2289,7 +2330,12 @@ func (d *Player) useSkill(id int32, level byte, projectileID int32) error {
 	if projectileID > 0 {
 		need := projectileItemsToConsume(si)
 		if need > 0 {
-			if !d.consumeItemsByID(projectileID, need) {
+			if isRechargeableItem(projectileID) {
+				if projectileSlot == 0 || !d.consumeRechargeableProjectile(projectileSlot, projectileID, int16(need)) {
+					d.Conn.Send(packetMessageRedText("not enough projectiles to use this skill"))
+					return errors.New("not enough projectiles")
+				}
+			} else if !d.consumeItemsByID(projectileID, need) {
 				d.Conn.Send(packetMessageRedText("not enough projectiles to use this skill"))
 				return errors.New("not enough projectiles")
 			}

@@ -127,6 +127,16 @@ func isRechargeableItem(itemID int32) bool {
 	}
 }
 
+func isValidInventoryQuantity(item Item) bool {
+	if item.amount < 0 {
+		return false
+	}
+	if item.amount == 0 {
+		return item.keepsSlotAtZero()
+	}
+	return true
+}
+
 func generateRandomCashID() int64 {
 	var b [8]byte
 	if _, err := rand.Read(b[:]); err != nil {
@@ -325,7 +335,7 @@ func loadInventoryFromDb(charID int32, equipSlots, useSlots, setupSlots, etcSlot
 			continue
 		}
 
-		if item.slotID == 0 || item.amount <= 0 {
+		if item.slotID == 0 || !isValidInventoryQuantity(item) {
 			if delErr := item.delete(); delErr != nil {
 				log.Printf("loadInventoryFromDb: invalid-row delete failed charID=%d dbID=%d err=%v", charID, item.dbID, delErr)
 			}
@@ -626,7 +636,11 @@ func (v Item) Pet() bool { return v.pet }
 func (v Item) GetSlotID() int16 { return v.slotID }
 
 func (v Item) isRechargeable() bool {
-	return float64(v.ID/10000) == 207 // Taken from client
+	return isRechargeableItem(v.ID)
+}
+
+func (v Item) keepsSlotAtZero() bool {
+	return v.isRechargeable()
 }
 
 func (v Item) shield() bool {
@@ -917,6 +931,7 @@ func CreateItemFromDBValues(itemID int32, slotID int16, amount int16, flag int16
 	if err != nil {
 		return item, err
 	}
+	item.amount = amount
 
 	// Override with saved stat values
 	item.slotID = slotID

@@ -204,7 +204,7 @@ func (s *storage) save(accountID int32) (err error) {
 	written := 0
 	for _, k := range keys {
 		it := s.items[k.slot]
-		if it.ID == 0 || it.amount == 0 {
+		if it.ID == 0 || !isValidInventoryQuantity(it) {
 			continue
 		}
 
