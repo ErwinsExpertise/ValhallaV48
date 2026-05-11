@@ -859,6 +859,11 @@ func (calc *DamageCalculator) GetCriticalDamageMultiplier() float64 {
 
 func (calc *DamageCalculator) GetAfterModifier(targetIdx int, baseDmg float64) float64 {
 	if calc.skill == nil {
+		if calc.attackOption&constant.AttackOptionMortalBlowMelee != 0 {
+			if _, skillData := calc.GetMortalBlowSkill(); skillData != nil && skillData.Damage > 0 {
+				return float64(skillData.Damage) / 100.0
+			}
+		}
 		return 1.0
 	}
 
@@ -881,6 +886,31 @@ func (calc *DamageCalculator) GetAfterModifier(targetIdx int, baseDmg float64) f
 	}
 
 	return 1.0
+}
+
+func (calc *DamageCalculator) GetMortalBlowSkill() (byte, *nx.PlayerSkill) {
+	if !calc.isRanged {
+		return 0, nil
+	}
+
+	var skillID int32
+	switch calc.weaponType {
+	case constant.WeaponTypeBow2:
+		skillID = int32(skill.MortalBlow)
+	case constant.WeaponTypeCrossbow2:
+		skillID = int32(skill.SniperMortalBlow)
+	default:
+		return 0, nil
+	}
+
+	if skillInfo, ok := calc.player.skills[skillID]; ok {
+		if skillData, err := nx.GetPlayerSkill(skillID); err == nil && len(skillData) > 0 {
+			if skillInfo.Level > 0 && int(skillInfo.Level) <= len(skillData) {
+				return skillInfo.Level, &skillData[skillInfo.Level-1]
+			}
+		}
+	}
+	return 0, nil
 }
 
 func (calc *DamageCalculator) GetIsMiss(rngBuf *DamageRngBuffer, targetAccuracy float64, mob *monster, hitIdx int) bool {

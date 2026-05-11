@@ -199,6 +199,8 @@ func (server *Server) HandleClientPacket(conn mnet.Client, reader mpacket.Reader
 		server.playerSpecialSkill(conn, reader)
 	case opcode.RecvChannelRequestBuffCancel:
 		server.playerStopSkill(conn, reader)
+	case opcode.RecvChannelPrepareSkill:
+		server.playerPrepareSkill(conn, reader)
 	case opcode.RecvChannelCharacterInfo:
 		server.playerRequestAvatarInfoWindow(conn, reader)
 	case opcode.RecvChannelLieDetectorResult:
@@ -598,6 +600,9 @@ func (server Server) playerMovement(conn mnet.Client, reader mpacket.Reader) {
 		log.Println("Unable to get Player from connection", conn)
 		return
 	}
+	if plr.preparedSkillID == int32(skill.Chakra) {
+		plr.clearPreparedSkill()
+	}
 
 	plr.lastMovementPacketTime = reader.Time
 
@@ -829,13 +834,13 @@ func (server Server) playerAddStatPoint(conn mnet.Client, reader mpacket.Reader)
 		// Calculate HP gain based on job
 		hpGain := player.getHPGainForJob()
 		// Apply passive skill bonus
-		hpGain += player.getPassiveHPBonus()
+		hpGain += player.getPassiveHPBonus(false)
 		player.giveMaxHP(hpGain)
 	case constant.MaxMpID:
 		// Calculate MP gain based on job and INT
 		mpGain := player.getMPGainForJob()
 		// Apply passive skill bonus
-		mpGain += player.getPassiveMPBonus()
+		mpGain += player.getPassiveMPBonus(false)
 		player.giveMaxMP(mpGain)
 	default:
 		fmt.Println("unknown stat ID:", statID)
@@ -2923,25 +2928,18 @@ func (server Server) mobDamagePlayer(conn mnet.Client, reader mpacket.Reader, mo
 			}
 		}
 
-		// Meso guard - uses mesos to reduce damage
+		// BMS guards half the incoming damage and charges mesos from the reduced half.
 		if _, hasMesoGuard := plr.buffs.activeSkillLevels[int32(skill.MesoGuard)]; hasMesoGuard {
 			skillData, err := nx.GetPlayerSkill(int32(skill.MesoGuard))
 			if err == nil {
 				if ps, ok := plr.skills[int32(skill.MesoGuard)]; ok && ps.Level > 0 {
 					idx := int(ps.Level) - 1
 					if idx < len(skillData) {
-						absorbPercent := int32(skillData[idx].X)
-						mesoCost := int32(skillData[idx].Y)
-
-						if absorbPercent > 0 && mesoCost > 0 {
-							absorbedDamage := (damage * absorbPercent) / 100
-							totalMesoCost := absorbedDamage * mesoCost
-
-							if plr.mesos >= totalMesoCost {
-								plr.giveMesos(-totalMesoCost)
-								damage -= absorbedDamage
-								reducedDamage = damage
-							}
+						mesoRatio := int32(skillData[idx].X)
+						if reduced, mesoCost := applyMesoGuardReduction(damage, plr.mesos, mesoRatio); mesoCost > 0 {
+							plr.giveMesos(-mesoCost)
+							damage = reduced
+							reducedDamage = damage
 						}
 					}
 				}
@@ -3028,6 +3026,126 @@ func playerSkillMobStatMask(skillID int32) (int32, bool) {
 	}
 }
 
+func applyMesoGuardReduction(damage, mesos, mesoRatio int32) (int32, int32) {
+	if damage <= 0 || mesoRatio <= 0 {
+		return damage, 0
+	}
+
+	guardedDamage := damage / 2
+	mesoCost := (guardedDamage * mesoRatio) / 100
+	if mesos < mesoCost {
+		guardedDamage = (100 * mesos) / mesoRatio
+		mesoCost = (guardedDamage * mesoRatio) / 100
+	}
+	if guardedDamage <= 0 || mesoCost <= 0 {
+		return damage, 0
+	}
+
+	return damage - guardedDamage, mesoCost
+}
+
+func getMortalBlowSkillData(plr *Player) (skillID int32, level byte, data nx.PlayerSkill, ok bool) {
+	if plr == nil {
+		return 0, 0, nx.PlayerSkill{}, false
+	}
+
+	for _, sid := range []int32{int32(skill.MortalBlow), int32(skill.SniperMortalBlow)} {
+		ps, exists := plr.skills[sid]
+		if !exists || ps.Level == 0 {
+			continue
+		}
+		levels, err := nx.GetPlayerSkill(sid)
+		if err != nil || int(ps.Level) > len(levels) {
+			continue
+		}
+		return sid, ps.Level, levels[ps.Level-1], true
+	}
+
+	return 0, 0, nx.PlayerSkill{}, false
+}
+
+func tryApplyMortalBlow(pool *lifePool, plr *Player, attack attackInfo, option byte) {
+	if pool == nil || plr == nil || option&byte(constant.AttackOptionMortalBlowProp) == 0 {
+		return
+	}
+
+	mob, err := pool.getMobFromID(attack.spawnID)
+	if err != nil || mob.boss || mob.hp <= 0 || mob.maxHP <= 0 {
+		return
+	}
+
+	skillID, _, skillData, ok := getMortalBlowSkillData(plr)
+	if !ok || skillData.Y <= 0 || skillData.X <= 0 {
+		return
+	}
+
+	if mob.hp > (mob.maxHP*int32(skillData.X))/100 {
+		return
+	}
+	if plr.randIntn(100) >= int(skillData.Y) {
+		return
+	}
+
+	if plr.inst != nil {
+		plr.inst.send(packetMobAffected(attack.spawnID, skillID, 0))
+	}
+	pool.mobDamaged(attack.spawnID, plr, mob.hp)
+}
+
+func applyDrainHeal(plr *Player, mob *monster, damageSum int32) {
+	if plr == nil || mob == nil || damageSum <= 0 {
+		return
+	}
+
+	ps, ok := plr.skills[int32(skill.Drain)]
+	if !ok || ps.Level == 0 {
+		return
+	}
+	levels, err := nx.GetPlayerSkill(int32(skill.Drain))
+	if err != nil || int(ps.Level) > len(levels) {
+		return
+	}
+
+	heal := (damageSum * int32(levels[ps.Level-1].X)) / 100
+	maxHeal := int32(plr.effectiveMaxHP()) / 2
+	if heal > maxHeal {
+		heal = maxHeal
+	}
+	if heal > mob.maxHP {
+		heal = mob.maxHP
+	}
+	if heal > 0 {
+		plr.giveHP(int16(heal))
+	}
+}
+
+func isFinalAttackSkillID(skillID int32) bool {
+	switch skill.Skill(skillID) {
+	case skill.FinalAttackSword, skill.FinalAttackAxe, skill.FinalAttackPageSword, skill.FinalAttackBluntWeapon,
+		skill.SpearFinalAttack, skill.PolearmFinalAttack:
+		return true
+	default:
+		return false
+	}
+}
+
+func isFinalAttackWeaponAllowed(skillID int32, weaponType constant.WeaponType) bool {
+	switch skill.Skill(skillID) {
+	case skill.FinalAttackSword, skill.FinalAttackPageSword:
+		return weaponType == constant.WeaponTypeSword1H || weaponType == constant.WeaponTypeSword2H
+	case skill.FinalAttackAxe:
+		return weaponType == constant.WeaponTypeAxe1H || weaponType == constant.WeaponTypeAxe2H
+	case skill.FinalAttackBluntWeapon:
+		return weaponType == constant.WeaponTypeBW1H || weaponType == constant.WeaponTypeBW2H
+	case skill.SpearFinalAttack:
+		return weaponType == constant.WeaponTypeSpear2
+	case skill.PolearmFinalAttack:
+		return weaponType == constant.WeaponTypePolearm2
+	default:
+		return false
+	}
+}
+
 func (server Server) playerMeleeSkill(conn mnet.Client, reader mpacket.Reader) {
 	plr, err := server.players.GetFromConn(conn)
 
@@ -3035,6 +3153,7 @@ func (server Server) playerMeleeSkill(conn mnet.Client, reader mpacket.Reader) {
 		conn.Send(packetMessageRedText(err.Error()))
 		return
 	}
+	plr.clearPreparedSkill()
 	data, valid, _ := getAttackInfo(reader, plr, attackMelee)
 
 	if !valid {
@@ -3047,6 +3166,10 @@ func (server Server) playerMeleeSkill(conn mnet.Client, reader mpacket.Reader) {
 	field, ok := server.fields[plr.mapID]
 
 	if !ok {
+		return
+	}
+	if isFinalAttackSkillID(data.skillID) && !isFinalAttackWeaponAllowed(data.skillID, constant.GetWeaponType(plr.getEquippedWeaponID())) {
+		plr.Send(packetPlayerNoChange())
 		return
 	}
 
@@ -3162,6 +3285,7 @@ func (server Server) playerRangedSkill(conn mnet.Client, reader mpacket.Reader) 
 		conn.Send(packetMessageRedText(err.Error()))
 		return
 	}
+	plr.clearPreparedSkill()
 	data, valid, _ := getAttackInfo(reader, plr, attackRanged)
 
 	if !valid {
@@ -3210,7 +3334,22 @@ func (server Server) playerRangedSkill(conn mnet.Client, reader mpacket.Reader) 
 	inst.sendExcept(packetSkillRanged(*plr, data), conn)
 
 	for _, attack := range data.attackInfo {
-		inst.lifePool.mobDamaged(attack.spawnID, plr, attack.damages...)
+		mob, err := inst.lifePool.getMobFromID(attack.spawnID)
+		if err == nil {
+			damageSum := int32(0)
+			for _, dmg := range attack.damages {
+				if dmg > 0 {
+					damageSum += dmg
+				}
+			}
+			inst.lifePool.mobDamaged(attack.spawnID, plr, attack.damages...)
+			if data.skillID == int32(skill.Drain) {
+				applyDrainHeal(plr, &mob, damageSum)
+			}
+			tryApplyMortalBlow(&inst.lifePool, plr, attack, data.option)
+		} else {
+			inst.lifePool.mobDamaged(attack.spawnID, plr, attack.damages...)
+		}
 		if statMask, ok := playerSkillMobStatMask(data.skillID); ok {
 			inst.lifePool.applyMobBuff(plr.ID, attack.spawnID, data.skillID, data.skillLevel, statMask, inst)
 		}
@@ -3225,6 +3364,7 @@ func (server Server) playerMagicSkill(conn mnet.Client, reader mpacket.Reader) {
 		conn.Send(packetMessageRedText(err.Error()))
 		return
 	}
+	plr.clearPreparedSkill()
 	data, valid, _ := getAttackInfo(reader, plr, attackMagic)
 
 	if !valid {
@@ -3274,10 +3414,29 @@ func (server Server) playerMagicSkill(conn mnet.Client, reader mpacket.Reader) {
 
 	inst.sendExcept(packetSkillMagic(*plr, data), conn)
 
+	totalMPEaterGain := int32(0)
+	if _, prop, percent, ok := plr.getMPEaterSkillData(); ok && len(data.attackInfo) > 0 && percent > 0 {
+		perMobPercent := int32(math.Ceil(float64(percent) / float64(len(data.attackInfo))))
+		for _, attack := range data.attackInfo {
+			totalMPEaterGain += inst.lifePool.mobMPSteal(attack.spawnID, prop, perMobPercent)
+		}
+	}
+
 	for _, attack := range data.attackInfo {
 		inst.lifePool.mobDamaged(attack.spawnID, plr, attack.damages...)
 		if statMask, ok := playerSkillMobStatMask(data.skillID); ok {
 			inst.lifePool.applyMobBuff(plr.ID, attack.spawnID, data.skillID, data.skillLevel, statMask, inst)
+		}
+	}
+
+	if totalMPEaterGain > 0 {
+		newMP := int32(plr.mp) + totalMPEaterGain
+		maxMP := int32(plr.effectiveMaxMP())
+		if newMP > maxMP {
+			newMP = maxMP
+		}
+		if newMP > int32(plr.mp) {
+			plr.setMP(int16(newMP))
 		}
 	}
 
@@ -5418,6 +5577,39 @@ func (server *Server) playerSpecialSkill(conn mnet.Client, reader mpacket.Reader
 	case skill.MysticDoor:
 		createMysticDoor(plr, skillID, skillLevel)
 
+	case skill.Chakra:
+		if !plr.hasPreparedSkill(skillID, 2*time.Second) {
+			plr.Send(packetPlayerNoChange())
+			return
+		}
+		skillData, err := nx.GetPlayerSkill(skillID)
+		if err != nil {
+			plr.clearPreparedSkill()
+			return
+		}
+		idx := int(skillLevel) - 1
+		if idx < 0 || idx >= len(skillData) {
+			plr.clearPreparedSkill()
+			return
+		}
+		if int32(plr.hp)*2 >= int32(plr.effectiveMaxHP()) {
+			plr.clearPreparedSkill()
+			plr.Send(packetPlayerNoChange())
+			return
+		}
+		if err := plr.useSkill(skillID, skillLevel, 0, 0); err != nil {
+			plr.clearPreparedSkill()
+			plr.Send(packetPlayerNoChange())
+			return
+		}
+		heal := (int32(plr.effectiveMaxHP()) * int32(skillData[idx].Y)) / 100
+		if heal > 0 {
+			plr.giveHP(int16(heal))
+		}
+		plr.preparedSkillID = 0
+		plr.preparedSkillAt = 0
+		sendPrimarySkillAnimation(plr, skillID, skillLevel)
+
 	case skill.SummonDragon,
 		skill.SilverHawk, skill.GoldenEagle,
 		skill.Puppet, skill.SniperPuppet:
@@ -5479,7 +5671,13 @@ func (server *Server) playerStopSkill(conn mnet.Client, reader mpacket.Reader) {
 	skillID := reader.ReadInt32()
 
 	plr, err := server.players.GetFromConn(conn)
-	if err != nil || plr.buffs == nil {
+	if err != nil {
+		return
+	}
+	if skill.Skill(skillID) == skill.Chakra {
+		plr.clearPreparedSkill()
+	}
+	if plr.buffs == nil {
 		return
 	}
 
@@ -5488,6 +5686,26 @@ func (server *Server) playerStopSkill(conn mnet.Client, reader mpacket.Reader) {
 	cb.expireBuffNow(skillID)
 	cb.plr.inst = plr.inst
 	cb.AuditAndExpireStaleBuffs()
+}
+
+func (server *Server) playerPrepareSkill(conn mnet.Client, reader mpacket.Reader) {
+	plr, err := server.players.GetFromConn(conn)
+	if err != nil {
+		return
+	}
+
+	if len(reader.GetRestAsBytes()) >= 4 {
+		_ = reader.ReadInt32()
+	}
+	if len(reader.GetRestAsBytes()) < 4 {
+		return
+	}
+	skillID := reader.ReadInt32()
+
+	if skill.Skill(skillID) != skill.Chakra {
+		return
+	}
+	plr.setPreparedSkill(skillID)
 }
 
 func (server *Server) playerCancelBuff(conn mnet.Client, reader mpacket.Reader) {

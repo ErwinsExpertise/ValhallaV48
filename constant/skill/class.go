@@ -290,12 +290,14 @@ const (
 	IronBody              Skill = 1001003
 
 	//Fighter Skills - 110
-	AxeBooster   Skill = 1101005
-	AxeMastery   Skill = 1100001
-	PowerGuard   Skill = 1101007
-	Rage         Skill = 1101006
-	SwordBooster Skill = 1101004
-	SwordMastery Skill = 1100000
+	AxeBooster       Skill = 1101005
+	FinalAttackAxe   Skill = 1100003
+	FinalAttackSword Skill = 1100002
+	AxeMastery       Skill = 1100001
+	PowerGuard       Skill = 1101007
+	Rage             Skill = 1101006
+	SwordBooster     Skill = 1101004
+	SwordMastery     Skill = 1100000
 
 	//Crusader Skills - 111
 	ImprovedMpRecovery Skill = 1110000
@@ -308,12 +310,14 @@ const (
 	SwordPanic         Skill = 1111003
 
 	//Page Skills - 120
-	BwBooster        Skill = 1201005
-	BwMastery        Skill = 1200001
-	PagePowerGuard   Skill = 1201007
-	PageSwordBooster Skill = 1201004
-	PageSwordMastery Skill = 1200000
-	Threaten         Skill = 1201006
+	BwBooster              Skill = 1201005
+	FinalAttackBluntWeapon Skill = 1200003
+	FinalAttackPageSword   Skill = 1200002
+	BwMastery              Skill = 1200001
+	PagePowerGuard         Skill = 1201007
+	PageSwordBooster       Skill = 1201004
+	PageSwordMastery       Skill = 1200000
+	Threaten               Skill = 1201006
 
 	//WhiteKnight Skills - 121
 	WKImprovedMpRecovery Skill = 1210000
@@ -327,12 +331,14 @@ const (
 	SwordLitCharge       Skill = 1211007
 
 	//Spearman Skills - 130
-	HyperBody      Skill = 1301007
-	IronWill       Skill = 1301006
-	PolearmBooster Skill = 1301005
-	PolearmMastery Skill = 1300001
-	SpearBooster   Skill = 1301004
-	SpearMastery   Skill = 1300000
+	HyperBody          Skill = 1301007
+	IronWill           Skill = 1301006
+	PolearmFinalAttack Skill = 1300003
+	PolearmBooster     Skill = 1301005
+	PolearmMastery     Skill = 1300001
+	SpearFinalAttack   Skill = 1300002
+	SpearBooster       Skill = 1301004
+	SpearMastery       Skill = 1300000
 
 	//DragonKnight Skills - 131
 	DragonBlood         Skill = 1311008

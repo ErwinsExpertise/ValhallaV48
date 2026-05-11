@@ -421,6 +421,9 @@ type Player struct {
 	stance    byte
 	pos       pos
 
+	preparedSkillID int32
+	preparedSkillAt int64
+
 	equipSlotSize byte
 	useSlotSize   byte
 	setupSlotSize byte
@@ -586,23 +589,31 @@ func (d *Player) levelUpGains() (int16, int16) {
 	}
 }
 
-// getPassiveHPBonus returns the HP bonus from Improved MaxHP Increase skill
-func (d *Player) getPassiveHPBonus() int16 {
+// getPassiveHPBonus returns the HP bonus from Improved MaxHP Increase skill.
+// NX/BMS use X for level-up gains and Y for manual AP assignment.
+func (d *Player) getPassiveHPBonus(levelUp bool) int16 {
 	if ps, ok := d.skills[int32(skill.ImprovedMaxHpIncrease)]; ok {
 		skillData, err := nx.GetPlayerSkill(int32(skill.ImprovedMaxHpIncrease))
 		if err == nil && ps.Level > 0 && int(ps.Level) <= len(skillData) {
-			return int16(skillData[ps.Level-1].X)
+			if levelUp {
+				return int16(skillData[ps.Level-1].X)
+			}
+			return int16(skillData[ps.Level-1].Y)
 		}
 	}
 	return 0
 }
 
-// getPassiveMPBonus returns the MP bonus from Improved MaxMP Increase skill
-func (d *Player) getPassiveMPBonus() int16 {
+// getPassiveMPBonus returns the MP bonus from Improved MaxMP Increase skill.
+// NX/BMS use X for level-up gains and Y for manual AP assignment.
+func (d *Player) getPassiveMPBonus(levelUp bool) int16 {
 	if ps, ok := d.skills[int32(skill.ImprovedMaxMpIncrease)]; ok {
 		skillData, err := nx.GetPlayerSkill(int32(skill.ImprovedMaxMpIncrease))
 		if err == nil && ps.Level > 0 && int(ps.Level) <= len(skillData) {
-			return int16(skillData[ps.Level-1].X)
+			if levelUp {
+				return int16(skillData[ps.Level-1].X)
+			}
+			return int16(skillData[ps.Level-1].Y)
 		}
 	}
 	return 0
@@ -783,6 +794,15 @@ func (d *Player) getCriticalSkillAndRate() (int32, int) {
 	return 0, 0
 }
 
+func (d *Player) getEquippedWeaponID() int32 {
+	for _, item := range d.equip {
+		if item.slotID == -11 {
+			return item.ID
+		}
+	}
+	return 0
+}
+
 func (d *Player) rollCritical(attackType int) bool {
 	if attackType != attackRanged {
 		return false
@@ -843,8 +863,8 @@ func (d *Player) levelUp() {
 	hpGain, mpGain := d.levelUpGains()
 
 	// Apply passive skill bonuses for levelup
-	hpGain += d.getPassiveHPBonus()
-	mpGain += d.getPassiveMPBonus()
+	hpGain += d.getPassiveHPBonus(true)
+	mpGain += d.getPassiveMPBonus(true)
 
 	newMaxHP := d.maxHP + hpGain
 	newMaxMP := d.maxMP + mpGain
@@ -2303,6 +2323,14 @@ func (d *Player) useSkill(id int32, level byte, projectileSlot int16, projectile
 		return errors.New("invalid skill data index")
 	}
 	si := skillInfo[idx]
+	moneyConsume := int32(si.MoneyConsume)
+	if skill.Skill(id) == skill.ShadowMeso && d.buffs != nil {
+		if shadowPartnerLevel, ok := d.buffs.activeSkillLevels[int32(skill.ShadowPartner)]; ok && shadowPartnerLevel > 0 {
+			if levels, err := nx.GetPlayerSkill(int32(skill.ShadowPartner)); err == nil && int(shadowPartnerLevel) <= len(levels) {
+				moneyConsume += (moneyConsume * int32(levels[shadowPartnerLevel-1].Y)) / 100
+			}
+		}
+	}
 
 	// Resource costs
 	if si.MpCon > 0 {
@@ -2311,8 +2339,12 @@ func (d *Player) useSkill(id int32, level byte, projectileSlot int16, projectile
 	if si.HpCon > 0 {
 		d.giveHP(-int16(si.HpCon))
 	}
-	if si.MoneyConsume > 0 {
-		d.takeMesos(int32(si.MoneyConsume))
+	if moneyConsume > 0 {
+		if d.mesos < moneyConsume {
+			d.Conn.Send(packetMessageRedText("not enough mesos to use this skill"))
+			return errors.New("not enough mesos")
+		}
+		d.takeMesos(moneyConsume)
 	}
 
 	if si.ItemCon > 0 {
@@ -2343,6 +2375,57 @@ func (d *Player) useSkill(id int32, level byte, projectileSlot int16, projectile
 	}
 
 	return nil
+}
+
+func (d *Player) getMPEaterSkillData() (skillID int32, prop int32, percent int32, ok bool) {
+	if d == nil {
+		return 0, 0, 0, false
+	}
+
+	for _, candidate := range []int32{int32(skill.MpEater), int32(skill.ILMpEater), int32(skill.ClericMpEater)} {
+		ps, exists := d.skills[candidate]
+		if !exists || ps.Level == 0 {
+			continue
+		}
+
+		levels, err := nx.GetPlayerSkill(candidate)
+		if err != nil {
+			continue
+		}
+
+		idx := int(ps.Level) - 1
+		if idx < 0 || idx >= len(levels) {
+			continue
+		}
+
+		si := levels[idx]
+		return candidate, int32(si.Prop), int32(si.X), true
+	}
+
+	return 0, 0, 0, false
+}
+
+func (d *Player) setPreparedSkill(skillID int32) {
+	if d == nil {
+		return
+	}
+	d.preparedSkillID = skillID
+	d.preparedSkillAt = time.Now().UnixMilli()
+}
+
+func (d *Player) clearPreparedSkill() {
+	if d == nil {
+		return
+	}
+	d.preparedSkillID = 0
+	d.preparedSkillAt = 0
+}
+
+func (d *Player) hasPreparedSkill(skillID int32, maxAge time.Duration) bool {
+	if d == nil || d.preparedSkillID != skillID || d.preparedSkillAt == 0 {
+		return false
+	}
+	return time.Now().UnixMilli()-d.preparedSkillAt <= maxAge.Milliseconds()
 }
 
 func projectileItemsToConsume(si nx.PlayerSkill) int32 {
@@ -2576,6 +2659,7 @@ func (d *Player) damagePlayer(damage int16) {
 	if damage <= 0 {
 		return
 	}
+	d.clearPreparedSkill()
 
 	newHP := d.hp - damage
 	if newHP <= 0 {

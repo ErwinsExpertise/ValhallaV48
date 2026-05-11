@@ -376,6 +376,24 @@ func (m *monster) giveDamage(damager *Player, dmg ...int32) {
 	m.lastTimeAttacked = time.Now().Unix()
 }
 
+func (m *monster) stealMP(rng *rand.Rand, prop, percent int32) int32 {
+	if m == nil || rng == nil || m.boss || percent <= 0 {
+		return 0
+	}
+
+	drain := (percent * m.maxMP) / 100
+	if drain > m.mp {
+		drain = m.mp
+	}
+
+	if rng.Intn(100) >= int(prop) || drain < 0 {
+		drain = 0
+	}
+
+	m.mp -= drain
+	return drain
+}
+
 func (m monster) displayBytes() []byte {
 	p := mpacket.NewPacket()
 

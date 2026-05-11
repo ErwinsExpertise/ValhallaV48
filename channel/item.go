@@ -15,6 +15,7 @@ import (
 
 	"github.com/Hucaru/Valhalla/common"
 	"github.com/Hucaru/Valhalla/constant"
+	"github.com/Hucaru/Valhalla/constant/skill"
 	"github.com/Hucaru/Valhalla/mpacket"
 	"github.com/Hucaru/Valhalla/nx"
 	"github.com/google/uuid"
@@ -862,6 +863,8 @@ func (v Item) validateConsumeUse(plr *Player) (nx.Item, error) {
 
 // applyConsumeUse applies validated consume-item effects.
 func (v Item) applyConsumeUse(plr *Player, nxData nx.Item) {
+	nxData = applyAlchemistModifiers(plr, nxData)
+
 	if nxData.HP != 0 {
 		plr.giveHP(nxData.HP)
 	}
@@ -893,6 +896,61 @@ func (v Item) applyConsumeUse(plr *Player, nxData nx.Item) {
 
 	plr.buffs.plr.inst = plr.inst
 	plr.buffs.AddItemBuff(nxData, v.ID)
+}
+
+func applyAlchemistModifiers(plr *Player, meta nx.Item) nx.Item {
+	if plr == nil {
+		return meta
+	}
+
+	ps, ok := plr.skills[int32(skill.Alchemist)]
+	if !ok || ps.Level == 0 {
+		return meta
+	}
+
+	levels, err := nx.GetPlayerSkill(int32(skill.Alchemist))
+	if err != nil || int(ps.Level) > len(levels) {
+		return meta
+	}
+
+	sl := levels[ps.Level-1]
+	amountRate := float64(sl.X) / 100.0
+	timeRate := float64(sl.Y) / 100.0
+	adjusted := meta
+
+	scaleInt16 := func(v int16) int16 {
+		if v <= 0 {
+			return v
+		}
+		scaled := int16(math.Floor(float64(v) * amountRate))
+		if scaled < 1 {
+			return 1
+		}
+		return scaled
+	}
+
+	adjusted.HP = scaleInt16(meta.HP)
+	adjusted.MP = scaleInt16(meta.MP)
+	adjusted.ACC = scaleInt16(meta.ACC)
+	adjusted.EVA = scaleInt16(meta.EVA)
+	adjusted.Speed = scaleInt16(meta.Speed)
+	adjusted.Jump = scaleInt16(meta.Jump)
+	adjusted.MAD = scaleInt16(meta.MAD)
+	adjusted.MDD = scaleInt16(meta.MDD)
+	adjusted.PAD = scaleInt16(meta.PAD)
+	adjusted.PDD = scaleInt16(meta.PDD)
+	adjusted.Thaw = scaleInt16(meta.Thaw)
+	adjusted.Morph = scaleInt16(meta.Morph)
+
+	if meta.Time > 0 {
+		scaled := int32(math.Floor(float64(meta.Time) * timeRate))
+		if scaled < 1 {
+			scaled = 1
+		}
+		adjusted.Time = scaled
+	}
+
+	return adjusted
 }
 
 // applyScrollEffects mutates the equip with the scroll increments from NX.

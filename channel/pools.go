@@ -793,7 +793,17 @@ func (pool *lifePool) mobDamaged(poolID int32, damager *Player, dmg ...int32) {
 						now := time.Now()
 						couponMultiplier := killer.dropCouponMultiplier(now)
 						mesos, drops := buildDropRewards(pool.rNumber, dropEntry, pool.dropPool.rates.drop, couponMultiplier, killer)
-						pool.dropPool.createDrop(dropSpawnNormal, dropFreeForAll, int32(killer.rates.mesos*sanitizeDropRateMultiplier(couponMultiplier)*float32(mesos)), v.pos, true, false, 0, 0, drops...)
+
+						mesoMultiplier := float32(1)
+						if killer.buffs != nil {
+							if skillLevel, ok := killer.buffs.activeSkillLevels[int32(skill.MesoUp)]; ok && skillLevel > 0 {
+								if levels, err := nx.GetPlayerSkill(int32(skill.MesoUp)); err == nil && int(skillLevel) <= len(levels) {
+									mesoMultiplier = float32(levels[skillLevel-1].X) / 100
+								}
+							}
+						}
+
+						pool.dropPool.createDrop(dropSpawnNormal, dropFreeForAll, int32(killer.rates.mesos*sanitizeDropRateMultiplier(couponMultiplier)*mesoMultiplier*float32(mesos)), v.pos, true, false, 0, 0, drops...)
 					}
 				}
 
@@ -808,6 +818,33 @@ func (pool *lifePool) mobDamaged(poolID int32, damager *Player, dmg ...int32) {
 			}
 			break
 		}
+	}
+}
+
+func (pool *lifePool) mobMPSteal(poolID, prop, percent int32) int32 {
+	if pool == nil {
+		return 0
+	}
+
+	for _, mob := range pool.mobs {
+		if mob.spawnID == poolID {
+			return mob.stealMP(pool.rNumber, prop, percent)
+		}
+	}
+
+	return 0
+}
+
+func crashMobStatMask(skillID int32) (int32, bool) {
+	switch skill.Skill(skillID) {
+	case skill.ArmorCrash:
+		return skill.MobStat.PowerGuardUp, true
+	case skill.MagicCrash:
+		return skill.MobStat.MagicGuardUp, true
+	case skill.PowerCrash:
+		return skill.MobStat.PowerUp, true
+	default:
+		return 0, false
 	}
 }
 
@@ -1184,6 +1221,20 @@ func (pool *lifePool) getMobFromID(mobID int32) (monster, error) {
 func (pool *lifePool) applyMobBuff(ownerID, spawnID int32, skillID int32, skillLevel byte, statMask int32, inst *fieldInstance) {
 	for _, mob := range pool.mobs {
 		if mob.spawnID == spawnID {
+			if crashMask, ok := crashMobStatMask(skillID); ok {
+				skillData, err := nx.GetPlayerSkill(skillID)
+				if err != nil || skillLevel == 0 || int(skillLevel) > len(skillData) {
+					return
+				}
+				if (mob.statBuff&crashMask) != 0 && shouldApplyPlayerMobDebuff(skillData[skillLevel-1].Prop) {
+					mob.removeDebuff(crashMask, inst)
+					if inst != nil {
+						inst.send(packetMobAffected(spawnID, skillID, 0))
+					}
+				}
+				return
+			}
+
 			mob.applyBuff(ownerID, skillID, skillLevel, statMask, inst)
 			if inst != nil {
 				inst.send(packetMobAffected(spawnID, skillID, 0))
