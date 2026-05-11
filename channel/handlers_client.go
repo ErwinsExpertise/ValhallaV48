@@ -1677,6 +1677,10 @@ func (server Server) playerTeleportRockOperation(conn mnet.Client, reader mpacke
 }
 
 func (server Server) warpPlayerToInstance(plr *Player, dstField *field, dstPortal portal, dstInstanceID int, usedPortal bool) error {
+	return server.warpPlayerToInstanceAtPosition(plr, dstField, dstPortal, dstInstanceID, pos{}, false, usedPortal)
+}
+
+func (server Server) warpPlayerToInstanceAtPosition(plr *Player, dstField *field, dstPortal portal, dstInstanceID int, dstPos pos, useExactPosition bool, usedPortal bool) error {
 	hadStarterVisualOverride := isStarterEquipOverrideMap(plr.mapID)
 
 	srcField, ok := server.fields[plr.mapID]
@@ -1722,7 +1726,15 @@ func (server Server) warpPlayerToInstance(plr *Player, dstField *field, dstPorta
 
 	plr.setMapID(dstField.id)
 	plr.mapPos = dstPortal.id
-	plr.pos = dstInst.fhHist.getFinalPosition(newPos(dstPortal.pos.x, dstPortal.pos.y, 0))
+	if useExactPosition {
+		snapped := dstInst.fhHist.getFinalPosition(newPos(dstPos.x, dstPos.y, dstPos.foothold))
+		plr.pos = snapped
+		if portalID, portalErr := dstInst.calculateNearestSpawnPortalID(snapped); portalErr == nil {
+			plr.mapPos = portalID
+		}
+	} else {
+		plr.pos = dstInst.fhHist.getFinalPosition(newPos(dstPortal.pos.x, dstPortal.pos.y, 0))
+	}
 	plr.portalCount++
 
 	plr.Send(packetMapChange(dstField.id, int32(server.id), dstPortal.id, plr.hp))

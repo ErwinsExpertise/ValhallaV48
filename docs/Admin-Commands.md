@@ -1,6 +1,6 @@
 # Admin Commands
 
-This guide documents all administrator commands available in Valhalla. These commands are accessible to players with GM privileges and are used for server management, player assistance, and debugging.
+This guide documents the staff command system available in Valhalla. Commands are permission-gated by rank and are used for moderation, player support, event management, server administration, and debugging.
 
 ## Overview
 
@@ -80,6 +80,22 @@ Sets or clears the scrolling header message shown to all players on the current 
 /header                                   # Clears the header
 ```
 
+### `/help [command]`
+
+Shows the commands available to your current staff rank. If a command name is provided, the server shows its usage, aliases, and minimum rank.
+
+**Syntax:**
+```
+/help
+/help <command>
+```
+
+**Examples:**
+```
+/help
+/help drop
+```
+
 ### `/notice <message>`
 
 Broadcasts a notice message to all players on the channel.
@@ -96,6 +112,54 @@ Broadcasts a dialogue box message to all players on the channel.
 **Example:**
 ```
 /msgBox Please report any bugs to the forums
+```
+
+### `/eventNotice <message>`
+
+Broadcasts a white-bar event notice to all players on the channel.
+
+**Example:**
+```
+/eventNotice Bonus stage starts in 30 seconds!
+```
+
+### `/online [channel|world]`
+
+Shows online player counts.
+
+**Syntax:**
+```
+/online
+/online channel
+/online world
+```
+
+**Notes:**
+- `/online` defaults to the current channel
+- `world` uses per-channel population data
+
+### `/who [channel|world]`
+
+Lists online players visible to the current channel server.
+
+**Syntax:**
+```
+/who
+/who channel
+/who world
+```
+
+**Notes:**
+- `/who` defaults to the current channel
+- world-wide player names are not currently aggregated across channel servers, so `/who world` falls back to channel-local output with an explicit message
+
+### `/noticePlayer <player> <message>`
+
+Sends a notice packet to a single player in the current channel.
+
+**Example:**
+```
+/noticePlayer Alice Please relog after the event.
 ```
 
 ---
@@ -344,14 +408,13 @@ Increases level by the specified amount (default 1).
 /levelup 10        # Level up 10 times
 ```
 
-### `/job [player] <job>`
+### `/job <job>`
 
-Changes job for yourself or a target player.
+Changes your job.
 
 **Syntax:**
 ```
 /job <job_id | job_name>
-/job <player> <job_id | job_name>
 ```
 
 **Parameters:**
@@ -407,15 +470,18 @@ Revives yourself or a target player (restores full HP).
 
 ## Map & Instance Management
 
-### `/warp [player] <map>`
+### `/warp <map>`
 
-Warps yourself or a target player to the specified map.
+Warps you to the specified map.
 
 **Syntax:**
 ```
 /warp <map_id | map_name>
-/warp <player> <map_id | map_name>
 ```
+
+**Notes:**
+- Map warps use the destination map's spawn portals
+- Forced staff-to-player warps use `/warpTo` and `/warpToMe`
 
 **Supported Map Names:**
 - `amherst`, `southperry` (Maple Island)
@@ -427,30 +493,60 @@ Warps yourself or a target player to the specified map.
 ```
 /warp 100000000    # Warp to Henesys by map ID
 /warp henesys      # Warp to Henesys by name
-/warp Henry ludi   # Warp Henry to Ludibrium
 ```
 
 ### `/warpTo <player>`
 
-Warps yourself to the location of another player.
+Warps yourself to another player's exact position in the current channel.
 
 **Syntax:**
 ```
 /warpTo <player>
 ```
 
+**Notes:**
+- Uses the target's live position and foothold
+- Keeps the destination map instance when applicable
+
+### `/warpToMe <player>`
+
+Warps another player to your exact position in the current channel.
+
+**Syntax:**
+```
+/warpToMe <player>
+```
+
+**Notes:**
+- Uses your live position and foothold
+- Keeps the destination map instance when applicable
+
 **Example:**
 ```
 /warpTo Alice      # Warp to Alice's location
+/warpToMe Bob      # Warp Bob to you
+```
+
+### `/map`
+
+Shows your current map, instance, and position.
+
+**Example:**
+```
+/map
 ```
 
 ### `/whereami`
 
-Shows your current map ID.
+Alias for `/map`.
 
-**Example:**
+### `/where <player>`
+
+Shows a player's channel-local location, map, and coordinates.
+
+**Syntax:**
 ```
-/whereami          # Displays: "100000000"
+/where <player>
 ```
 
 ### `/pos`
@@ -480,14 +576,13 @@ Creates a new instance of the current map.
 /createInstance    # Creates and returns new instance ID
 ```
 
-### `/changeInstance [player] <id>`
+### `/changeInstance <id>`
 
-Changes yourself or a target player to a different instance.
+Changes you to a different instance.
 
 **Syntax:**
 ```
 /changeInstance <instance_id>
-/changeInstance <player> <instance_id>
 ```
 
 **Example:**
@@ -554,6 +649,21 @@ Removes the field timer from the current map instance.
 ```
 /removeTimer
 ```
+
+### `/unstuck [player]`
+
+Warps a player to the nearest safe spawn portal in their current map.
+
+**Syntax:**
+```
+/unstuck
+/unstuck <player>
+```
+
+**Notes:**
+- Intended for stuck states and soft recovery
+- Uses the player's current map and instance
+- Named targets must be online in the current channel
 
 ---
 
@@ -726,12 +836,27 @@ Removes all item drops from the current map instance.
 
 ### `/drop`
 
-Creates a test drop with various perfect weapons at your location.
+Drops a specific item at your current position.
 
-**Example:**
+**Syntax:**
 ```
-/drop              # Spawns test drop
+/drop <item_id> [amount]
 ```
+
+**Notes:**
+- The item ID must exist in NX data
+- Equip and pet drops are limited to quantity `1`
+- Stackable items must respect their stack limit
+
+**Examples:**
+```
+/drop 4000000
+/drop 4000000 10
+```
+
+### `/droptest`
+
+Drops the legacy test loot bundle at your current position.
 
 ### `/dropr <drop_id>`
 
@@ -949,6 +1074,17 @@ Sends a raw packet to test client responses.
 - Used for debugging packet structures
 - Packets are logged to server console
 
+### `/reloadScripts`
+
+Reloads channel script stores from disk.
+
+**Notes:**
+- Reloads NPC, quest, event, portal, and reactor scripts
+
+### `/saveAll`
+
+Flushes all online player state to storage immediately.
+
 ### `/changeBgm [music_name]`
 
 Changes or clears the background music for the current map instance.
@@ -1003,13 +1139,17 @@ Many commands support optional player targeting:
 
 ### Permission Levels
 
-The command system currently does not implement rank-based permissions, but this is planned for future development:
-- **Admin** - Everything, server-wide commands, item generation
-- **Game Master** - Bans, channel-wide commands, monster spawning
-- **Support** - Player assistance, issue resolution
-- **Community** - Event management
+The command system now uses the existing account `adminLevel` field as a single permission source:
+- `1` - **Community**: event notices, visibility commands, low-risk communication tools
+- `2` - **Support**: player assistance tools such as `where`, `unstuck`, quest recovery, and private notices
+- `3` - **Game Master**: gameplay-impacting commands such as `warpTo`, `warpToMe`, mob spawning, bans, and instance control
+- `4+` - **Admin**: full access, including item generation, rate changes, script reloads, and other high-risk commands
 
-Currently, all commands are available to any player with GM status.
+**Behavior:**
+- Higher ranks inherit lower-rank commands
+- `/help` only shows commands the caller can use
+- Unknown commands return a clean error
+- Failed permission checks return a clean error
 
 ### Map and Mob IDs
 
