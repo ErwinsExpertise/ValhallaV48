@@ -1196,7 +1196,7 @@ func (ctrl *scriptPlayerWrapper) ShowNpcOk(npcID int32, msg string) {
 }
 
 func (ctrl *scriptPlayerWrapper) PortalEffect(path string) {
-	ctrl.plr.Send(packetPortalEffectt(2, path))
+	ctrl.plr.Send(packetPortalEffect(path))
 }
 
 func (ctrl *scriptPlayerWrapper) StartPartyQuest(name string, instID int) {
@@ -1416,7 +1416,7 @@ func (ctrl *scriptMapWrapper) ShowEffect(path string) {
 }
 
 func (ctrl *scriptMapWrapper) PortalEffect(path string) {
-	ctrl.inst.send(packetPortalEffectt(2, path))
+	ctrl.inst.send(packetPortalEffect(path))
 }
 
 func (ctrl *scriptMapWrapper) Message(msg string) {

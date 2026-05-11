@@ -1490,10 +1490,9 @@ func packetShowSummonEffect(id byte, x, y int32) mpacket.Packet {
 	return p
 }
 
-func packetPortalEffectt(portalType byte, path string) mpacket.Packet {
+func packetPortalEffect(path string) mpacket.Packet {
 	p := mpacket.CreateWithOpcode(opcode.SendChannelMapEffect)
 	p.WriteByte(2)
-	p.WriteByte(portalType)
 	p.WriteString(path)
 	return p
 }

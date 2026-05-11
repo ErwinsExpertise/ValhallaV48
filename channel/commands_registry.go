@@ -928,7 +928,7 @@ func handleGateCommand(ctx *staffCommandContext, args []string) error {
 	if err != nil {
 		return err
 	}
-	plr.inst.send(packetPortalEffectt(2, "gate"))
+	plr.inst.send(packetPortalEffect("gate"))
 	return nil
 }
 
