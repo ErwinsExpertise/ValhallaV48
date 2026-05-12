@@ -304,15 +304,18 @@ func (pool *lifePool) normalizeMobMovement(mob *monster, finalData movementFrag)
 	}
 
 	if grounded && len(pool.instance.fhHist.footholds) > 0 {
-		groundSample := pool.instance.fhHist.getFinalPosition(newPos(candidate.x, mob.pos.y, mob.pos.foothold))
 		if !pool.instance.fhHist.hasFoothold(candidate.foothold) {
-			candidate = groundSample
-		} else {
+			if nearest, ok := pool.instance.fhHist.getNearestGroundPosition(candidate); ok {
+				candidate = nearest
+			} else if pool.instance.fhHist.hasFoothold(mob.pos.foothold) {
+				candidate = pool.instance.fhHist.getFinalPosition(newPos(candidate.x, mob.pos.y, mob.pos.foothold))
+			}
+		} else if nearest, ok := pool.instance.fhHist.getNearestGroundPosition(candidate); ok {
 			snapped := pool.instance.fhHist.getFinalPosition(candidate)
-			if !pool.instance.fhHist.hasFoothold(snapped.foothold) || absInt32(int32(snapped.y)-int32(candidate.y)) > 100 {
-				candidate = groundSample
-			} else {
+			if pool.instance.fhHist.hasFoothold(snapped.foothold) && absInt32(int32(snapped.y)-int32(candidate.y)) <= 100 {
 				candidate = snapped
+			} else {
+				candidate = nearest
 			}
 		}
 	} else if candidate.foothold == 0 {
@@ -492,6 +495,13 @@ func (pool *lifePool) npcAcknowledge(poolID int32, plr *Player, data []byte) {
 }
 
 func (pool *lifePool) mobAcknowledge(poolID int32, plr *Player, moveID int16, skillPossible bool, action int8, skillData uint32, moveData movement, finalData movementFrag, moveBytes []byte) bool {
+	start := time.Now()
+	var perfServer *Server
+	if pool != nil && pool.instance != nil {
+		perfServer = pool.instance.server
+	}
+	defer observeSince(perfServer, "hot/mob_acknowledge", start)
+
 	if pool.instance != nil {
 		pool.instance.assertMapOwnership("lifePool.mobAcknowledge")
 	}
@@ -660,164 +670,177 @@ func (pool *lifePool) performSkill(mob *monster, skillID, skillLevel byte, skill
 }
 
 func (pool *lifePool) mobDamaged(poolID int32, damager *Player, dmg ...int32) {
+	start := time.Now()
+	var perfServer *Server
+	if pool != nil && pool.instance != nil {
+		perfServer = pool.instance.server
+	}
+	defer observeSince(perfServer, "hot/mob_damage", start)
+
 	if pool.instance != nil {
 		pool.instance.assertMapOwnership("lifePool.mobDamaged")
 	}
 
-	for i, v := range pool.mobs {
-		if v.spawnID == poolID {
-			wasVisibleSelfBuff := v.hasVisibleSelfBuff()
+	v, ok := pool.mobs[poolID]
+	if !ok || v == nil {
+		return
+	}
 
-			if damager != nil {
-				nowMS := time.Now().UnixMilli()
-				if pool.shouldHandoffController(pool.mobs[i], damager, nowMS) {
-					pool.logMobControllerEvent("handoff", pool.mobs[i], damager, pool.mobs[i].controller, "damage")
-					pool.mobs[i].setController(damager, true)
-				}
-				pool.activeMobCtrl[damager] = true
-				pool.mobs[i].giveDamage(damager, dmg...)
+	wasVisibleSelfBuff := v.hasVisibleSelfBuff()
 
-				// Pickpocket: Check if damager has Pickpocket buff active and roll for meso drop
-				if pickpocketLevel, hasPickpocket := damager.buffs.activeSkillLevels[int32(skill.Pickpocket)]; hasPickpocket && pickpocketLevel > 0 {
-					skillData, err := nx.GetPlayerSkill(int32(skill.Pickpocket))
-					if err == nil && int(pickpocketLevel) <= len(skillData) {
-						skillInfo := skillData[pickpocketLevel-1]
-						procChance := float64(skillInfo.X) / 100.0
-						mesoPercentage := float64(skillInfo.Y) / 100.0
-
-						dmgSum := 0
-						for val := range dmg {
-							dmgSum += val
-						}
-
-						if pool.rNumber.Float64() < procChance {
-							mesoAmount := int32(float64(dmgSum) * mesoPercentage)
-							if mesoAmount < 1 {
-								mesoAmount = 1
-							}
-
-							if mesoAmount > 5000 {
-								mesoAmount = 5000
-							}
-
-							pool.dropPool.createDrop(dropSpawnNormal, dropTimeoutNonOwner, mesoAmount, v.pos, true, false, damager.ID, 0)
-						}
-					}
-				}
-			} else {
-				pool.mobs[i].giveDamage(nil, dmg...)
-			}
-
-			if wasVisibleSelfBuff {
-				pool.mobs[i].refreshVisibleSelfBuffSync(pool.instance)
-			}
-
-			pool.showMobBossHPBar(v, nil)
-
-			if pool.mobs[i].hp < 1 {
-				killer := damager
-				if killer == nil {
-					var topPlr *Player
-					var topDmg int32
-					for plr, dealt := range pool.mobs[i].dmgTaken {
-						if dealt > topDmg {
-							topDmg = dealt
-							topPlr = plr
-						}
-					}
-					killer = topPlr
-				}
-
-				for plr, dealt := range pool.mobs[i].dmgTaken {
-					if killer == nil || plr == nil || killer.mapID != plr.mapID || killer.inst == nil || plr.inst == nil || killer.inst.id != plr.inst.id {
-						continue
-					}
-
-					var partyExp, selfExp int32
-					if dealt == v.maxHP || float64(dealt)/float64(v.maxHP) > 0.60 {
-						plr.giveEXP(v.exp, true, false)
-						partyExp = int32(float64(v.exp) * 0.25)
-						selfExp = v.exp
-					} else {
-						newExp := int32(float64(v.exp) * 0.25)
-						if newExp == 0 {
-							newExp = 1
-						}
-						plr.giveEXP(newExp, true, false)
-						partyExp = int32(float64(newExp) * 0.25)
-						selfExp = newExp
-					}
-
-					memberCount := 0
-					if plr.party != nil {
-						plr.party.giveExp(plr.ID, partyExp, true)
-						memberCount = len(plr.party.players)
-					}
-
-					if ok, bonus := plr.buffs.HasHolySymbol(memberCount); ok && bonus > 0 && selfExp > 0 {
-						extra := (selfExp * int32(bonus)) / 100
-						if extra < 1 {
-							extra = 1
-						}
-						plr.giveEXP(extra, true, false)
-					}
-				}
-
-				if killer != nil {
-					killer.onMobKilled(v.id)
-					if pool.instance != nil && pool.instance.server != nil {
-						pool.instance.server.updateMobKillMetric(killer.ID)
-					}
-				}
-
-				for _, id := range v.revives {
-					spawnID, err := pool.nextMobID()
-					if err != nil {
-						continue
-					}
-					newMob, err := createMonsterFromID(spawnID, int32(id), v.pos, nil, true, true, 0)
-					if err != nil {
-						log.Println(err)
-						continue
-					}
-					newMob.faceLeft = v.faceLeft
-					newMob.summonType = constant.MobSummonTypeRevive
-					newMob.summonOption = v.spawnID
-					pool.spawnReviveMob(&newMob, killer)
-				}
-
-				pool.removeMob(v.spawnID, 0x1)
-
-				if killer != nil {
-					if dropEntry, ok := dropTable[v.id]; ok {
-						now := time.Now()
-						couponMultiplier := killer.dropCouponMultiplier(now)
-						mesos, drops := buildDropRewards(pool.rNumber, dropEntry, pool.dropPool.rates.drop, couponMultiplier, killer)
-
-						mesoMultiplier := float32(1)
-						if killer.buffs != nil {
-							if skillLevel, ok := killer.buffs.activeSkillLevels[int32(skill.MesoUp)]; ok && skillLevel > 0 {
-								if levels, err := nx.GetPlayerSkill(int32(skill.MesoUp)); err == nil && int(skillLevel) <= len(levels) {
-									mesoMultiplier = float32(levels[skillLevel-1].X) / 100
-								}
-							}
-						}
-
-						pool.dropPool.createDrop(dropSpawnNormal, dropFreeForAll, int32(killer.rates.mesos*sanitizeDropRateMultiplier(couponMultiplier)*mesoMultiplier*float32(mesos)), v.pos, true, false, 0, 0, drops...)
-					}
-				}
-
-				if v.spawnInterval > 0 {
-					for i, k := range pool.spawnableMobs {
-						if k.id == v.id {
-							pool.spawnableMobs[i].timeToSpawn = time.Now().Add(time.Millisecond * time.Duration(v.spawnInterval))
-							break
-						}
-					}
-				}
-			}
-			break
+	if damager != nil {
+		nowMS := time.Now().UnixMilli()
+		if pool.shouldHandoffController(v, damager, nowMS) {
+			pool.logMobControllerEvent("handoff", v, damager, v.controller, "damage")
+			v.setController(damager, true)
 		}
+		pool.activeMobCtrl[damager] = true
+		v.giveDamage(damager, dmg...)
+
+		// Pickpocket: Check if damager has Pickpocket buff active and roll for meso drop
+		if pickpocketLevel, hasPickpocket := damager.buffs.activeSkillLevels[int32(skill.Pickpocket)]; hasPickpocket && pickpocketLevel > 0 {
+			skillData, err := nx.GetPlayerSkill(int32(skill.Pickpocket))
+			if err == nil && int(pickpocketLevel) <= len(skillData) {
+				skillInfo := skillData[pickpocketLevel-1]
+				procChance := float64(skillInfo.X) / 100.0
+				mesoPercentage := float64(skillInfo.Y) / 100.0
+
+				dmgSum := int32(0)
+				for _, val := range dmg {
+					dmgSum += val
+				}
+
+				if pool.rNumber.Float64() < procChance {
+					mesoAmount := int32(float64(dmgSum) * mesoPercentage)
+					if mesoAmount < 1 {
+						mesoAmount = 1
+					}
+
+					if mesoAmount > 5000 {
+						mesoAmount = 5000
+					}
+
+					pool.dropPool.createDrop(dropSpawnNormal, dropTimeoutNonOwner, mesoAmount, v.pos, true, false, damager.ID, 0)
+				}
+			}
+		}
+	} else {
+		v.giveDamage(nil, dmg...)
+	}
+
+	if wasVisibleSelfBuff {
+		v.refreshVisibleSelfBuffSync(pool.instance)
+	}
+
+	pool.showMobBossHPBar(v, nil)
+
+	if v.hp < 1 {
+		deathStart := time.Now()
+		killer := damager
+		if killer == nil {
+			var topPlr *Player
+			var topDmg int32
+			for plr, dealt := range v.dmgTaken {
+				if dealt > topDmg {
+					topDmg = dealt
+					topPlr = plr
+				}
+			}
+			killer = topPlr
+		}
+
+		for plr, dealt := range v.dmgTaken {
+			if killer == nil || plr == nil || killer.mapID != plr.mapID || killer.inst == nil || plr.inst == nil || killer.inst.id != plr.inst.id {
+				continue
+			}
+
+			var partyExp, selfExp int32
+			if dealt == v.maxHP || float64(dealt)/float64(v.maxHP) > 0.60 {
+				plr.giveEXP(v.exp, true, false)
+				partyExp = int32(float64(v.exp) * 0.25)
+				selfExp = v.exp
+			} else {
+				newExp := int32(float64(v.exp) * 0.25)
+				if newExp == 0 {
+					newExp = 1
+				}
+				plr.giveEXP(newExp, true, false)
+				partyExp = int32(float64(newExp) * 0.25)
+				selfExp = newExp
+			}
+
+			memberCount := 0
+			if plr.party != nil {
+				plr.party.giveExp(plr.ID, partyExp, true)
+				memberCount = len(plr.party.players)
+			}
+
+			if ok, bonus := plr.buffs.HasHolySymbol(memberCount); ok && bonus > 0 && selfExp > 0 {
+				extra := (selfExp * int32(bonus)) / 100
+				if extra < 1 {
+					extra = 1
+				}
+				plr.giveEXP(extra, true, false)
+			}
+		}
+
+		if killer != nil {
+			killer.onMobKilled(v.id)
+			if pool.instance != nil && pool.instance.server != nil {
+				pool.instance.server.updateMobKillMetric(killer.ID)
+			}
+		}
+
+		for _, id := range v.revives {
+			spawnID, err := pool.nextMobID()
+			if err != nil {
+				continue
+			}
+			newMob, err := createMonsterFromID(spawnID, int32(id), v.pos, nil, true, true, 0)
+			if err != nil {
+				log.Println(err)
+				continue
+			}
+			newMob.faceLeft = v.faceLeft
+			newMob.summonType = constant.MobSummonTypeRevive
+			newMob.summonOption = v.spawnID
+			pool.spawnReviveMob(&newMob, killer)
+		}
+
+		pool.removeMob(v.spawnID, 0x1)
+
+		if killer != nil {
+			if dropEntry, ok := dropTable[v.id]; ok {
+				dropStart := time.Now()
+				now := time.Now()
+				couponMultiplier := killer.dropCouponMultiplier(now)
+				mesos, drops := buildDropRewards(pool.rNumber, dropEntry, pool.dropPool.rates.drop, couponMultiplier, killer)
+				observeSince(perfServer, "hot/drop_build", dropStart)
+
+				mesoMultiplier := float32(1)
+				if killer.buffs != nil {
+					if skillLevel, ok := killer.buffs.activeSkillLevels[int32(skill.MesoUp)]; ok && skillLevel > 0 {
+						if levels, err := nx.GetPlayerSkill(int32(skill.MesoUp)); err == nil && int(skillLevel) <= len(levels) {
+							mesoMultiplier = float32(levels[skillLevel-1].X) / 100
+						}
+					}
+				}
+
+				createDropStart := time.Now()
+				pool.dropPool.createDrop(dropSpawnNormal, dropFreeForAll, int32(killer.rates.mesos*sanitizeDropRateMultiplier(couponMultiplier)*mesoMultiplier*float32(mesos)), v.pos, true, false, 0, 0, drops...)
+				observeSince(perfServer, "hot/drop_create", createDropStart)
+			}
+		}
+
+		if v.spawnInterval > 0 {
+			for i, k := range pool.spawnableMobs {
+				if k.id == v.id {
+					pool.spawnableMobs[i].timeToSpawn = time.Now().Add(time.Millisecond * time.Duration(v.spawnInterval))
+					break
+				}
+			}
+		}
+		observeSince(perfServer, "hot/mob_death", deathStart)
 	}
 }
 
@@ -1068,6 +1091,12 @@ func (pool *lifePool) spawnMobFromID(mobID int32, location pos, hasAgro, items, 
 }
 
 func (pool *lifePool) spawnReviveMob(m *monster, cont *Player) {
+	if m != nil && pool.instance != nil && m.flySpeed <= 0 && len(pool.instance.fhHist.footholds) > 0 {
+		if corrected, ok := pool.instance.fhHist.getNearestGroundPosition(m.pos); ok {
+			m.pos = corrected
+		}
+	}
+
 	pool.spawnMob(m, true)
 
 	pool.mobs[m.spawnID].summonType = constant.MobSummonTypeRevive
@@ -1219,28 +1248,27 @@ func (pool *lifePool) getMobFromID(mobID int32) (monster, error) {
 
 // applyMobBuff applies a buff to a mob with the given spawn ID
 func (pool *lifePool) applyMobBuff(ownerID, spawnID int32, skillID int32, skillLevel byte, statMask int32, inst *fieldInstance) {
-	for _, mob := range pool.mobs {
-		if mob.spawnID == spawnID {
-			if crashMask, ok := crashMobStatMask(skillID); ok {
-				skillData, err := nx.GetPlayerSkill(skillID)
-				if err != nil || skillLevel == 0 || int(skillLevel) > len(skillData) {
-					return
-				}
-				if (mob.statBuff&crashMask) != 0 && shouldApplyPlayerMobDebuff(skillData[skillLevel-1].Prop) {
-					mob.removeDebuff(crashMask, inst)
-					if inst != nil {
-						inst.send(packetMobAffected(spawnID, skillID, 0))
-					}
-				}
-				return
-			}
-
-			mob.applyBuff(ownerID, skillID, skillLevel, statMask, inst)
+	mob, ok := pool.mobs[spawnID]
+	if !ok || mob == nil {
+		return
+	}
+	if crashMask, ok := crashMobStatMask(skillID); ok {
+		skillData, err := nx.GetPlayerSkill(skillID)
+		if err != nil || skillLevel == 0 || int(skillLevel) > len(skillData) {
+			return
+		}
+		if (mob.statBuff&crashMask) != 0 && shouldApplyPlayerMobDebuff(skillData[skillLevel-1].Prop) {
+			mob.removeDebuff(crashMask, inst)
 			if inst != nil {
 				inst.send(packetMobAffected(spawnID, skillID, 0))
 			}
-			return
 		}
+		return
+	}
+
+	mob.applyBuff(ownerID, skillID, skillLevel, statMask, inst)
+	if inst != nil {
+		inst.send(packetMobAffected(spawnID, skillID, 0))
 	}
 }
 

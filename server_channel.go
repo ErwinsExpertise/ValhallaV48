@@ -83,6 +83,9 @@ func (cs *channelServer) run() {
 		"reactors.json",
 		"reactor_drops.json",
 		"gachapon.json")
+	if cs.config.PerformanceProfiling {
+		cs.gameState.EnablePerformanceProfiling()
+	}
 
 	cs.wg.Add(1)
 	go cs.acceptNewConnections()
@@ -241,9 +244,16 @@ func (cs *channelServer) processEvent() {
 					log.Println("New client from", conn)
 				case mnet.MEClientDisconnect:
 					log.Println("Client at", conn, "disconnected")
+					start := time.Now()
 					cs.gameState.ClientDisconnected(conn)
+					cs.gameState.ObserveEventLoopWork("client_disconnect", time.Since(start))
 				case mnet.MEClientPacket:
+					if e.Time > 0 {
+						cs.gameState.ObserveEventLoopWait("client_packet", time.Since(time.UnixMilli(e.Time)))
+					}
+					start := time.Now()
 					cs.gameState.HandleClientPacket(conn, mpacket.NewReader(&e.Packet, e.Time))
+					cs.gameState.ObserveEventLoopWork("client_packet", time.Since(start))
 				}
 
 			case mnet.Server:
@@ -262,10 +272,12 @@ func (cs *channelServer) processEvent() {
 				continue
 			}
 			func() {
+				start := time.Now()
 				defer func() {
 					if r := recover(); r != nil {
 						log.Println("panic in scheduled work:", r)
 					}
+					cs.gameState.ObserveEventLoopWork("scheduled_work", time.Since(start))
 				}()
 				work()
 			}()

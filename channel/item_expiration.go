@@ -42,6 +42,8 @@ func (p *Player) cleanupExpiredInventoryItems(now time.Time, notify bool) []stri
 	if p == nil {
 		return nil
 	}
+	start := time.Now()
+	defer observeSince(p.server, "scheduled/item_expiry_cleanup", start)
 
 	items := make([]Item, 0, len(p.equip)+len(p.use)+len(p.setUp)+len(p.etc)+len(p.cash))
 	items = append(items, p.equip...)
@@ -59,7 +61,7 @@ func (p *Player) cleanupExpiredInventoryItems(now time.Time, notify bool) []stri
 		if item.invID == 1 && item.slotID < 0 {
 			recalcStats = true
 		}
-		p.removeItem(item, false)
+		p.removeItemWithDeleteMode(item, false, false)
 		name := expiredItemName(item)
 		removedNames = append(removedNames, name)
 		if notify && p.Conn != nil {

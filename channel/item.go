@@ -11,6 +11,7 @@ import (
 	"math"
 	mathrand "math/rand"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/Hucaru/Valhalla/common"
@@ -20,6 +21,49 @@ import (
 	"github.com/Hucaru/Valhalla/nx"
 	"github.com/google/uuid"
 )
+
+var (
+	itemDeleteQueueOnce sync.Once
+	itemDeleteQueueCh   chan int64
+)
+
+func startItemDeleteQueue() {
+	itemDeleteQueueOnce.Do(func() {
+		itemDeleteQueueCh = make(chan int64, 4096)
+		go func() {
+			for dbID := range itemDeleteQueueCh {
+				if dbID == 0 {
+					continue
+				}
+				if err := deleteItemByDBID(dbID); err != nil {
+					log.Println(err)
+				}
+			}
+		}()
+	})
+}
+
+func queueItemDelete(dbID int64) {
+	if dbID == 0 {
+		return
+	}
+	startItemDeleteQueue()
+	select {
+	case itemDeleteQueueCh <- dbID:
+	default:
+		go func() {
+			if err := deleteItemByDBID(dbID); err != nil {
+				log.Println(err)
+			}
+		}()
+	}
+}
+
+func deleteItemByDBID(dbID int64) error {
+	query := "DELETE FROM `items` WHERE ID=?"
+	_, err := common.DB.Exec(query, dbID)
+	return err
+}
 
 type dropTableEntry struct {
 	IsMesos bool  `json:"isMesos"`
@@ -713,14 +757,7 @@ func (v Item) SaveToCashShopStorage(tx *sql.Tx, accountID int32, slotNumber int1
 }
 
 func (v Item) delete() error {
-	query := "DELETE FROM `items` WHERE ID=?"
-	_, err := common.DB.Exec(query, v.dbID)
-
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return deleteItemByDBID(v.dbID)
 }
 
 // InventoryBytes to display in character inventory window

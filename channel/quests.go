@@ -1,12 +1,14 @@
 package channel
 
 import (
+	"sync"
 	"time"
 
 	"github.com/Hucaru/Valhalla/common"
 	"github.com/Hucaru/Valhalla/common/opcode"
 	"github.com/Hucaru/Valhalla/constant"
 	"github.com/Hucaru/Valhalla/mpacket"
+	"github.com/Hucaru/Valhalla/nx"
 )
 
 type quests struct {
@@ -14,6 +16,7 @@ type quests struct {
 	completed  map[int16]quest
 
 	mobKills    map[int16]map[int32]int32
+	mobTargets  map[int32][]int16
 	completable map[int16]struct{}
 }
 
@@ -40,8 +43,46 @@ func (q *quests) init() {
 	if q.mobKills == nil {
 		q.mobKills = make(map[int16]map[int32]int32, 16)
 	}
+	if q.mobTargets == nil {
+		q.mobTargets = make(map[int32][]int16, 32)
+	}
 	if q.completable == nil {
 		q.completable = make(map[int16]struct{}, 16)
+	}
+}
+
+func (q *quests) registerQuestMobTargets(id int16) {
+	meta, err := nx.GetQuest(id)
+	if err != nil {
+		return
+	}
+	for _, req := range meta.Complete.Mobs {
+		q.mobTargets[req.ID] = append(q.mobTargets[req.ID], id)
+	}
+}
+
+func (q *quests) unregisterQuestMobTargets(id int16) {
+	for mobID, questIDs := range q.mobTargets {
+		out := questIDs[:0]
+		for _, questID := range questIDs {
+			if questID != id {
+				out = append(out, questID)
+			}
+		}
+		if len(out) == 0 {
+			delete(q.mobTargets, mobID)
+			continue
+		}
+		q.mobTargets[mobID] = out
+	}
+	delete(q.mobKills, id)
+}
+
+func (q *quests) rebuildMobTargets() {
+	q.init()
+	q.mobTargets = make(map[int32][]int16, 32)
+	for id := range q.inProgress {
+		q.registerQuestMobTargets(id)
 	}
 }
 
@@ -140,6 +181,39 @@ func upsertQuestMobKill(charID int32, questID int16, mobID int32, delta int32) {
 	)
 }
 
+type questKillUpdate struct {
+	charID  int32
+	questID int16
+	mobID   int32
+	delta   int32
+}
+
+var (
+	questKillWriteCh chan questKillUpdate
+	questKillOnce    sync.Once
+)
+
+func startQuestKillWriter() {
+	questKillOnce.Do(func() {
+		questKillWriteCh = make(chan questKillUpdate, 4096)
+		go func() {
+			for update := range questKillWriteCh {
+				upsertQuestMobKill(update.charID, update.questID, update.mobID, update.delta)
+			}
+		}()
+	})
+}
+
+func queueQuestMobKillWrite(charID int32, questID int16, mobID int32, delta int32) {
+	startQuestKillWriter()
+	update := questKillUpdate{charID: charID, questID: questID, mobID: mobID, delta: delta}
+	select {
+	case questKillWriteCh <- update:
+	default:
+		go upsertQuestMobKill(update.charID, update.questID, update.mobID, update.delta)
+	}
+}
+
 func clearQuestMobKills(charID int32, questID int16) {
 	_, _ = common.DB.Exec(
 		"DELETE FROM character_quest_kills WHERE characterID=? AND questID=?",
@@ -152,18 +226,20 @@ func (q *quests) add(id int16, name string) {
 	q.inProgress[id] = quest{id: id, name: name}
 	delete(q.completed, id)
 	delete(q.completable, id)
+	q.registerQuestMobTargets(id)
 
 }
 
 func (q *quests) remove(id int16) {
 	delete(q.inProgress, id)
 	delete(q.completable, id)
+	q.unregisterQuestMobTargets(id)
 }
 func (q *quests) complete(id int16, completedAt int64) {
 	delete(q.inProgress, id)
 	q.completed[id] = quest{id: id, completedAt: completedAt}
-	delete(q.mobKills, id)
 	delete(q.completable, id)
+	q.unregisterQuestMobTargets(id)
 }
 
 func (q *quests) hasInProgress(id int16) bool {

@@ -110,10 +110,17 @@ func (server *Server) shouldLogUnknownClientPacket(conn mnet.Client) bool {
 func (server *Server) HandleClientPacket(conn mnet.Client, reader mpacket.Reader) {
 	// Read opcode first for logging/metrics and to make panic logs useful
 	op := reader.ReadInt16()
+	start := time.Now()
+	ackRequired := opcodeNeedsClientAckFallback(op)
+	beforeSendCount := connSendCount(conn)
 	packetsTotal.WithLabelValues(fmt.Sprintf("%d", op)).Inc()
 
 	// Panic guard per packet to avoid dropping the connection loop on handler bugs
 	defer func() {
+		if ackRequired && conn != nil && connSendCount(conn) == beforeSendCount {
+			conn.Send(packetPlayerStatNoChange())
+		}
+		server.observePerf("handler/"+clientOpcodeLabel(op), time.Since(start))
 		if r := recover(); r != nil {
 			log.Printf("panic in HandleClientPacket op=%d: %v", op, r)
 			log.Println(string(debug.Stack()))
@@ -237,6 +244,8 @@ func (server *Server) HandleClientPacket(conn mnet.Client, reader mpacket.Reader
 		server.playerSummonAttack(conn, reader)
 	case opcode.RecvChannelSummonDamage:
 		server.playerSummonDamage(conn, reader)
+	case opcode.RecvChannelSummonSkill:
+		server.playerSummonSkill(conn, reader)
 	case opcode.RecvChannelReactorHit:
 		server.playerHitReactor(conn, reader)
 	case opcode.RecvChannelNpcStorage:
@@ -269,11 +278,87 @@ func (server *Server) HandleClientPacket(conn mnet.Client, reader mpacket.Reader
 		server.playerQuickslotKeyMappedModified(conn, reader)
 	default:
 		unknownPacketsTotal.Inc()
-		// Let's send a no change to make sure characters aren't stuck on unknown packets
-		conn.Send(packetPlayerNoChange())
 		if server.shouldLogUnknownClientPacket(conn) {
 			log.Println("[CHANNEL] UNKNOWN CLIENT PACKET(", op, "):", reader)
 		}
+	}
+}
+
+func connSendCount(conn mnet.Client) uint64 {
+	if conn == nil {
+		return 0
+	}
+	if counted, ok := conn.(interface{ SendCount() uint64 }); ok {
+		return counted.SendCount()
+	}
+	return 0
+}
+
+func opcodeNeedsClientAckFallback(op int16) bool {
+	switch op {
+	case opcode.RecvPing,
+		opcode.RecvChannelUserPortal,
+		opcode.RecvChannelScriptedPortal,
+		opcode.RecvChannelUseMysticDoor,
+		opcode.RecvChannelNearestTown,
+		opcode.RecvChannelTeleportRock,
+		opcode.RecvChannelInvMoveItem,
+		opcode.RecvChannelInvUseItem,
+		opcode.RecvChannelInvUseCashItem,
+		opcode.RecvChannelUseScroll,
+		opcode.RecvChannelAddStatPoint,
+		opcode.RecvChannelAddSkillPoint,
+		opcode.RecvChannelSpecialSkill,
+		opcode.RecvChannelCharacterInfo,
+		opcode.RecvChannelNpcDialogue,
+		opcode.RecvChannelNpcDialogueContinue,
+		opcode.RecvChannelNpcShop,
+		opcode.RecvChannelNpcStorage,
+		opcode.RecvChannelEntrustedShop,
+		opcode.RecvChannelStoreBank,
+		opcode.RecvChannelQuestOperation,
+		opcode.RecvChannelAcknowledgeBuff,
+		opcode.RecvChannelPetSpawn,
+		opcode.RecvChannelPetInteraction,
+		opcode.RecvChannelPetAutoPot,
+		opcode.RecvChannelSummonAck,
+		opcode.RecvChannelSummonSkill:
+		return true
+	default:
+		return false
+	}
+}
+
+func clientOpcodeLabel(op int16) string {
+	switch op {
+	case opcode.RecvChannelPlayerMovement:
+		return "player_movement"
+	case opcode.RecvChannelMobControl:
+		return "mob_control"
+	case opcode.RecvChannelMeleeSkill:
+		return "melee_attack"
+	case opcode.RecvChannelRangedSkill:
+		return "ranged_attack"
+	case opcode.RecvChannelMagicSkill:
+		return "magic_attack"
+	case opcode.RecvChannelPlayerPickup:
+		return "player_pickup"
+	case opcode.RecvChannelPetLoot:
+		return "pet_loot"
+	case opcode.RecvChannelSummonSkill:
+		return "summon_skill"
+	case opcode.RecvChannelReactorHit:
+		return "reactor_hit"
+	case opcode.RecvChannelNpcDialogue:
+		return "npc_start"
+	case opcode.RecvChannelNpcDialogueContinue:
+		return "npc_continue"
+	case opcode.RecvChannelChangeChannel:
+		return "change_channel"
+	case opcode.RecvChannelEnterCashShop:
+		return "enter_cashshop"
+	default:
+		return fmt.Sprintf("opcode_%d", op)
 	}
 }
 
@@ -594,6 +679,9 @@ func (server *Server) playerChangeChannel(conn mnet.Client, reader mpacket.Reade
 }
 
 func (server Server) playerMovement(conn mnet.Client, reader mpacket.Reader) {
+	start := time.Now()
+	defer server.observePerf("hot/player_movement", time.Since(start))
+
 	plr, err := server.players.GetFromConn(conn)
 
 	if err != nil {
@@ -636,7 +724,7 @@ func (server Server) playerMovement(conn mnet.Client, reader mpacket.Reader) {
 	plr.UpdateMovement(finalData)
 
 	if plr.inst == nil {
-		plr.Send(packetPlayerNoChange())
+		plr.Send(packetPlayerStatNoChange())
 		return
 	}
 
@@ -693,7 +781,7 @@ func (server Server) playerUseMysticDoor(conn mnet.Client, reader mpacket.Reader
 	_ = reader.ReadByte()
 
 	if plr.inst == nil {
-		plr.Send(packetPlayerNoChange())
+		plr.Send(packetPlayerStatNoChange())
 		return
 	}
 
@@ -722,7 +810,7 @@ func (server Server) playerUseMysticDoor(conn mnet.Client, reader mpacket.Reader
 	}
 
 	if nearestDoor == nil {
-		plr.Send(packetPlayerNoChange())
+		plr.Send(packetPlayerStatNoChange())
 		return
 	}
 
@@ -736,7 +824,7 @@ func (server Server) playerUseMysticDoor(conn mnet.Client, reader mpacket.Reader
 		}
 	}
 	if !authorized {
-		plr.Send(packetPlayerNoChange())
+		plr.Send(packetPlayerStatNoChange())
 		return
 	}
 
@@ -745,7 +833,7 @@ func (server Server) playerUseMysticDoor(conn mnet.Client, reader mpacket.Reader
 		destMapID := nearestDoor.destMapID
 		destField, ok := server.fields[destMapID]
 		if !ok {
-			plr.Send(packetPlayerNoChange())
+			plr.Send(packetPlayerStatNoChange())
 			return
 		}
 
@@ -763,44 +851,44 @@ func (server Server) playerUseMysticDoor(conn mnet.Client, reader mpacket.Reader
 			}
 		}
 		if dstInst == nil {
-			plr.Send(packetPlayerNoChange())
+			plr.Send(packetPlayerStatNoChange())
 			return
 		}
 		if destPortalIdx < 0 || destPortalIdx >= len(dstInst.portals) {
-			plr.Send(packetPlayerNoChange())
+			plr.Send(packetPlayerStatNoChange())
 			return
 		}
 		dstPortal := dstInst.portals[destPortalIdx]
 		if err := server.warpPlayer(plr, destField, dstPortal, true); err != nil {
-			plr.Send(packetPlayerNoChange())
+			plr.Send(packetPlayerStatNoChange())
 			return
 		}
 	} else {
 		destMapID := nearestDoor.destMapID
 		destField, ok := server.fields[destMapID]
 		if !ok {
-			plr.Send(packetPlayerNoChange())
+			plr.Send(packetPlayerStatNoChange())
 			return
 		}
 
 		dstInst, err2 := destField.getInstance(0)
 		if err2 != nil {
-			plr.Send(packetPlayerNoChange())
+			plr.Send(packetPlayerStatNoChange())
 			return
 		}
 		townDoor, ok := dstInst.mysticDoors[ownerID]
 		if !ok || !townDoor.townPortal {
-			plr.Send(packetPlayerNoChange())
+			plr.Send(packetPlayerStatNoChange())
 			return
 		}
 		destPortalIdx := townDoor.portalIndex
 		if destPortalIdx < 0 || destPortalIdx >= len(dstInst.portals) {
-			plr.Send(packetPlayerNoChange())
+			plr.Send(packetPlayerStatNoChange())
 			return
 		}
 		dstPortal := dstInst.portals[destPortalIdx]
 		if err := server.warpPlayer(plr, destField, dstPortal, true); err != nil {
-			plr.Send(packetPlayerNoChange())
+			plr.Send(packetPlayerStatNoChange())
 			return
 		}
 	}
@@ -1041,7 +1129,7 @@ func (server Server) playerAddSkillPoint(conn mnet.Client, reader mpacket.Reader
 		// check if class can have skill
 		if !validateSkillWithJob(plr.job, baseSkillID) {
 			log.Printf("playerAddSkillPoint invalid for job: player=%s job=%d skillID=%d baseSkillID=%d", plr.Name, plr.job, skillID, baseSkillID)
-			conn.Send(packetPlayerNoChange())
+			conn.Send(packetPlayerStatNoChange())
 			return
 		}
 
@@ -1299,7 +1387,7 @@ func (server *Server) playerUsePortal(conn mnet.Client, reader mpacket.Reader) {
 
 			dstPortal, err := chooseDstPortal(dstInst, curField.id, "", "")
 			if err != nil {
-				conn.Send(packetPlayerNoChange())
+				conn.Send(packetPlayerStatNoChange())
 				return
 			}
 
@@ -1314,14 +1402,14 @@ func (server *Server) playerUsePortal(conn mnet.Client, reader mpacket.Reader) {
 
 	if portalName == "" {
 		log.Printf("playerUsePortal empty portal name: player=%s hp=%d map=%d", plr.Name, plr.hp, plr.mapID)
-		conn.Send(packetPlayerNoChange())
+		conn.Send(packetPlayerStatNoChange())
 		return
 	}
 
 	srcPortal, err := srcInst.getPortalFromName(portalName)
 	if err != nil {
 		log.Printf("playerUsePortal source portal not found: player=%s portal=%q map=%d", plr.Name, portalName, plr.mapID)
-		conn.Send(packetPlayerNoChange())
+		conn.Send(packetPlayerStatNoChange())
 		return
 	}
 
@@ -1329,13 +1417,13 @@ func (server *Server) playerUsePortal(conn mnet.Client, reader mpacket.Reader) {
 		if conn.GetAdminLevel() > 0 {
 			conn.Send(packetMessageRedText("Portal - " + srcPortal.pos.String() + " Player - " + plr.pos.String()))
 		}
-		conn.Send(packetPlayerNoChange())
+		conn.Send(packetPlayerStatNoChange())
 		return
 	}
 
 	dstFld, ok := server.fields[srcPortal.destFieldID]
 	if !ok || dstFld == nil {
-		conn.Send(packetPlayerNoChange())
+		conn.Send(packetPlayerStatNoChange())
 		return
 	}
 
@@ -1349,13 +1437,13 @@ func (server *Server) playerUsePortal(conn mnet.Client, reader mpacket.Reader) {
 		}
 	}
 	if err != nil {
-		conn.Send(packetPlayerNoChange())
+		conn.Send(packetPlayerStatNoChange())
 		return
 	}
 
 	dstPortal, err := chooseDstPortal(dstInst, curField.id, srcPortal.name, srcPortal.destName)
 	if err != nil {
-		conn.Send(packetPlayerNoChange())
+		conn.Send(packetPlayerStatNoChange())
 		return
 	}
 
@@ -1365,13 +1453,13 @@ func (server *Server) playerUsePortal(conn mnet.Client, reader mpacket.Reader) {
 			scriptMapWrapper{inst: dstInst, server: server})
 
 		if !ok {
-			plr.Send(packetPlayerNoChange())
+			plr.Send(packetPlayerStatNoChange())
 			return
 		}
 	}
 
 	if !dstInst.getPortalEnabled(dstPortal.name) {
-		plr.Send(packetPlayerNoChange())
+		plr.Send(packetPlayerStatNoChange())
 		return
 	}
 
@@ -1448,14 +1536,14 @@ func (server Server) playerUseScriptedPortal(conn mnet.Client, reader mpacket.Re
 	}
 
 	if portalName == "" {
-		plr.Send(packetPlayerNoChange())
+		plr.Send(packetPlayerStatNoChange())
 		return
 	}
 
 	srcPortal, err := plr.inst.getPortalFromName(portalName)
 
 	if err != nil {
-		plr.Send(packetPlayerNoChange())
+		plr.Send(packetPlayerStatNoChange())
 		return
 	}
 
@@ -1464,7 +1552,7 @@ func (server Server) playerUseScriptedPortal(conn mnet.Client, reader mpacket.Re
 		if conn.GetAdminLevel() > 0 {
 			plr.Send(packetMessageRedText("ScriptedPortal - " + srcPortal.pos.String() + " Player - " + plr.pos.String()))
 		}
-		plr.Send(packetPlayerNoChange())
+		plr.Send(packetPlayerStatNoChange())
 		return
 	}
 
@@ -1473,16 +1561,18 @@ func (server Server) playerUseScriptedPortal(conn mnet.Client, reader mpacket.Re
 			warped, blocked, err := runPortalScript(program, plr, &server, srcPortal)
 			if err != nil {
 				log.Println("portal script error:", srcPortal.script, err)
-				plr.Send(packetPlayerNoChange())
+				plr.Send(packetPlayerStatNoChange())
 				return
 			}
 			if warped {
 				return
 			}
 			if blocked {
-				plr.Send(packetPlayerNoChange())
+				plr.Send(packetPlayerStatNoChange())
 				return
 			}
+			plr.Send(packetPlayerStatNoChange())
+			return
 		}
 	}
 
@@ -1490,7 +1580,7 @@ func (server Server) playerUseScriptedPortal(conn mnet.Client, reader mpacket.Re
 		dstField, ok := server.fields[mapID]
 
 		if !ok {
-			plr.Send(packetPlayerNoChange())
+			plr.Send(packetPlayerStatNoChange())
 			return
 		}
 
@@ -1498,7 +1588,7 @@ func (server Server) playerUseScriptedPortal(conn mnet.Client, reader mpacket.Re
 
 		if err != nil {
 			log.Println(err)
-			plr.Send(packetPlayerNoChange())
+			plr.Send(packetPlayerStatNoChange())
 			return
 		}
 
@@ -1506,7 +1596,7 @@ func (server Server) playerUseScriptedPortal(conn mnet.Client, reader mpacket.Re
 
 		if err != nil {
 			log.Println(err)
-			plr.Send(packetPlayerNoChange())
+			plr.Send(packetPlayerStatNoChange())
 			return
 		}
 
@@ -1526,7 +1616,7 @@ func (server Server) playerUseScriptedPortal(conn mnet.Client, reader mpacket.Re
 		dstField, ok := server.fields[mapID]
 
 		if !ok {
-			plr.Send(packetPlayerNoChange())
+			plr.Send(packetPlayerStatNoChange())
 			return true
 		}
 
@@ -1534,7 +1624,7 @@ func (server Server) playerUseScriptedPortal(conn mnet.Client, reader mpacket.Re
 
 		if err != nil {
 			log.Println(err)
-			plr.Send(packetPlayerNoChange())
+			plr.Send(packetPlayerStatNoChange())
 			return true
 		}
 
@@ -1546,20 +1636,20 @@ func (server Server) playerUseScriptedPortal(conn mnet.Client, reader mpacket.Re
 
 			if bossActive {
 				plr.Send(packetMessageRedText("The fight is already active. Please try again later."))
-				plr.Send(packetPlayerNoChange())
+				plr.Send(packetPlayerStatNoChange())
 				return bossActive
 			}
 		}
 
 		if maxPlayers > 0 && len(inst.players) >= maxPlayers {
 			plr.Send(packetMessageRedText("The boss room is currently full."))
-			plr.Send(packetPlayerNoChange())
+			plr.Send(packetPlayerStatNoChange())
 			return true
 		}
 
 		if plr.level < minLevel {
 			plr.Send(packetMessageRedText(fmt.Sprintf("You must be level %d or higher to enter.", minLevel)))
-			plr.Send(packetPlayerNoChange())
+			plr.Send(packetPlayerStatNoChange())
 			return true
 		}
 
@@ -1578,14 +1668,14 @@ func (server Server) playerUseScriptedPortal(conn mnet.Client, reader mpacket.Re
 		case constant.MapHeliosTower2ndFloor:
 			if server.transports != nil && !server.transports.canBoardFromMap(plr.mapID) {
 				plr.Send(packetMessageRedText("The elevator is not available for this route right now."))
-				plr.Send(packetPlayerNoChange())
+				plr.Send(packetPlayerStatNoChange())
 				return
 			}
 			warp(plr, constant.MapHeliosTowerLudiWaitingRoom, "sp")
 		case constant.MapHeliosTower99thFloor:
 			if server.transports != nil && !server.transports.canBoardFromMap(plr.mapID) {
 				plr.Send(packetMessageRedText("The elevator is not available for this route right now."))
-				plr.Send(packetPlayerNoChange())
+				plr.Send(packetPlayerStatNoChange())
 				return
 			}
 			warp(plr, constant.MapHeliosTowerKFTWaitingRoom, "sp")
@@ -1606,6 +1696,8 @@ func (server Server) playerUseScriptedPortal(conn mnet.Client, reader mpacket.Re
 				warp(plr, constant.MapBossZakumWaiting, "west00")
 			}
 		}
+	default:
+		plr.Send(packetPlayerStatNoChange())
 	}
 }
 
@@ -1934,14 +2026,14 @@ func (server *Server) playerUseReturnScroll(conn mnet.Client, reader mpacket.Rea
 	}
 	if !found {
 		// Desync or invalid request
-		plr.Send(packetPlayerNoChange())
+		plr.Send(packetPlayerStatNoChange())
 		return
 	}
 
 	meta, err := nx.GetItem(itemID)
 	if err != nil {
 		// Missing NX data
-		plr.Send(packetPlayerNoChange())
+		plr.Send(packetPlayerStatNoChange())
 		return
 	}
 
@@ -1966,7 +2058,7 @@ func (server *Server) playerUseReturnScroll(conn mnet.Client, reader mpacket.Rea
 
 	// Final fallback: if nothing resolved, don't change state
 	if dstFieldID == 0 {
-		plr.Send(packetPlayerNoChange())
+		plr.Send(packetPlayerStatNoChange())
 		return
 	}
 
@@ -1982,7 +2074,7 @@ func (server *Server) playerUseReturnScroll(conn mnet.Client, reader mpacket.Rea
 		}
 		// If still unresolved, abort
 		if dstField == nil {
-			plr.Send(packetPlayerNoChange())
+			plr.Send(packetPlayerStatNoChange())
 			return
 		}
 	}
@@ -1992,7 +2084,7 @@ func (server *Server) playerUseReturnScroll(conn mnet.Client, reader mpacket.Rea
 	if err != nil {
 		dstInst, err = dstField.getInstance(0)
 		if err != nil {
-			plr.Send(packetPlayerNoChange())
+			plr.Send(packetPlayerStatNoChange())
 			return
 		}
 	}
@@ -2000,14 +2092,14 @@ func (server *Server) playerUseReturnScroll(conn mnet.Client, reader mpacket.Rea
 	// Pick a spawn portal
 	portal, err := dstInst.getRandomSpawnPortal()
 	if err != nil {
-		plr.Send(packetPlayerNoChange())
+		plr.Send(packetPlayerStatNoChange())
 		return
 	}
 
 	// Consume one scroll from the specified slot in 'use' inventory (invID 2)
 	if _, err := plr.takeItem(itemID, slot, 1, 2); err != nil {
 		// If we fail to consume, do not warp
-		plr.Send(packetPlayerNoChange())
+		plr.Send(packetPlayerStatNoChange())
 		return
 	}
 
@@ -2785,6 +2877,9 @@ func (server *Server) chatSendAll(conn mnet.Client, reader mpacket.Reader) {
 }
 
 func (server Server) mobControl(conn mnet.Client, reader mpacket.Reader) {
+	start := time.Now()
+	defer server.observePerf("hot/mob_control", time.Since(start))
+
 	mobSpawnID := reader.ReadInt32()
 	moveID := reader.ReadInt16()
 	skillPossibleByte := reader.ReadByte()
@@ -2818,7 +2913,6 @@ func (server Server) mobControl(conn mnet.Client, reader mpacket.Reader) {
 	moveData, finalData, _, _, valid := parseMobMovement(reader, mob.pos.x, mob.pos.y)
 	if !valid {
 		log.Println("invalid mobControl data alignment")
-		inst.send(packetPlayerNoChange())
 		return
 	}
 
@@ -3159,6 +3253,9 @@ func isFinalAttackWeaponAllowed(skillID int32, weaponType constant.WeaponType) b
 }
 
 func (server Server) playerMeleeSkill(conn mnet.Client, reader mpacket.Reader) {
+	start := time.Now()
+	defer server.observePerf("hot/melee_attack", time.Since(start))
+
 	plr, err := server.players.GetFromConn(conn)
 
 	if err != nil {
@@ -3170,7 +3267,7 @@ func (server Server) playerMeleeSkill(conn mnet.Client, reader mpacket.Reader) {
 
 	if !valid {
 		if plr != nil {
-			plr.Send(packetPlayerNoChange())
+			plr.Send(packetPlayerStatNoChange())
 		}
 		return
 	}
@@ -3181,7 +3278,7 @@ func (server Server) playerMeleeSkill(conn mnet.Client, reader mpacket.Reader) {
 		return
 	}
 	if isFinalAttackSkillID(data.skillID) && !isFinalAttackWeaponAllowed(data.skillID, constant.GetWeaponType(plr.getEquippedWeaponID())) {
-		plr.Send(packetPlayerNoChange())
+		plr.Send(packetPlayerStatNoChange())
 		return
 	}
 
@@ -3197,7 +3294,7 @@ func (server Server) playerMeleeSkill(conn mnet.Client, reader mpacket.Reader) {
 		if server.ac != nil {
 			server.ac.LogSkillAbuseViolation(plr.accountID, data.skillID)
 		}
-		plr.Send(packetPlayerNoChange())
+		plr.Send(packetPlayerStatNoChange())
 		return
 	}
 
@@ -3302,7 +3399,7 @@ func (server Server) playerRangedSkill(conn mnet.Client, reader mpacket.Reader) 
 
 	if !valid {
 		if plr != nil {
-			plr.Send(packetPlayerNoChange())
+			plr.Send(packetPlayerStatNoChange())
 		}
 		return
 	}
@@ -3325,7 +3422,7 @@ func (server Server) playerRangedSkill(conn mnet.Client, reader mpacket.Reader) 
 		if server.ac != nil {
 			server.ac.LogSkillAbuseViolation(plr.accountID, data.skillID)
 		}
-		plr.Send(packetPlayerNoChange())
+		plr.Send(packetPlayerStatNoChange())
 		return
 	}
 
@@ -3381,7 +3478,7 @@ func (server Server) playerMagicSkill(conn mnet.Client, reader mpacket.Reader) {
 
 	if !valid {
 		if plr != nil {
-			plr.Send(packetPlayerNoChange())
+			plr.Send(packetPlayerStatNoChange())
 		}
 		return
 	}
@@ -3404,7 +3501,7 @@ func (server Server) playerMagicSkill(conn mnet.Client, reader mpacket.Reader) {
 		if server.ac != nil {
 			server.ac.LogSkillAbuseViolation(plr.accountID, data.skillID)
 		}
-		plr.Send(packetPlayerNoChange())
+		plr.Send(packetPlayerStatNoChange())
 		return
 	}
 
@@ -3729,6 +3826,9 @@ func (server *Server) npcMovement(conn mnet.Client, reader mpacket.Reader) {
 }
 
 func (server *Server) npcChatStart(conn mnet.Client, reader mpacket.Reader) {
+	start := time.Now()
+	defer server.observePerf("hot/npc_start", time.Since(start))
+
 	npcSpawnID := reader.ReadInt32()
 	unk := reader.ReadInt32()
 
@@ -5333,7 +5433,7 @@ func (server *Server) playerSpecialSkill(conn mnet.Client, reader mpacket.Reader
 	}
 	// Dead players cannot cast
 	if plr.hp == 0 {
-		plr.Send(packetPlayerNoChange())
+		plr.Send(packetPlayerStatNoChange())
 		return
 	}
 
@@ -5366,7 +5466,7 @@ func (server *Server) playerSpecialSkill(conn mnet.Client, reader mpacket.Reader
 	// Validate the Player owns the skill and level does not exceed learned level
 	ps, ok := plr.skills[skillID]
 	if !ok || skillLevel == 0 || skillLevel > ps.Level {
-		plr.Send(packetPlayerNoChange())
+		plr.Send(packetPlayerStatNoChange())
 		return
 	}
 	switch skill.Skill(skillID) {
@@ -5591,7 +5691,7 @@ func (server *Server) playerSpecialSkill(conn mnet.Client, reader mpacket.Reader
 
 	case skill.Chakra:
 		if !plr.hasPreparedSkill(skillID, 2*time.Second) {
-			plr.Send(packetPlayerNoChange())
+			plr.Send(packetPlayerStatNoChange())
 			return
 		}
 		skillData, err := nx.GetPlayerSkill(skillID)
@@ -5606,12 +5706,12 @@ func (server *Server) playerSpecialSkill(conn mnet.Client, reader mpacket.Reader
 		}
 		if int32(plr.hp)*2 >= int32(plr.effectiveMaxHP()) {
 			plr.clearPreparedSkill()
-			plr.Send(packetPlayerNoChange())
+			plr.Send(packetPlayerStatNoChange())
 			return
 		}
 		if err := plr.useSkill(skillID, skillLevel, 0, 0); err != nil {
 			plr.clearPreparedSkill()
-			plr.Send(packetPlayerNoChange())
+			plr.Send(packetPlayerStatNoChange())
 			return
 		}
 		heal := (int32(plr.effectiveMaxHP()) * int32(skillData[idx].Y)) / 100
@@ -5669,6 +5769,8 @@ func (server *Server) playerSpecialSkill(conn mnet.Client, reader mpacket.Reader
 		plr.addBuff(skillID, skillLevel, delay)
 		sendPrimarySkillAnimation(plr, skillID, skillLevel)
 
+	case skill.GMTeleport, skill.FlashJump, skill.ClericTeleport, skill.FPTeleport, skill.ILTeleport:
+		plr.Send(packetPlayerStatNoChange())
 	default:
 		plr.addBuff(skillID, skillLevel, delay)
 		sendPrimarySkillAnimation(plr, skillID, skillLevel)
@@ -5676,7 +5778,6 @@ func (server *Server) playerSpecialSkill(conn mnet.Client, reader mpacket.Reader
 
 	// Apply MP cost/cooldown, if any (reuses the same flow as attack skills).
 	plr.useSkill(skillID, skillLevel, 0, 0)
-	plr.Send(packetPlayerNoChange()) // catch all for things like GM teleport
 }
 
 func (server *Server) playerStopSkill(conn mnet.Client, reader mpacket.Reader) {
@@ -5780,7 +5881,6 @@ func (server Server) playerSummonMove(conn mnet.Client, reader mpacket.Reader) {
 	inst.sendExcept(packetSummonMove(plr.ID, summonID, summ.Pos, moveBytes), conn)
 	if !valid {
 		log.Println("unknown playerSummonMove data")
-		inst.sendExcept(packetPlayerNoChange(), conn)
 	}
 }
 
@@ -5815,6 +5915,29 @@ func (server *Server) playerSummonDamage(conn mnet.Client, reader mpacket.Reader
 	}
 }
 
+func (server *Server) playerSummonSkill(conn mnet.Client, reader mpacket.Reader) {
+	plr, err := server.players.GetFromConn(conn)
+	if err != nil {
+		return
+	}
+
+	if len(reader.GetRestAsBytes()) < 4 {
+		plr.Send(packetPlayerStatNoChange())
+		return
+	}
+
+	summonID := reader.ReadInt32()
+	if plr.getSummon(summonID) == nil {
+		plr.Send(packetPlayerStatNoChange())
+		return
+	}
+
+	// v48 clients send summon skill/action packets (0x7B) for local summon state.
+	// We do not model these summon-side skills server-side yet, but we must ack them
+	// so the client clears its pending request state instead of freezing.
+	plr.Send(packetPlayerStatNoChange())
+}
+
 func (server *Server) playerSummonAttack(conn mnet.Client, reader mpacket.Reader) {
 	plr, err := server.players.GetFromConn(conn)
 	if err != nil {
@@ -5823,7 +5946,7 @@ func (server *Server) playerSummonAttack(conn mnet.Client, reader mpacket.Reader
 	data, valid, _ := getAttackInfo(reader, plr, attackSummon)
 	if !valid || len(data.attackInfo) == 0 {
 		if plr != nil {
-			plr.Send(packetPlayerNoChange())
+			plr.Send(packetPlayerStatNoChange())
 		}
 		return
 	}
@@ -5896,7 +6019,7 @@ func (server *Server) playerQuestOperation(conn mnet.Client, reader mpacket.Read
 	switch act {
 	case constant.QuestStarted:
 		if !plr.tryStartQuest(questID) {
-			plr.Send(packetPlayerNoChange())
+			plr.Send(packetPlayerStatNoChange())
 		}
 	case constant.QuestCompleted:
 		rewardSelection := -1
@@ -5904,7 +6027,7 @@ func (server *Server) playerQuestOperation(conn mnet.Client, reader mpacket.Read
 			rewardSelection = int(int32(binary.LittleEndian.Uint32(rest[len(rest)-4:])))
 		}
 		if !plr.tryCompleteQuestSelection(questID, rewardSelection) {
-			plr.Send(packetPlayerNoChange())
+			plr.Send(packetPlayerStatNoChange())
 		}
 	case constant.QuestForfeit:
 		plr.quests.remove(questID)
@@ -5932,7 +6055,7 @@ func (server *Server) playerQuestOperation(conn mnet.Client, reader mpacket.Read
 		}
 		dialog := openQuestDialog(plr, templateID)
 		if dialog == nil {
-			plr.Send(packetPlayerNoChange())
+			plr.Send(packetPlayerStatNoChange())
 			return
 		}
 		if act == constant.QuestOpeningScript {
@@ -5953,7 +6076,7 @@ func (server *Server) playerQuestOperation(conn mnet.Client, reader mpacket.Read
 			dialog.entries = filtered
 		}
 		if len(dialog.entries) == 0 {
-			plr.Send(packetPlayerNoChange())
+			plr.Send(packetPlayerStatNoChange())
 			return
 		}
 		if len(dialog.entries) == 1 {
@@ -6016,6 +6139,9 @@ func (server *Server) playerFame(conn mnet.Client, reader mpacket.Reader) {
 }
 
 func (server *Server) playerHitReactor(conn mnet.Client, reader mpacket.Reader) {
+	start := time.Now()
+	defer server.observePerf("hot/reactor_hit", time.Since(start))
+
 	plr, err := server.players.GetFromConn(conn)
 	if err != nil {
 		return
@@ -6540,7 +6666,6 @@ func (server *Server) playerPetMove(conn mnet.Client, reader mpacket.Reader) {
 	inst.movePlayerPet(plr.ID, moveBytes, plr)
 	if !valid {
 		log.Println("unknown playerPetMove data")
-		inst.sendExcept(packetPlayerNoChange(), conn)
 	}
 }
 
@@ -6714,5 +6839,5 @@ func (server *Server) playerPing(conn mnet.Client, reader mpacket.Reader) {
 	if err != nil {
 		return
 	}
-	plr.Send(packetPlayerNoChange())
+	plr.Send(packetPlayerStatNoChange())
 }

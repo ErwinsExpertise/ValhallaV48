@@ -43,6 +43,9 @@ type event struct {
 }
 
 func createEvent(id int32, instID int, players []int32, server *Server, program *goja.Program) (*event, error) {
+	start := time.Now()
+	defer observeSince(server, "script/event_init", start)
+
 	ctrl := &event{
 		id:                 id,
 		finished:           make(chan struct{}),
@@ -121,6 +124,9 @@ func createEvent(id int32, instID int, players []int32, server *Server, program 
 }
 
 func (e *event) start() {
+	start := time.Now()
+	defer observeSince(e.server, "script/event_start", start)
+
 	for _, id := range e.playerIDs {
 		if plr, err := e.server.players.GetFromID(id); err == nil {
 			plr.event = e

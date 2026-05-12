@@ -1824,6 +1824,9 @@ func (ctrl *reactorScriptController) SetMapMobSpawnEnabled(mapID int32, mobID in
 }
 
 func runReactorScript(program *goja.Program, server *Server, inst *fieldInstance, reactor *fieldReactor, plr *Player) error {
+	start := time.Now()
+	defer observeSince(server, "script/reactor", start)
+
 	vm := goja.New()
 	vm.SetFieldNameMapper(goja.UncapFieldNameMapper())
 	rm := &reactorScriptController{server: server, inst: inst, reactor: reactor, plr: plr}
@@ -1929,6 +1932,9 @@ func (ctrl *portalScriptController) Block(msg string) bool {
 }
 
 func runPortalScript(program *goja.Program, plr *Player, server *Server, src portal) (warped bool, blocked bool, err error) {
+	start := time.Now()
+	defer observeSince(server, "script/portal", start)
+
 	vm := goja.New()
 	vm.SetFieldNameMapper(goja.UncapFieldNameMapper())
 	plrCtrl := &scriptPlayerWrapper{plr: plr, server: server}
@@ -2333,6 +2339,9 @@ func (ctrl *npcChatController) InputNumber() int32 {
 }
 
 func (ctrl *npcChatController) run() bool {
+	start := time.Now()
+	defer observeSince(ctrl.server, "script/npc", start)
+
 	currentConversationPos := ctrl.stateTracker.currentPos
 	ctrl.selectionCalls = 0
 

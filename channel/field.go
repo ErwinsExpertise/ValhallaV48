@@ -115,6 +115,21 @@ func (data foothold) findPos(p pos) pos {
 	return newPos(p.x, newY, data.id)
 }
 
+func (data foothold) clampPos(p pos) pos {
+	x := p.x
+	lo, hi := data.x1, data.x2
+	if lo > hi {
+		lo, hi = hi, lo
+	}
+	if x < lo {
+		x = lo
+	} else if x > hi {
+		x = hi
+	}
+
+	return data.findPos(newPos(x, p.y, data.id))
+}
+
 func (data foothold) distanceFromPosSquare(point pos) (int16, int16, int16) {
 	deltaX := point.x - data.centreX
 	deltaY := point.y - data.centreY
@@ -281,6 +296,36 @@ func (data fhHistogram) findNearestPoint(ind int, point pos) pos {
 	}
 
 	return nearest
+}
+
+func (data fhHistogram) getNearestGroundPosition(point pos) (pos, bool) {
+	if len(data.footholds) == 0 {
+		return point, false
+	}
+
+	nearest := point
+	set := false
+	bestDY := int32(math.MaxInt32)
+	bestDX := int32(math.MaxInt32)
+
+	for _, fh := range data.footholds {
+		if fh.wall() {
+			continue
+		}
+
+		candidate := fh.clampPos(point)
+		dy := absInt32(int32(candidate.y) - int32(point.y))
+		dx := absInt32(int32(candidate.x) - int32(point.x))
+
+		if !set || dy < bestDY || (dy == bestDY && dx < bestDX) {
+			nearest = candidate
+			bestDY = dy
+			bestDX = dx
+			set = true
+		}
+	}
+
+	return nearest, set
 }
 
 type fieldRectangle struct {
@@ -667,6 +712,14 @@ func (inst *fieldInstance) post(fn func()) {
 	if inst == nil || fn == nil {
 		return
 	}
+	enqueuedAt := time.Now()
+	if inst.server != nil && inst.server.perf != nil {
+		original := fn
+		fn = func() {
+			inst.server.observePerf("dispatch_wait/field_post", time.Since(enqueuedAt))
+			original()
+		}
+	}
 	defer func() {
 		if r := recover(); r != nil && debugDispatchOwnershipAssertions {
 			log.Printf("fieldInstance.post recovered field=%d inst=%d err=%v", inst.fieldID, inst.id, r)
@@ -1007,18 +1060,64 @@ func (inst *fieldInstance) nextID() int32 {
 }
 
 func (inst fieldInstance) send(p mpacket.Packet) {
+	start := time.Now()
+	recipients := 0
+	maxQueueLen := 0
+	maxQueueCap := 0
 	for _, v := range inst.players {
+		if v == nil {
+			continue
+		}
+		recipients++
+		if v.Conn != nil {
+			if qlen, ok := v.Conn.(interface{ SendQueueLen() int }); ok {
+				if n := qlen.SendQueueLen(); n > maxQueueLen {
+					maxQueueLen = n
+				}
+			}
+			if qcap, ok := v.Conn.(interface{ SendQueueCap() int }); ok {
+				if n := qcap.SendQueueCap(); n > maxQueueCap {
+					maxQueueCap = n
+				}
+			}
+		}
 		v.Send(p)
+	}
+	if inst.server != nil {
+		inst.server.observeBroadcast("field_send", recipients, maxQueueLen, maxQueueCap, time.Since(start))
 	}
 }
 
 func (inst fieldInstance) sendExcept(p mpacket.Packet, exception mnet.Client) {
+	start := time.Now()
+	recipients := 0
+	maxQueueLen := 0
+	maxQueueCap := 0
 	for _, v := range inst.players {
+		if v == nil {
+			continue
+		}
 		if v.Conn == exception {
 			continue
 		}
+		recipients++
+		if v.Conn != nil {
+			if qlen, ok := v.Conn.(interface{ SendQueueLen() int }); ok {
+				if n := qlen.SendQueueLen(); n > maxQueueLen {
+					maxQueueLen = n
+				}
+			}
+			if qcap, ok := v.Conn.(interface{ SendQueueCap() int }); ok {
+				if n := qcap.SendQueueCap(); n > maxQueueCap {
+					maxQueueCap = n
+				}
+			}
+		}
 
 		v.Send(p)
+	}
+	if inst.server != nil {
+		inst.server.observeBroadcast("field_send_except", recipients, maxQueueLen, maxQueueCap, time.Since(start))
 	}
 }
 
@@ -1230,6 +1329,15 @@ func (inst *fieldInstance) stopFieldTimer() {
 
 // Responsible for handling the removing of mystic doors, disappearence of loot, ships coming and going
 func (inst *fieldInstance) fieldUpdate(t time.Time) {
+	start := time.Now()
+	defer func() {
+		dur := time.Since(start)
+		if inst.server != nil {
+			inst.server.observePerf("field_update", dur)
+			inst.server.observeSlowFieldUpdate(inst, dur)
+		}
+	}()
+
 	inst.lifePool.update(t)
 	inst.updateMerchantBalloons()
 	inst.dropPool.update(t)

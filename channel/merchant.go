@@ -1254,6 +1254,9 @@ func (server *Server) expireMerchants() {
 	if server == nil {
 		return
 	}
+	start := time.Now()
+	defer observeSince(server, "scheduled/merchant_expiry", start)
+
 	now := time.Now().UnixMilli()
 	for _, shop := range server.merchantShops {
 		shop.mu.Lock()
@@ -1270,9 +1273,12 @@ func (server *Server) expireMerchants() {
 		wasVisible := shop.npcSpawnID != 0
 		shop.npcSpawnID = 0
 		shop.mu.Unlock()
-		if _, err := common.DB.Exec("UPDATE merchant_shops SET state=?, npcSpawnID=0, closedAt=?, lastTouchedAt=? WHERE id=?", merchantStateExpired, now, now, shop.shopID); err != nil {
-			log.Printf("merchant: expire update failed shop=%d err=%v", shop.shopID, err)
-		}
+		shopID := shop.shopID
+		go func() {
+			if _, err := common.DB.Exec("UPDATE merchant_shops SET state=?, npcSpawnID=0, closedAt=?, lastTouchedAt=? WHERE id=?", merchantStateExpired, now, now, shopID); err != nil {
+				log.Printf("merchant: expire update failed shop=%d err=%v", shopID, err)
+			}
+		}()
 		for _, plr := range players {
 			if plr != nil {
 				plr.Send(packetRoomLeave(0, constant.MiniRoomClosed))

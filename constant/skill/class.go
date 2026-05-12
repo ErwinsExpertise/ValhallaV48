@@ -361,6 +361,7 @@ const (
 	PoisonBreath Skill = 2101005
 	FireArrow    Skill = 2101004
 	Slow         Skill = 2101003
+	FPTeleport   Skill = 2101002
 
 	//FPMage Skills - 211
 	ElementAmplification Skill = 2110001
@@ -377,6 +378,7 @@ const (
 	ILMpEater    Skill = 2200000
 	ILSlow       Skill = 2201003
 	ThunderBolt  Skill = 2201005
+	ILTeleport   Skill = 2201002
 
 	//ILMage Skills - 221
 	ILElementAmplification Skill = 2210001
@@ -388,11 +390,12 @@ const (
 	Lightning              Skill = 2211003
 
 	//Cleric Skills - 230
-	Bless         Skill = 2301004
-	Heal          Skill = 2301002
-	Invincible    Skill = 2301003
-	ClericMpEater Skill = 2300000
-	HolyArrow     Skill = 2301005
+	Bless          Skill = 2301004
+	Heal           Skill = 2301002
+	Invincible     Skill = 2301003
+	ClericMpEater  Skill = 2300000
+	HolyArrow      Skill = 2301005
+	ClericTeleport Skill = 2301001
 
 	//Priest Skills - 231
 	Dispel                    Skill = 2311001
@@ -456,6 +459,7 @@ const (
 	ShadowMeso    Skill = 4111004
 	ShadowPartner Skill = 4111002
 	ShadowWeb     Skill = 4111003
+	FlashJump     Skill = 411006
 
 	//Bandit Skills - 420
 	DaggerBooster Skill = 4201002

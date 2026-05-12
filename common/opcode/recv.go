@@ -86,6 +86,7 @@ const (
 	RecvChannelSummonMove        int16 = 0x78
 	RecvChannelSummonAttack      int16 = 0x79
 	RecvChannelSummonDamage      int16 = 0x7A
+	RecvChannelSummonSkill       int16 = 0x7B
 	RecvChannelMobControl        int16 = 0x81
 	RecvChannelDistance          int16 = 0x82
 	RecvChannelMobExplode        int16 = 0x87

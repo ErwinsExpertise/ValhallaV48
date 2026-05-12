@@ -940,6 +940,22 @@ func (d *Player) refreshQuestCompletionNotifications(forceResend bool) {
 	d.quests.completable = current
 }
 
+func (d *Player) refreshQuestCompletionNotification(questID int16, q nx.Quest, forceResend bool) {
+	if d == nil {
+		return
+	}
+	d.quests.init()
+	if !d.canCompleteQuest(q) {
+		delete(d.quests.completable, questID)
+		return
+	}
+	_, wasCompletable := d.quests.completable[questID]
+	if forceResend || !wasCompletable {
+		d.Send(packetQuestCompletionReady(questID))
+	}
+	d.quests.completable[questID] = struct{}{}
+}
+
 func (d *Player) setEXP(amount int32) {
 	if d.level >= 200 {
 		d.exp = amount
@@ -2032,6 +2048,10 @@ func (d *Player) swapItems(item1, item2 Item, start, end int16) {
 }
 
 func (d *Player) removeItem(item Item, fromStorage bool) {
+	d.removeItemWithDeleteMode(item, fromStorage, true)
+}
+
+func (d *Player) removeItemWithDeleteMode(item Item, fromStorage bool, syncDelete bool) {
 	removed := make([]Item, 0, 2)
 
 	filterBySlot := func(items []Item) []Item {
@@ -2063,8 +2083,12 @@ func (d *Player) removeItem(item Item, fromStorage bool) {
 		if removedItem.dbID == 0 {
 			continue
 		}
-		if err := removedItem.delete(); err != nil {
-			log.Println(err)
+		if syncDelete {
+			if err := removedItem.delete(); err != nil {
+				log.Println(err)
+			}
+		} else {
+			queueItemDelete(removedItem.dbID)
 		}
 	}
 
@@ -3087,6 +3111,7 @@ func LoadPlayerFromID(id int32, conn mnet.Client) Player {
 	c.quests = loadQuestsFromDB(c.ID)
 	c.quests.init()
 	c.quests.mobKills = loadQuestMobKillsFromDB(c.ID)
+	c.quests.rebuildMobTargets()
 
 	// Initialize the per-Player buff manager so handlers can call plr.addBuff(...)
 	NewCharacterBuffs(&c)
@@ -4029,7 +4054,8 @@ func (d *Player) onMobKilled(mobID int32) {
 	if d == nil {
 		return
 	}
-	for qid := range d.quests.inProgress {
+	questIDs := d.quests.mobTargets[mobID]
+	for _, qid := range questIDs {
 		q, err := nx.GetQuest(qid)
 		if err != nil {
 			continue
@@ -4057,12 +4083,12 @@ func (d *Player) onMobKilled(mobID int32) {
 		cur := d.quests.mobKills[qid][mobID]
 		if cur < needed {
 			d.quests.mobKills[qid][mobID] = cur + 1
-			upsertQuestMobKill(d.ID, qid, mobID, 1)
+			queueQuestMobKillWrite(d.ID, qid, mobID, 1)
 		}
 
 		d.Send(packetQuestUpdateMobKills(qid, d.buildQuestKillString(q)))
+		d.refreshQuestCompletionNotification(qid, q, false)
 	}
-	d.refreshQuestCompletionNotifications(false)
 }
 
 func (d *Player) meetsMobKills(questID int16, reqs []nx.ReqMob) bool {
@@ -4468,6 +4494,13 @@ func packetPlayerStatChange(flag bool, stat int32, value int32) mpacket.Packet {
 	p.WriteInt32(stat)
 	p.WriteInt32(value)
 
+	return p
+}
+
+func packetPlayerStatNoChange() mpacket.Packet {
+	p := mpacket.CreateWithOpcode(opcode.SendChannelStatChange)
+	p.WriteBool(true)
+	p.WriteInt32(0)
 	return p
 }
 

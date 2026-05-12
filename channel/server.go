@@ -64,6 +64,7 @@ type Server struct {
 	merchantShops      map[int64]*merchantRoom
 	merchantByChar     map[int32]*merchantRoom
 	transports         *transportScheduler
+	perf               *perfProfiler
 }
 
 const debugDispatchOwnershipAssertions = false
@@ -88,6 +89,14 @@ func currentDebugGID() int64 {
 func (server *Server) post(fn func()) {
 	if server == nil || fn == nil {
 		return
+	}
+	enqueuedAt := time.Now()
+	if server.perf != nil {
+		original := fn
+		fn = func() {
+			server.observePerf("dispatch_wait/server_post", time.Since(enqueuedAt))
+			original()
+		}
 	}
 	defer func() {
 		if r := recover(); r != nil && debugDispatchOwnershipAssertions {
@@ -175,6 +184,9 @@ func (server *Server) finalizeDisconnectAsync(plrSnapshot Player, accountID int3
 // Initialise the server
 func (server *Server) Initialise(work chan func(), dbConfig common.DBConfig, dropsJson, reactorJson, reactorDropsJson, gachaponJson string) {
 	server.dispatch = work
+	if server.perf != nil {
+		server.perf.startReporting()
+	}
 
 	if err := common.ConnectToDB(dbConfig); err != nil {
 		log.Fatal(err)

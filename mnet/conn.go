@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Hucaru/Valhalla/mnet/crypt"
@@ -92,6 +93,7 @@ type baseConn struct {
 	latency int
 	jitter  int
 	pSend   chan func()
+	sendSeq uint64
 }
 
 func (bc *baseConn) Reader() {
@@ -150,10 +152,19 @@ func (bc *baseConn) Send(p mpacket.Packet) {
 
 	select {
 	case bc.eSend <- p:
+		atomic.AddUint64(&bc.sendSeq, 1)
 	default:
 		log.Printf("disconnecting %s: send queue full", bc)
 		_ = bc.Close()
 	}
+}
+
+func (bc *baseConn) SendCount() uint64 {
+	if bc == nil {
+		return 0
+	}
+
+	return atomic.LoadUint64(&bc.sendSeq)
 }
 
 func (bc *baseConn) SendQueueLen() int {
